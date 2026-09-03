@@ -9,6 +9,7 @@ import {
   runSecurityTraceroute,
 } from "./api.js";
 import { formatDate } from "./format.js";
+import aegisShield from "./assets/aegis-shield.png";
 
 const TOOLS = [
   ["overview", "Overview", "01"],
@@ -1097,7 +1098,9 @@ export default function SecurityWorkbenchModal({
       >
         <aside>
           <div className="workbench-brand">
-            <span>LI</span>
+            <span>
+              <img src={aegisShield} alt="" />
+            </span>
             <div>
               <strong id="workbench-title">Security workbench</strong>
               <small>Defensive toolkit</small>
