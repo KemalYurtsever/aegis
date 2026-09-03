@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: liims
+resources:
+  - namespace.yaml
+  - secret.yaml
+  - storage.yaml
+  - backend.yaml
+  - frontend.yaml
+  - observability.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: grafana-datasource
+    files:
+      - prometheus.yml=../grafana/provisioning/datasources/prometheus.yml
+  - name: grafana-dashboard-provider
+    files:
+      - liims.yml=../grafana/provisioning/dashboards/liims.yml
+  - name: grafana-dashboard
+    files:
+      - liims-overview.json=../grafana/dashboards/liims-overview.json

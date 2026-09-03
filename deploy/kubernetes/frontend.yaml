@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: liims
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: liims-frontend}
+  template:
+    metadata:
+      labels: {app: liims-frontend}
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/replace-me/liims-frontend:latest
+          ports:
+            - {name: http, containerPort: 80}
+          readinessProbe: {httpGet: {path: /, port: http}, initialDelaySeconds: 3, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /, port: http}, initialDelaySeconds: 10, periodSeconds: 20}
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: liims
+spec:
+  selector: {app: liims-frontend}
+  ports:
+    - {name: http, port: 80, targetPort: http}
