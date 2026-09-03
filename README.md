@@ -1,6 +1,6 @@
-# LIIMS
+# Aegis
 
-Local IT Infrastructure Monitoring System (LIIMS) is an isolated-lab application for registering devices, checking their reachability, storing monitoring history, and presenting availability information.
+Aegis is an isolated-lab application for registering devices, checking their reachability, storing monitoring history, and presenting availability information. Existing `LIIMS_*` environment variables and local deployment paths remain supported for compatibility.
 
 ## Week 1 status
 

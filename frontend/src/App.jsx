@@ -465,12 +465,12 @@ function ObservabilityModal({ onClose }) {
           <iframe
             key={frameKey}
             src={GRAFANA_DASHBOARD_URL}
-            title="LIIMS Grafana dashboard"
+            title="Aegis Grafana dashboard"
             onLoad={() => setLoading(false)}
           />
         </div>
         <p className="observability-note">
-          Grafana is displayed inside LIIMS in local, read-only viewer mode. If
+          Grafana is displayed inside Aegis in local, read-only viewer mode. If
           panels remain unavailable, restart the observability containers.
         </p>
       </section>
@@ -486,7 +486,7 @@ function SetupGuidePanel({ items, onDismiss }) {
       <div className="setup-guide__heading">
         <div>
           <p className="eyebrow">Getting started</p>
-          <h2 id="setup-guide-title">Finish setting up LIIMS</h2>
+          <h2 id="setup-guide-title">Finish setting up Aegis</h2>
           <span>
             {completed} of {items.length} essentials complete
           </span>
@@ -2982,7 +2982,7 @@ function AvailabilityReportModal({ onClose }) {
     try {
       const { default: ExcelJS } = await import("exceljs");
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = "LIIMS";
+      workbook.creator = "Aegis";
       workbook.created = new Date();
       const sheet = workbook.addWorksheet("Availability", {
         views: [{ state: "frozen", ySplit: 1 }],
@@ -3041,7 +3041,7 @@ function AvailabilityReportModal({ onClose }) {
       const summary = workbook.addWorksheet("Report Summary");
       summary.columns = [{ width: 28 }, { width: 28 }];
       summary.addRows([
-        ["LIIMS Availability Report", null],
+        ["Aegis Availability Report", null],
         ["Period", `${report.days} days`],
         ["From", new Date(report.starts_at)],
         ["To", new Date(report.ends_at)],
@@ -4460,7 +4460,7 @@ function AuthScreen({ setupRequired, onAuthenticated }) {
         <div className="auth-brand">
           <span className="brand-mark">LI</span>
           <div>
-            <strong>LIIMS</strong>
+            <strong>Aegis</strong>
             <small>Infrastructure monitor</small>
           </div>
         </div>
@@ -4471,7 +4471,7 @@ function AuthScreen({ setupRequired, onAuthenticated }) {
         <p className="subtitle">
           {setupRequired
             ? "Create the first local administrator account. Use a unique password with at least 12 characters."
-            : "Enter your local LIIMS account credentials."}
+            : "Enter your local Aegis account credentials."}
         </p>
         <form onSubmit={submit}>
           {error && (
@@ -5381,7 +5381,7 @@ export default function App() {
     try {
       const { default: ExcelJS } = await import("exceljs");
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = "LIIMS";
+      workbook.creator = "Aegis";
       workbook.created = new Date();
       const inventory = workbook.addWorksheet("Device Inventory", {
         views: [{ state: "frozen", ySplit: 1 }],
@@ -5494,7 +5494,7 @@ export default function App() {
         views: [{ state: "frozen", ySplit: 3 }],
       });
       summary.mergeCells("A1:D1");
-      summary.getCell("A1").value = "LIIMS Infrastructure Summary";
+      summary.getCell("A1").value = "Aegis Infrastructure Summary";
       summary.getCell("A1").font = {
         size: 18,
         bold: true,
@@ -5817,7 +5817,7 @@ export default function App() {
       {
         id: "setup-guide",
         label: "Show setup guide",
-        description: "Review the essential LIIMS setup checklist",
+        description: "Review the essential Aegis setup checklist",
         icon: "✓",
         action: showSetupGuide,
       },
@@ -5859,7 +5859,7 @@ export default function App() {
         {
           id: "system-status",
           label: "Open system status",
-          description: "Check LIIMS component readiness",
+          description: "Check Aegis component readiness",
           icon: "●",
           action: () => setShowSystemStatus(true),
         },
@@ -6055,7 +6055,7 @@ export default function App() {
     return (
       <main className="auth-page">
         <div className="error-banner">
-          <strong>Unable to reach LIIMS.</strong> {authError}
+            <strong>Unable to reach Aegis.</strong> {authError}
         </div>
       </main>
     );
@@ -6088,7 +6088,7 @@ export default function App() {
         <div className="sidebar-brand">
           <div className="brand-mark">LI</div>
           <div>
-            <strong>LIIMS</strong>
+            <strong>Aegis</strong>
             <span>Infrastructure monitor</span>
           </div>
         </div>

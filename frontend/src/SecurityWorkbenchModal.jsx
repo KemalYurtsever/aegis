@@ -237,7 +237,7 @@ function DecoderTool() {
         <p className="eyebrow">Local-only utility</p>
         <h3>Safe text decoder</h3>
         <span>
-          Input stays in this browser tab and is never submitted to LIIMS.
+          Input stays in this browser tab and is never submitted to Aegis.
         </span>
       </header>
       <div className="decoder-grid">
@@ -449,7 +449,7 @@ function NetworkTool({ devices, onSelectDevice }) {
         <p className="eyebrow">Registered inventory</p>
         <h3>Network assets</h3>
         <span>
-          Search the devices already known to LIIMS; this view does not initiate
+          Search the devices already known to Aegis; this view does not initiate
           discovery.
         </span>
       </header>
@@ -1127,7 +1127,7 @@ export default function SecurityWorkbenchModal({
           <header className="workbench-heading">
             <div>
               <span>ADMIN / {selectedLabel?.toUpperCase()}</span>
-              <strong>LIIMS</strong>
+              <strong>Aegis</strong>
             </div>
             <button
               className="icon-button"
