@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # Local overrides are read from backend/.env; secrets must remain in the
     # process environment or dedicated secret files.
-    app_name: str = "LIIMS"
+    app_name: str = "Aegis"
     database_url: str = "sqlite:///./monitoring.db"
     ping_timeout_seconds: float = 2.0
     monitor_interval_seconds: float = 60.0
