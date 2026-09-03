@@ -6213,3 +6213,24 @@ kbd {
     padding: 28px 18px 44px;
   }
 }
+
+/* Theme cursors ---------------------------------------------------------- */
+:root[data-aegis-theme="classic"] {
+  --aegis-cursor: url("/cursors/aegis-light.svg") 3 3, default;
+}
+:root[data-aegis-theme="goth"] {
+  --aegis-cursor: url("/cursors/aegis-dark.svg") 3 3, default;
+}
+:root[data-aegis-theme] body,
+:root[data-aegis-theme] .app-shell {
+  cursor: var(--aegis-cursor);
+}
+:root[data-aegis-theme] :is(button, a, summary, [role="button"], [role="option"], select) {
+  cursor: var(--aegis-cursor) !important;
+}
+:root[data-aegis-theme] :is(input:not([type="button"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]), textarea) {
+  cursor: text !important;
+}
+:root[data-aegis-theme] :disabled {
+  cursor: not-allowed !important;
+}
