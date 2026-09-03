@@ -6152,3 +6152,63 @@ kbd {
   margin-top: 12px;
   color: #65758b;
 }
+
+/* Theme-stable geometry ---------------------------------------------------
+   Theme switching must never reflow the application. Both themes share the
+   same dimensions and typography; only their visual tokens may differ. */
+:is(.app-shell--classic, .app-shell--goth) > .sidebar {
+  padding: 24px 18px;
+  gap: 24px;
+}
+:is(.app-shell--classic, .app-shell--goth) > main {
+  padding: 30px clamp(20px, 3vw, 44px) 44px;
+}
+:is(.app-shell--classic, .app-shell--goth) .sidebar-brand {
+  align-items: flex-start;
+}
+:is(.app-shell--classic, .app-shell--goth) .brand-mark {
+  width: 40px;
+  height: 40px;
+}
+:is(.app-shell--classic, .app-shell--goth) .sidebar-brand strong {
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.045em;
+}
+:is(.app-shell--classic, .app-shell--goth) .sidebar-brand span {
+  font-size: 13px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+:is(.app-shell--classic, .app-shell--goth) .page-header {
+  align-items: flex-start;
+  padding-bottom: 24px;
+  border-bottom: 1px solid;
+}
+.app-shell--classic .page-header {
+  border-bottom-color: #dbe3ee;
+}
+.app-shell--goth .page-header {
+  border-bottom-color: var(--border);
+}
+:is(.app-shell--classic, .app-shell--goth) h1 {
+  font-family: inherit;
+  font-size: clamp(32px, 3vw, 44px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  text-shadow: none;
+}
+:is(.app-shell--classic, .app-shell--goth) .metrics {
+  gap: 10px;
+  margin: 22px 0 16px;
+}
+:is(.app-shell--classic, .app-shell--goth) :is(.panel, .metric-card) {
+  border-radius: 10px;
+}
+
+@media (max-width: 760px) {
+  :is(.app-shell--classic, .app-shell--goth) > main {
+    padding: 28px 18px 44px;
+  }
+}
