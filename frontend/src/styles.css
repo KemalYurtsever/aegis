@@ -15,7 +15,7 @@
 /* Readable default scale: AEGIS has dense operational tables, so keep the
    compact layout but render all interface text one step larger. */
 #root {
-  zoom: 1.0125;
+  zoom: 1.125;
 }
 
 /* Professional console baseline ------------------------------------------------
