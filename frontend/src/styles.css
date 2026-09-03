@@ -4035,12 +4035,12 @@ body::-webkit-scrollbar,
 
 :root[data-aegis-theme="goth"] {
   color-scheme: dark;
-  color: #eee7df;
-  background: #09070e;
+  color: #f4eaf1;
+  background: #140914;
 }
 :root[data-aegis-theme="goth"] body {
-  color: #eee7df;
-  background: #09070e;
+  color: #f4eaf1;
+  background: #140914;
 }
 :root[data-aegis-theme="goth"] ::selection {
   color: #fff7ef;
@@ -4854,23 +4854,23 @@ body::-webkit-scrollbar,
 
 /* Refined Obsidian: quieter surfaces, consistent geometry, and readable hierarchy. */
 .app-shell--goth {
-  --ink: #f1ece8;
-  --muted: #aca2aa;
-  --subtle: #817781;
-  --canvas: #0f0c11;
-  --sidebar: #151117;
-  --surface: #18141a;
-  --surface-raised: #1d181f;
-  --surface-soft: #141116;
-  --border: #342b36;
-  --border-strong: #49374a;
-  --accent: #c45179;
-  --accent-hover: #d9628b;
+  --ink: #f6ebf2;
+  --muted: #c2a9b9;
+  --subtle: #96798d;
+  --canvas: #170b18;
+  --sidebar: #220f20;
+  --surface: #241424;
+  --surface-raised: #2e192c;
+  --surface-soft: #1c101d;
+  --border: #4a2943;
+  --border-strong: #6c385c;
+  --accent: #d44f7d;
+  --accent-hover: #eb668f;
   grid-template-columns: 224px minmax(0, 1fr);
   color: var(--ink);
   background: radial-gradient(
       circle at 82% 8%,
-      rgba(126, 50, 91, 0.08),
+      rgba(176, 43, 111, 0.16),
       transparent 34%
     ),
     var(--canvas);
