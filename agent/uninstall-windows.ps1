@@ -1,8 +1,8 @@
 [CmdletBinding()]
-param([string]$InstallDirectory = "$env:ProgramData\LIIMS Agent")
+param([string]$InstallDirectory = "$env:ProgramData\AEGIS Agent")
 
 $ErrorActionPreference = "Stop"
-$taskName = "LIIMS Host Agent"
+$taskName = "AEGIS Host Agent"
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Run this uninstaller from PowerShell as Administrator."
@@ -20,4 +20,4 @@ if (Test-Path -LiteralPath $InstallDirectory) {
     }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
-Write-Host "LIIMS agent was removed."
+Write-Host "AEGIS agent was removed."

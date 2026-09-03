@@ -2,34 +2,34 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
-  namespace: liims
+  namespace: aegis
 spec:
   replicas: 1
   selector:
-    matchLabels: {app: liims-backend}
+    matchLabels: {app: aegis-backend}
   template:
     metadata:
-      labels: {app: liims-backend}
+      labels: {app: aegis-backend}
     spec:
       containers:
         - name: backend
-          image: ghcr.io/replace-me/liims-backend:latest
+          image: ghcr.io/replace-me/aegis-backend:latest
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8000}
           env:
             - {name: DATABASE_URL, value: "sqlite:////data/monitoring.db"}
-            - {name: LIIMS_PROMETHEUS_TOKEN_FILE, value: /run/secrets/prometheus-token}
-            - name: LIIMS_SMTP_PASSWORD
-              valueFrom: {secretKeyRef: {name: liims-secrets, key: smtp-password}}
-            - name: LIIMS_TEAMS_WEBHOOK_URL
-              valueFrom: {secretKeyRef: {name: liims-secrets, key: teams-webhook-url}}
-            - name: LIIMS_TWILIO_ACCOUNT_SID
-              valueFrom: {secretKeyRef: {name: liims-secrets, key: twilio-account-sid}}
-            - name: LIIMS_TWILIO_AUTH_TOKEN
-              valueFrom: {secretKeyRef: {name: liims-secrets, key: twilio-auth-token}}
-            - name: LIIMS_SNMP_COMMUNITY
-              valueFrom: {secretKeyRef: {name: liims-secrets, key: snmp-community}}
+            - {name: AEGIS_PROMETHEUS_TOKEN_FILE, value: /run/secrets/prometheus-token}
+            - name: AEGIS_SMTP_PASSWORD
+              valueFrom: {secretKeyRef: {name: aegis-secrets, key: smtp-password}}
+            - name: AEGIS_TEAMS_WEBHOOK_URL
+              valueFrom: {secretKeyRef: {name: aegis-secrets, key: teams-webhook-url}}
+            - name: AEGIS_TWILIO_ACCOUNT_SID
+              valueFrom: {secretKeyRef: {name: aegis-secrets, key: twilio-account-sid}}
+            - name: AEGIS_TWILIO_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: aegis-secrets, key: twilio-auth-token}}
+            - name: AEGIS_SNMP_COMMUNITY
+              valueFrom: {secretKeyRef: {name: aegis-secrets, key: snmp-community}}
           volumeMounts:
             - {name: data, mountPath: /data}
             - {name: prometheus-token, mountPath: /run/secrets/prometheus-token, subPath: prometheus-token, readOnly: true}
@@ -40,16 +40,16 @@ spec:
             limits: {cpu: "1", memory: 512Mi}
       volumes:
         - name: data
-          persistentVolumeClaim: {claimName: liims-data}
+          persistentVolumeClaim: {claimName: aegis-data}
         - name: prometheus-token
-          secret: {secretName: liims-secrets}
+          secret: {secretName: aegis-secrets}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: backend
-  namespace: liims
+  namespace: aegis
 spec:
-  selector: {app: liims-backend}
+  selector: {app: aegis-backend}
   ports:
     - {name: http, port: 8000, targetPort: http}

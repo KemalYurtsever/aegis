@@ -81,7 +81,7 @@ def test_windows_host_network_policy_returns_structured_firewall_and_routes(monk
         if "Get-NetFirewallProfile" in script:
             return [{"Name": "Private", "Enabled": True, "DefaultInboundAction": "Block", "DefaultOutboundAction": "Allow"}]
         if "Get-NetFirewallRule" in script:
-            return [{"DisplayName": "Allow LIIMS", "Direction": "Inbound", "Action": "Allow", "Profile": "Private"}]
+            return [{"DisplayName": "Allow AEGIS", "Direction": "Inbound", "Action": "Allow", "Profile": "Private"}]
         return [
             {"DestinationPrefix": "0.0.0.0/0", "NextHop": "192.168.1.1", "InterfaceAlias": "Wi-Fi", "RouteMetric": 25},
             {"DestinationPrefix": "192.168.1.0/24", "NextHop": "0.0.0.0", "InterfaceAlias": "Wi-Fi", "RouteMetric": 281},
@@ -92,7 +92,7 @@ def test_windows_host_network_policy_returns_structured_firewall_and_routes(monk
     result = host_network_policy()
 
     assert result.firewall_profiles[0].default_inbound_action == "Block"
-    assert result.firewall_rules[0].name == "Allow LIIMS"
+    assert result.firewall_rules[0].name == "Allow AEGIS"
     assert result.routes[0].is_default is True
     assert result.routes[1].next_hop is None
 

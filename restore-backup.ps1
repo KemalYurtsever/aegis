@@ -13,7 +13,7 @@ $verifierPath = [System.IO.Path]::GetFullPath((Join-Path $backendRoot "tools\ver
 
 $listener = Get-NetTCPConnection -LocalPort 8001 -State Listen -ErrorAction SilentlyContinue
 if ($listener) {
-    throw "LIIMS is still running on port 8001. Run .\stop-hybrid.ps1 before restoring a backup."
+    throw "AEGIS is still running on port 8001. Run .\stop-hybrid.ps1 before restoring a backup."
 }
 if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
     throw "Backend Python was not found at $pythonPath"
@@ -49,9 +49,9 @@ finally {
     }
 }
 
-Write-Host "LIIMS database restored successfully."
+Write-Host "AEGIS database restored successfully."
 Write-Host "Restored from: $resolvedBackup"
 if (Test-Path -LiteralPath $rollbackPath -PathType Leaf) {
     Write-Host "Previous database preserved at: $rollbackPath"
 }
-Write-Host "Run .\start-hybrid.ps1 to start LIIMS."
+Write-Host "Run .\start-hybrid.ps1 to start AEGIS."

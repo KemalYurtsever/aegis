@@ -2,18 +2,18 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
-  namespace: liims
+  namespace: aegis
 spec:
   replicas: 2
   selector:
-    matchLabels: {app: liims-frontend}
+    matchLabels: {app: aegis-frontend}
   template:
     metadata:
-      labels: {app: liims-frontend}
+      labels: {app: aegis-frontend}
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/replace-me/liims-frontend:latest
+          image: ghcr.io/replace-me/aegis-frontend:latest
           ports:
             - {name: http, containerPort: 80}
           readinessProbe: {httpGet: {path: /, port: http}, initialDelaySeconds: 3, periodSeconds: 10}
@@ -26,8 +26,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: frontend
-  namespace: liims
+  namespace: aegis
 spec:
-  selector: {app: liims-frontend}
+  selector: {app: aegis-frontend}
   ports:
     - {name: http, port: 80, targetPort: http}

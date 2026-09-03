@@ -15,7 +15,7 @@ class RateLimit:
 
 
 class InMemoryRateLimiter:
-    """Small process-local sliding-window limiter for the single-instance LIIMS API."""
+    """Small process-local sliding-window limiter for the single-instance AEGIS API."""
 
     def __init__(self) -> None:
         self._events: dict[tuple[str, str], deque[float]] = defaultdict(deque)

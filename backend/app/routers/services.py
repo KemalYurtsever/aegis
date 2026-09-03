@@ -127,7 +127,7 @@ def create_service_check(device_id: int, payload: ServiceCheckCreate, db: Sessio
 @router.post("/devices/{device_id}/scan-ports", response_model=PortScanResponse)
 def scan_device_ports(device_id: int, db: Session = Depends(get_db)) -> PortScanResponse:
     device = get_device_or_404(device_id, db)
-    # The endpoint already limits targets to registered LIIMS devices. When
+    # The endpoint already limits targets to registered AEGIS devices. When
     # public-LAN discovery is enabled, also permit addresses inside the bounded
     # network of the active physical adapter (for example, 172.2.4.0/24).
     ensure_scan_target_allowed(device.ip_address)

@@ -4,6 +4,7 @@ import AutomationModal from "./AutomationModal.jsx";
 import SystemStatusModal from "./SystemStatusModal.jsx";
 import AttackPathsModal from "./AttackPathsModal.jsx";
 import SecurityWorkbenchModal from "./SecurityWorkbenchModal.jsx";
+import aegisShield from "./assets/aegis-shield.png";
 import { formatDate, formatMetric, toDateTimeLocal } from "./format.js";
 import {
   checkDevice,
@@ -155,7 +156,7 @@ const DEVICE_TYPES = [
 const GRAFANA_URL = import.meta.env.VITE_GRAFANA_URL || "http://127.0.0.1:3000";
 const GRAFANA_DASHBOARD_URL =
   import.meta.env.VITE_GRAFANA_DASHBOARD_URL ||
-  `${GRAFANA_URL}/d/liims-overview/liims-infrastructure-overview?orgId=1&kiosk&theme=dark&refresh=15s`;
+  `${GRAFANA_URL}/d/aegis-overview/aegis-infrastructure-overview?orgId=1&kiosk&theme=dark&refresh=15s`;
 const DEVICE_PAGE_SIZES = [10, 20];
 
 function normalizedDevicePageSize(value) {
@@ -2264,7 +2265,7 @@ function RemoteAgentPanel({ device, agent, onChanged }) {
             <strong>Copy this token now—it will not be shown again.</strong>
             <code>{token}</code>
             <p>
-              Set it as <code>LIIMS_AGENT_TOKEN</code> on the remote machine.
+              Set it as <code>AEGIS_AGENT_TOKEN</code> on the remote machine.
             </p>
           </div>
         )}
@@ -2762,7 +2763,7 @@ function ReliabilityModal({ onClose }) {
         ".\\start-hybrid.ps1",
       ].join("\r\n");
       await navigator.clipboard.writeText(command);
-      setMessage(`Verified restore procedure copied for ${restoreFile}. Run it from the LIIMS project root; the current database will be preserved automatically.`);
+      setMessage(`Verified restore procedure copied for ${restoreFile}. Run it from the AEGIS project root; the current database will be preserved automatically.`);
       setRestoreConfirmation("");
     } catch (error) {
       setMessage(error.message);
@@ -2861,7 +2862,7 @@ function ReliabilityModal({ onClose }) {
           <div className="reliability-title">
             <div>
               <h3>Guided restore</h3>
-              <p>A restore must stop LIIMS so SQLite cannot be replaced while in use. This verifies the selected backup and prepares the guarded stop, restore, and restart commands.</p>
+              <p>A restore must stop AEGIS so SQLite cannot be replaced while in use. This verifies the selected backup and prepares the guarded stop, restore, and restart commands.</p>
             </div>
           </div>
           <div className="retention-controls">
@@ -3063,7 +3064,7 @@ function AvailabilityReportModal({ onClose }) {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `liims-availability-${report.days}d-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.download = `aegis-availability-${report.days}d-${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -4458,7 +4459,9 @@ function AuthScreen({ setupRequired, onAuthenticated }) {
     <main className="auth-page">
       <section className="auth-card">
         <div className="auth-brand">
-          <span className="brand-mark">LI</span>
+          <span className="brand-mark">
+            <img src={aegisShield} alt="" />
+          </span>
           <div>
             <strong>Aegis</strong>
             <small>Infrastructure monitor</small>
@@ -5051,7 +5054,7 @@ function NotificationSettings({ onClose }) {
 export default function App() {
   const [visualTheme, setVisualTheme] = useState(() => {
     try {
-      const storedTheme = window.localStorage.getItem("liims_visual_theme");
+      const storedTheme = window.localStorage.getItem("aegis_visual_theme");
       // Retire the former decorative default in favour of the neutral console.
       return storedTheme === "goth" ? "classic" : storedTheme || "classic";
     } catch {
@@ -5076,14 +5079,14 @@ export default function App() {
   const [showObservability, setShowObservability] = useState(false);
   const [setupGuideVisible, setSetupGuideVisible] = useState(() => {
     try {
-      return window.localStorage.getItem("liims_setup_guide_hidden") !== "true";
+      return window.localStorage.getItem("aegis_setup_guide_hidden") !== "true";
     } catch {
       return true;
     }
   });
   const [observabilitySeen, setObservabilitySeen] = useState(() => {
     try {
-      return window.localStorage.getItem("liims_observability_seen") === "true";
+      return window.localStorage.getItem("aegis_observability_seen") === "true";
     } catch {
       return false;
     }
@@ -5114,7 +5117,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [selectedId, setSelectedId] = useState(deviceIdFromPath);
   const [detailOrigin, setDetailOrigin] = useState(
-    () => window.history.state?.liimsOrigin || null,
+    () => window.history.state?.aegisOrigin || null,
   );
   const [formDevice, setFormDevice] = useState(undefined);
   const [discovering, setDiscovering] = useState(false);
@@ -5129,7 +5132,7 @@ export default function App() {
   const [savedViews, setSavedViews] = useState(() => {
     try {
       const stored = JSON.parse(
-        window.localStorage.getItem("liims_saved_device_views") || "[]",
+        window.localStorage.getItem("aegis_saved_device_views") || "[]",
       );
       return Array.isArray(stored) ? stored : [];
     } catch {
@@ -5141,9 +5144,9 @@ export default function App() {
   const [selectedDeviceIds, setSelectedDeviceIds] = useState([]);
 
   useEffect(() => {
-    document.documentElement.dataset.liimsTheme = visualTheme;
+    document.documentElement.dataset.aegisTheme = visualTheme;
     try {
-      window.localStorage.setItem("liims_visual_theme", visualTheme);
+      window.localStorage.setItem("aegis_visual_theme", visualTheme);
     } catch {
       /* Theme persistence is optional when storage is unavailable. */
     }
@@ -5554,7 +5557,7 @@ export default function App() {
         new Blob([buffer], {
           type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         }),
-        `liims-devices-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        `aegis-devices-${new Date().toISOString().slice(0, 10)}.xlsx`,
       );
     } catch (exportError) {
       setError(`Excel export failed: ${exportError.message}`);
@@ -5623,7 +5626,7 @@ export default function App() {
   useEffect(() => {
     function handlePopState(event) {
       setSelectedId(deviceIdFromPath());
-      setDetailOrigin(event.state?.liimsOrigin || null);
+      setDetailOrigin(event.state?.aegisOrigin || null);
     }
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -5631,7 +5634,7 @@ export default function App() {
 
   function navigateToDevice(deviceId, origin = null) {
     window.history.pushState(
-      origin ? { liimsOrigin: origin } : {},
+      origin ? { aegisOrigin: origin } : {},
       "",
       `/devices/${deviceId}`,
     );
@@ -5660,7 +5663,7 @@ export default function App() {
     setObservabilitySeen(true);
     setShowObservability(true);
     try {
-      window.localStorage.setItem("liims_observability_seen", "true");
+      window.localStorage.setItem("aegis_observability_seen", "true");
     } catch {
       /* Local progress persistence is optional. */
     }
@@ -5669,7 +5672,7 @@ export default function App() {
   function showSetupGuide() {
     setSetupGuideVisible(true);
     try {
-      window.localStorage.removeItem("liims_setup_guide_hidden");
+      window.localStorage.removeItem("aegis_setup_guide_hidden");
     } catch {
       /* Local progress persistence is optional. */
     }
@@ -5678,7 +5681,7 @@ export default function App() {
   function dismissSetupGuide() {
     setSetupGuideVisible(false);
     try {
-      window.localStorage.setItem("liims_setup_guide_hidden", "true");
+      window.localStorage.setItem("aegis_setup_guide_hidden", "true");
     } catch {
       /* Local progress persistence is optional. */
     }
@@ -5688,7 +5691,7 @@ export default function App() {
     setSavedViews(nextViews);
     try {
       window.localStorage.setItem(
-        "liims_saved_device_views",
+        "aegis_saved_device_views",
         JSON.stringify(nextViews),
       );
     } catch {
@@ -6086,7 +6089,9 @@ export default function App() {
         className={`sidebar${mobileNavigationOpen ? " sidebar--menu-open" : ""}`}
       >
         <div className="sidebar-brand">
-          <div className="brand-mark">LI</div>
+          <div className="brand-mark">
+            <img src={aegisShield} alt="" />
+          </div>
           <div>
             <strong>Aegis</strong>
             <span>Infrastructure monitor</span>

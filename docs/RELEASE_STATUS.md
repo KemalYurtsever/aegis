@@ -1,10 +1,10 @@
-# LIIMS stabilization status
+# AEGIS stabilization status
 
 Validated on 31 August 2026 in the Windows hybrid deployment.
 
 ## Current state
 
-- LIIMS frontend: `http://127.0.0.1:5173`
+- AEGIS frontend: `http://127.0.0.1:5173`
 - Administrative API: `http://127.0.0.1:8001`
 - Dedicated agent ingress: TCP `8002`
 - Grafana: `http://127.0.0.1:3000`
@@ -23,11 +23,11 @@ The active database passed SQLite integrity and foreign-key checks with 74 devic
 - `npm audit --omit=dev` reported zero vulnerabilities.
 - Configured secret values were not present in the production browser bundle.
 - Both Docker Compose definitions and the active Prometheus configuration validated.
-- Prometheus successfully scraped the protected LIIMS metrics endpoint.
+- Prometheus successfully scraped the protected AEGIS metrics endpoint.
 - All eight provisioned Grafana panel queries executed successfully.
 - The administrative API remained bound to loopback and required authentication.
 - The agent listener exposes only health, authenticated metric ingestion, and authenticated allowlisted diagnostic job polling/result routes; documentation and administrative routes return 404.
-- Stop/start lifecycle testing released every LIIMS port, restored all services, and passed HTTP readiness checks.
+- Stop/start lifecycle testing released every AEGIS port, restored all services, and passed HTTP readiness checks.
 - The authenticated system-readiness check reports database integrity, foreign-key health, monitoring and backup scheduler state, and available storage without exposing filesystem paths.
 - The administrator-only attack-surface assessment uses a fixed service allowlist and records exposure, passive banners, HTTP headers/version disclosure, and TLS protocol/certificate posture without credential attempts or exploitation.
 - Consecutive attack-surface assessments are compared using a capped risk score and new, persistent, and resolved actionable findings.
@@ -63,7 +63,7 @@ The rendered application was tested against an isolated temporary database so th
 Run the following once from an Administrator PowerShell if remote agents will connect from the LAN:
 
 ```powershell
-cd "$HOME\Desktop\liims"
+cd "$HOME\Desktop\aegis"
 .\configure-agent-access.ps1
 ```
 
@@ -74,7 +74,7 @@ SNMP, email, Teams, and SMS remain optional. Their server-side environment varia
 Start:
 
 ```powershell
-cd "$HOME\Desktop\liims"
+cd "$HOME\Desktop\aegis"
 .\start-hybrid.ps1
 ```
 

@@ -1,6 +1,6 @@
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-const TOKEN_KEY = "liims_session_token";
+const TOKEN_KEY = "aegis_session_token";
 
 export function setAuthToken(token) {
   if (token) sessionStorage.setItem(TOKEN_KEY, token);
@@ -27,7 +27,7 @@ async function request(path, options = {}) {
     }
   }
   if (!response)
-    throw networkError || new Error("The LIIMS API could not be reached");
+    throw networkError || new Error("The AEGIS API could not be reached");
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
     throw new Error(

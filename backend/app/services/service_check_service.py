@@ -31,7 +31,7 @@ def probe_service(check: ServiceCheck, timeout_seconds: float = 3.0) -> ServiceP
             kwargs["context"] = ssl.create_default_context()
         connection = connection_class(**kwargs)
         try:
-            connection.request("GET", check.path, headers={"User-Agent": "LIIMS/0.1"})
+            connection.request("GET", check.path, headers={"User-Agent": "AEGIS/0.1"})
             response = connection.getresponse()
             response.read(1024)
             elapsed = (time.monotonic() - started) * 1000

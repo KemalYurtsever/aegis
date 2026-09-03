@@ -507,7 +507,7 @@ function SnifferTool({ captures, onOpenCapture }) {
         <p className="eyebrow">Metadata only</p>
         <h3>Packet observation</h3>
         <span>
-          LIIMS stores addresses, protocol, ports, time, and size—not payloads
+          AEGIS stores addresses, protocol, ports, time, and size—not payloads
           or credentials.
         </span>
         <button className="button button--primary" onClick={onOpenCapture}>
@@ -571,7 +571,7 @@ function TracerouteTool({ devices }) {
         <p className="eyebrow">Bounded path check</p>
         <h3>Traceroute</h3>
         <span>
-          Targets are selected from registered LIIMS devices; maximum 12 hops
+          Targets are selected from registered AEGIS devices; maximum 12 hops
           and 20 seconds.
         </span>
       </header>
@@ -641,7 +641,7 @@ function ConfigurationTool({ devices, attackPaths, onSelectDevice }) {
         <p className="eyebrow">Safe replacement for configuration extraction</p>
         <h3>Configuration and exposure audit</h3>
         <span>
-          Reviews LIIMS records only. It does not download router configurations
+          Reviews AEGIS records only. It does not download router configurations
           or reveal stored secrets.
         </span>
       </header>
@@ -688,13 +688,13 @@ function WirelessTool({ adapters }) {
         <p className="eyebrow">Local host visibility</p>
         <h3>Wireless adapters</h3>
         <span>
-          Shows LIIMS-host adapter state only. It does not reveal Wi-Fi keys,
+          Shows AEGIS-host adapter state only. It does not reveal Wi-Fi keys,
           capture handshakes, or attack access points.
         </span>
       </header>
       {adapters.length === 0 ? (
         <div className="empty-state">
-          No wireless adapter was identified on the LIIMS host.
+          No wireless adapter was identified on the AEGIS host.
         </div>
       ) : (
         <div className="wireless-grid">
@@ -758,7 +758,7 @@ function HostNetworkPolicyTool() {
         <p className="eyebrow">Read-only host examination</p>
         <h3>Firewall and routing</h3>
         <span>
-          Examines the LIIMS host using fixed operating-system queries. It does
+          Examines the AEGIS host using fixed operating-system queries. It does
           not modify rules, routes, interfaces, or forwarding.
         </span>
         <button

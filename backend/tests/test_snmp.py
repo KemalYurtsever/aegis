@@ -27,4 +27,4 @@ def test_snmp_missing_secret_is_recorded_without_exposing_it(client):
     device = create_device(client)
     result = client.post(f"/api/devices/{device['id']}/snmp/poll").json()
     assert result["status"] == "FAILED"
-    assert "LIIMS_SNMP_COMMUNITY" in result["error"]
+    assert "AEGIS_SNMP_COMMUNITY" in result["error"]

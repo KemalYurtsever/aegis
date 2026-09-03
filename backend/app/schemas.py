@@ -803,7 +803,7 @@ class NotificationDeliveryRead(BaseModel):
 class SnmpConfigUpdate(BaseModel):
     enabled: bool = False
     port: int = Field(default=161, ge=1, le=65535)
-    community_env: str = Field(default="LIIMS_SNMP_COMMUNITY", pattern=r"^[A-Z][A-Z0-9_]{2,99}$")
+    community_env: str = Field(default="AEGIS_SNMP_COMMUNITY", pattern=r"^[A-Z][A-Z0-9_]{2,99}$")
 
 
 class SnmpConfigRead(SnmpConfigUpdate):

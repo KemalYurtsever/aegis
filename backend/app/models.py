@@ -223,7 +223,7 @@ class SnmpConfig(Base):
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False, default=161)
-    community_env: Mapped[str] = mapped_column(String(100), nullable=False, default="LIIMS_SNMP_COMMUNITY")
+    community_env: Mapped[str] = mapped_column(String(100), nullable=False, default="AEGIS_SNMP_COMMUNITY")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
@@ -460,7 +460,7 @@ class AuditEvent(Base):
 
 
 class AutomationSettings(Base):
-    """Single-row configuration for optional LIIMS automations."""
+    """Single-row configuration for optional AEGIS automations."""
 
     __tablename__ = "automation_settings"
 

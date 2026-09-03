@@ -19,7 +19,7 @@ async def lifespan(_application: FastAPI):
 
 
 app = FastAPI(
-    title="LIIMS Agent Ingress",
+    title="AEGIS Agent Ingress",
     version="0.1.0",
     lifespan=lifespan,
     docs_url=None,
@@ -64,7 +64,7 @@ async def protect_agent_ingress(request: Request, call_next):
 
 @app.get("/api/agent/health", tags=["agent ingestion"])
 def agent_health() -> dict[str, str]:
-    return {"status": "healthy", "service": "LIIMS agent ingress"}
+    return {"status": "healthy", "service": "AEGIS agent ingress"}
 
 
 app.include_router(ingest_router)

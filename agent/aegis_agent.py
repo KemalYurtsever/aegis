@@ -1,4 +1,4 @@
-"""Authenticated LIIMS host-metrics agent with local diagnostics."""
+"""Authenticated AEGIS host-metrics agent with local diagnostics."""
 
 import argparse
 import json
@@ -17,12 +17,12 @@ from pathlib import Path
 import psutil
 
 AGENT_VERSION = "0.3.0"
-LOGGER = logging.getLogger("liims-agent")
+LOGGER = logging.getLogger("aegis-agent")
 MAX_RESULT_CHARACTERS = 40_000
 
 
 def load_config() -> dict:
-    config_path = Path(os.environ.get("LIIMS_AGENT_CONFIG_FILE", Path(__file__).with_name("agent-config.json")))
+    config_path = Path(os.environ.get("AEGIS_AGENT_CONFIG_FILE", Path(__file__).with_name("agent-config.json")))
     if not config_path.is_file():
         return {}
     # Windows PowerShell 5.1 writes a UTF-8 BOM; utf-8-sig accepts both forms.
@@ -32,11 +32,11 @@ def load_config() -> dict:
 
 
 CONFIG = load_config()
-SERVER_URL = os.environ.get("LIIMS_SERVER_URL", CONFIG.get("server_url", "http://127.0.0.1:8002")).rstrip("/")
-AGENT_TOKEN = os.environ.get("LIIMS_AGENT_TOKEN", CONFIG.get("token", ""))
-INTERVAL_SECONDS = max(10, int(os.environ.get("LIIMS_AGENT_INTERVAL_SECONDS", CONFIG.get("interval_seconds", 60))))
+SERVER_URL = os.environ.get("AEGIS_SERVER_URL", CONFIG.get("server_url", "http://127.0.0.1:8002")).rstrip("/")
+AGENT_TOKEN = os.environ.get("AEGIS_AGENT_TOKEN", CONFIG.get("token", ""))
+INTERVAL_SECONDS = max(10, int(os.environ.get("AEGIS_AGENT_INTERVAL_SECONDS", CONFIG.get("interval_seconds", 60))))
 DIAGNOSTICS_ENABLED = str(
-    os.environ.get("LIIMS_AGENT_DIAGNOSTICS_ENABLED", CONFIG.get("diagnostics_enabled", False))
+    os.environ.get("AEGIS_AGENT_DIAGNOSTICS_ENABLED", CONFIG.get("diagnostics_enabled", False))
 ).strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -63,10 +63,10 @@ def check_server() -> dict:
     request = urllib.request.Request(f"{SERVER_URL}/api/agent/health", method="GET")
     with urllib.request.urlopen(request, timeout=10) as response:
         if response.status != 200:
-            raise RuntimeError(f"Unexpected LIIMS health response: {response.status}")
+            raise RuntimeError(f"Unexpected AEGIS health response: {response.status}")
         payload = json.loads(response.read().decode("utf-8"))
     if payload.get("status") != "healthy":
-        raise RuntimeError("LIIMS agent ingress did not report a healthy status")
+        raise RuntimeError("AEGIS agent ingress did not report a healthy status")
     return payload
 
 
@@ -79,7 +79,7 @@ def submit() -> dict:
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         if response.status != 201:
-            raise RuntimeError(f"Unexpected LIIMS response: {response.status}")
+            raise RuntimeError(f"Unexpected AEGIS response: {response.status}")
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -388,7 +388,7 @@ def configure_logging(log_file: str | None = None) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="LIIMS authenticated host metrics agent")
+    parser = argparse.ArgumentParser(description="AEGIS authenticated host metrics agent")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="Check the agent ingress without sending metrics")
     mode.add_argument("--once", action="store_true", help="Submit one metric sample and exit")
@@ -401,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(args.log_file)
     try:
         health = check_server()
-        LOGGER.info("Agent ingress is healthy: %s", health.get("service", "LIIMS"))
+        LOGGER.info("Agent ingress is healthy: %s", health.get("service", "AEGIS"))
     except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError, RuntimeError) as exc:
         if args.check or args.once:
             LOGGER.error("Agent ingress check failed: %s", exc)
@@ -410,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return 0
     if len(AGENT_TOKEN) < 20:
-        LOGGER.error("LIIMS_AGENT_TOKEN is missing or invalid")
+        LOGGER.error("AEGIS_AGENT_TOKEN is missing or invalid")
         return 3
     if args.once:
         try:
@@ -423,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
             LOGGER.error("Metric submission failed: %s", exc)
             return 4
 
-    LOGGER.info("LIIMS agent %s reporting to %s every %ss", AGENT_VERSION, SERVER_URL, INTERVAL_SECONDS)
+    LOGGER.info("AEGIS agent %s reporting to %s every %ss", AGENT_VERSION, SERVER_URL, INTERVAL_SECONDS)
     consecutive_failures = 0
     while True:
         try:

@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ruleName = "LIIMS Agent Ingress"
+$ruleName = "AEGIS Agent Ingress"
 $agentPort = 8002
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -53,4 +53,4 @@ New-NetFirewallRule `
     -RemoteAddress $AuthorizedSubnet `
     -Profile Any | Out-Null
 
-Write-Host "LIIMS agent ingress is allowed from $AuthorizedSubnet on TCP $agentPort only."
+Write-Host "AEGIS agent ingress is allowed from $AuthorizedSubnet on TCP $agentPort only."

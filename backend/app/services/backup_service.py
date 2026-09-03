@@ -15,7 +15,7 @@ from app.schemas import BackupRead, BackupVerification
 
 
 logger = logging.getLogger(__name__)
-BACKUP_NAME = re.compile(r"^liims-\d{8}-\d{6}-[0-9a-f]{6}\.db$")
+BACKUP_NAME = re.compile(r"^aegis-\d{8}-\d{6}-[0-9a-f]{6}\.db$")
 
 
 class BackupService:
@@ -44,7 +44,7 @@ class BackupService:
         if not self.database_path.is_file():
             raise FileNotFoundError("SQLite database file was not found")
         self.backup_directory.mkdir(parents=True, exist_ok=True)
-        filename = f"liims-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{token_hex(3)}.db"
+        filename = f"aegis-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{token_hex(3)}.db"
         destination = self._backup_path(filename)
         temporary = destination.with_suffix(".tmp")
         try:
@@ -64,7 +64,7 @@ class BackupService:
         if not self.backup_directory.exists():
             return []
         backups = []
-        for path in self.backup_directory.glob("liims-*.db"):
+        for path in self.backup_directory.glob("aegis-*.db"):
             if not BACKUP_NAME.fullmatch(path.name) or not path.is_file():
                 continue
             stat = path.stat()
@@ -124,7 +124,7 @@ class PeriodicBackup:
     def start(self) -> None:
         if not self.enabled or self.is_running:
             return
-        self._task = asyncio.create_task(self._run_loop(), name="liims-periodic-backup")
+        self._task = asyncio.create_task(self._run_loop(), name="aegis-periodic-backup")
 
     async def stop(self) -> None:
         if self._task is None:
@@ -142,5 +142,5 @@ class PeriodicBackup:
             try:
                 await asyncio.to_thread(self.service.create_backup)
             except Exception:
-                logger.exception("Scheduled LIIMS backup failed")
+                logger.exception("Scheduled AEGIS backup failed")
             await asyncio.sleep(self.interval_hours * 3600)

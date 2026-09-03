@@ -1,4 +1,4 @@
-name: liims
+name: aegis
 
 services:
   backend:
@@ -6,19 +6,19 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: sqlite:////data/monitoring.db
-      LIIMS_BACKUP_DIRECTORY: /data/backups
-      LIIMS_REPORT_DIRECTORY: /data/reports
-      LIIMS_ATTACHMENT_DIRECTORY: /data/attachments
-      LIIMS_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
-      LIIMS_SMTP_PASSWORD: ${LIIMS_SMTP_PASSWORD:-}
-      LIIMS_TEAMS_WEBHOOK_URL: ${LIIMS_TEAMS_WEBHOOK_URL:-}
-      LIIMS_TWILIO_ACCOUNT_SID: ${LIIMS_TWILIO_ACCOUNT_SID:-}
-      LIIMS_TWILIO_AUTH_TOKEN: ${LIIMS_TWILIO_AUTH_TOKEN:-}
-      LIIMS_SNMP_COMMUNITY: ${LIIMS_SNMP_COMMUNITY:-}
+      AEGIS_BACKUP_DIRECTORY: /data/backups
+      AEGIS_REPORT_DIRECTORY: /data/reports
+      AEGIS_ATTACHMENT_DIRECTORY: /data/attachments
+      AEGIS_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
+      AEGIS_SMTP_PASSWORD: ${AEGIS_SMTP_PASSWORD:-}
+      AEGIS_TEAMS_WEBHOOK_URL: ${AEGIS_TEAMS_WEBHOOK_URL:-}
+      AEGIS_TWILIO_ACCOUNT_SID: ${AEGIS_TWILIO_ACCOUNT_SID:-}
+      AEGIS_TWILIO_AUTH_TOKEN: ${AEGIS_TWILIO_AUTH_TOKEN:-}
+      AEGIS_SNMP_COMMUNITY: ${AEGIS_SNMP_COMMUNITY:-}
     secrets:
       - prometheus_token
     volumes:
-      - liims_data:/data
+      - aegis_data:/data
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -74,6 +74,6 @@ secrets:
     file: ./secrets/prometheus_token.txt
 
 volumes:
-  liims_data:
+  aegis_data:
   prometheus_data:
   grafana_data:

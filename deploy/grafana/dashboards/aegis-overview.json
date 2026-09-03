@@ -1,0 +1,23 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {"type":"stat","title":"Registered devices","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"aegis_devices_total","refId":"A"}],"gridPos":{"h":5,"w":6,"x":0,"y":0}},
+    {"type":"stat","title":"Online devices","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(aegis_device_status == 1)","refId":"A"}],"gridPos":{"h":5,"w":6,"x":6,"y":0}},
+    {"type":"stat","title":"Active alerts","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"aegis_active_alerts","refId":"A"}],"gridPos":{"h":5,"w":6,"x":12,"y":0}},
+    {"type":"stat","title":"Scheduler","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"aegis_scheduler_running","refId":"A"}],"gridPos":{"h":5,"w":6,"x":18,"y":0}},
+    {"type":"timeseries","title":"Device latency (ms)","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"aegis_device_latency_milliseconds","legendFormat":"{{device_name}}","refId":"A"}],"gridPos":{"h":8,"w":12,"x":0,"y":5}},
+    {"type":"timeseries","title":"Host resource utilization (%)","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"aegis_host_resource_percent","legendFormat":"{{device_name}} {{resource}}","refId":"A"}],"gridPos":{"h":8,"w":12,"x":12,"y":5}},
+    {"type":"table","title":"Device status","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"aegis_device_status","format":"table","instant":true,"refId":"A"}],"gridPos":{"h":8,"w":12,"x":0,"y":13}},
+    {"type":"table","title":"Service status","datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"aegis_service_status","format":"table","instant":true,"refId":"A"}],"gridPos":{"h":8,"w":12,"x":12,"y":13}}
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["aegis", "infrastructure"],
+  "time": {"from":"now-6h","to":"now"},
+  "timezone": "browser",
+  "title": "AEGIS Infrastructure Overview",
+  "uid": "aegis-overview",
+  "version": 1
+}

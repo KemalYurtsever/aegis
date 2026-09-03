@@ -233,7 +233,7 @@ def test_local_summary_never_calls_a_non_loopback_model(client, monkeypatch):
         summary = local_summary(db)
 
     assert summary.source == "BUILT_IN"
-    assert "Current LIIMS health" in summary.text
+    assert "Current AEGIS health" in summary.text
 
 
 def test_repeated_automation_cycles_do_not_duplicate_diagnostics(client, monkeypatch):
