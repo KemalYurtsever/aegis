@@ -157,6 +157,17 @@ button {
   max-width: none;
   object-fit: contain;
 }
+
+/* The artwork is the complete brand mark; do not place it over the former
+   text-logo tile. This rule intentionally wins in both visual themes. */
+.brand-mark:has(img) {
+  overflow: visible;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
 main {
   min-width: 0;
   padding: 30px clamp(20px, 3vw, 44px) 44px;
@@ -1074,6 +1085,13 @@ td:first-child span {
   height: 135%;
   max-width: none;
   object-fit: contain;
+}
+.workbench-brand > span:has(img) {
+  overflow: visible;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 .workbench-brand > div {
   display: grid;
