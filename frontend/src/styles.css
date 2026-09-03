@@ -6214,6 +6214,122 @@ kbd {
   }
 }
 
+/* Fixed sidebar navigation ------------------------------------------------
+   Keep the primary tool and account controls visible while the page moves.
+   The accordion limits the navigation height without introducing a second
+   scroll area inside the sidebar. */
+:is(.app-shell--classic, .app-shell--goth) {
+  grid-template-columns: 224px minmax(0, 1fr);
+}
+:is(.app-shell--classic, .app-shell--goth) > .sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+.sidebar-tools {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+.sidebar-navigation {
+  display: grid;
+  flex: 0 1 auto;
+  gap: 5px;
+  align-content: start;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+.sidebar-section {
+  display: grid;
+  gap: 3px;
+}
+.sidebar-navigation .sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 8px;
+  color: #8fb7ef;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.sidebar-navigation .sidebar-section-toggle:hover {
+  color: #fff;
+}
+.sidebar-section-toggle > span {
+  color: inherit;
+  font-size: inherit;
+}
+.sidebar-section-chevron {
+  flex: 0 0 auto;
+  transition: transform 0.18s ease;
+}
+.sidebar-section-toggle[aria-expanded="true"] .sidebar-section-chevron {
+  transform: rotate(180deg);
+}
+.sidebar-section-items {
+  display: grid;
+  gap: 3px;
+  padding-bottom: 4px;
+}
+.sidebar-section-items[hidden] {
+  display: none;
+}
+.sidebar-section-items > button {
+  padding-left: 12px;
+}
+.sidebar-footer {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 12px;
+  margin-top: auto;
+}
+.sidebar-footer .sidebar-user {
+  margin-top: 0;
+}
+.sidebar-footer .theme-switch {
+  order: 2;
+}
+.app-shell--goth .sidebar-navigation .sidebar-section-toggle {
+  color: #d67b9b;
+}
+.app-shell--goth .sidebar-navigation .sidebar-section-toggle:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 760px) {
+  :is(.app-shell--classic, .app-shell--goth) {
+    display: block;
+  }
+  :is(.app-shell--classic, .app-shell--goth) > .sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  .sidebar-navigation {
+    grid-template-columns: 1fr;
+    width: 100%;
+    max-height: none;
+  }
+  .sidebar-footer {
+    display: none;
+    order: 4;
+    width: 100%;
+  }
+  .sidebar--menu-open .sidebar-footer {
+    display: grid;
+  }
+  .sidebar-footer .theme-switch {
+    width: 100%;
+  }
+}
+
 /* Theme cursors ---------------------------------------------------------- */
 :root[data-aegis-theme="classic"] {
   --aegis-cursor: url("/cursors/aegis-light.svg") 3 3, default;

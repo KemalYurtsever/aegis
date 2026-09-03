@@ -5097,6 +5097,8 @@ export default function App() {
   });
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [expandedSidebarSection, setExpandedSidebarSection] =
+    useState("reports");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [data, setData] = useState(EMPTY_DASHBOARD);
   const [inventoryHealth, setInventoryHealth] = useState(
@@ -6058,6 +6060,12 @@ export default function App() {
     openPanel();
   }
 
+  function toggleSidebarSection(section) {
+    setExpandedSidebarSection((current) =>
+      current === section ? null : section,
+    );
+  }
+
   if (authError)
     return (
       <main className="auth-page">
@@ -6131,6 +6139,112 @@ export default function App() {
             <span aria-hidden="true">▦</span>
             Observability
           </button>
+        </nav>
+        <nav className="sidebar-navigation" aria-label="Application navigation">
+          <section className="sidebar-section">
+            <button
+              className="sidebar-section-toggle"
+              type="button"
+              aria-expanded={expandedSidebarSection === "reports"}
+              aria-controls="sidebar-reports"
+              onClick={() => toggleSidebarSection("reports")}
+            >
+              <span>Reports</span>
+              <span className="sidebar-section-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div
+              id="sidebar-reports"
+              className="sidebar-section-items"
+              hidden={expandedSidebarSection !== "reports"}
+            >
+              <button onClick={() => openSidebarPanel(showSetupGuide)}>
+                Setup guide
+              </button>
+              <button onClick={() => openSidebarPanel(() => setShowAlertHistory(true))}>
+                Alert history
+              </button>
+              <button onClick={() => openSidebarPanel(() => setShowReports(true))}>
+                Availability reports
+              </button>
+            </div>
+          </section>
+          {auth.user.role === "ADMIN" && (
+            <>
+              <section className="sidebar-section">
+                <button
+                  className="sidebar-section-toggle"
+                  type="button"
+                  aria-expanded={expandedSidebarSection === "security"}
+                  aria-controls="sidebar-security"
+                  onClick={() => toggleSidebarSection("security")}
+                >
+                  <span>Security</span>
+                  <span className="sidebar-section-chevron" aria-hidden="true">⌄</span>
+                </button>
+                <div
+                  id="sidebar-security"
+                  className="sidebar-section-items"
+                  hidden={expandedSidebarSection !== "security"}
+                >
+                  <button onClick={() => openSidebarPanel(() => setShowSecurityWorkbench(true))}>
+                    Security workbench
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowAttackPaths(true))}>
+                    Attack paths
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowPacketCapture(true))}>
+                    Packet capture
+                  </button>
+                </div>
+              </section>
+              <section className="sidebar-section">
+                <button
+                  className="sidebar-section-toggle"
+                  type="button"
+                  aria-expanded={expandedSidebarSection === "administration"}
+                  aria-controls="sidebar-administration"
+                  onClick={() => toggleSidebarSection("administration")}
+                >
+                  <span>Administration</span>
+                  <span className="sidebar-section-chevron" aria-hidden="true">⌄</span>
+                </button>
+                <div
+                  id="sidebar-administration"
+                  className="sidebar-section-items"
+                  hidden={expandedSidebarSection !== "administration"}
+                >
+                  <button onClick={() => openSidebarPanel(() => setShowSystemStatus(true))}>
+                    System status
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowAutomation(true))}>
+                    Automation center
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowUsers(true))}>
+                    Manage users
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowAudit(true))}>
+                    Audit log
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowNotifications(true))}>
+                    Notifications
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowReliability(true))}>
+                    Backups & retention
+                  </button>
+                  <button onClick={() => openSidebarPanel(() => setShowDhcpImport(true))}>
+                    Import DHCP leases
+                  </button>
+                </div>
+              </section>
+            </>
+          )}
+        </nav>
+        <div className="sidebar-footer">
+          <div className="sidebar-user">
+            <span>{auth.user.role}</span>
+            <strong>{auth.user.username}</strong>
+            <button onClick={() => openSidebarPanel(handleLogout)}>Sign out</button>
+          </div>
           <button
             className="theme-switch"
             type="button"
@@ -6144,55 +6258,6 @@ export default function App() {
             <span aria-hidden="true">{visualTheme === "goth" ? "☾" : "◐"}</span>
             {visualTheme === "goth" ? "Dark theme" : "Light theme"}
           </button>
-        </nav>
-        <nav className="sidebar-navigation" aria-label="Application navigation">
-          <span className="sidebar-section-label">Reports</span>
-          <button onClick={() => openSidebarPanel(showSetupGuide)}>
-            Setup guide
-          </button>
-          <button onClick={() => openSidebarPanel(() => setShowAlertHistory(true))}>
-            Alert history
-          </button>
-          <button onClick={() => openSidebarPanel(() => setShowReports(true))}>
-            Availability reports
-          </button>
-          {auth.user.role === "ADMIN" && (
-            <>
-              <span className="sidebar-section-label">Security</span>
-              <button onClick={() => openSidebarPanel(() => setShowSecurityWorkbench(true))}>
-                Security workbench
-              </button>
-              <button onClick={() => openSidebarPanel(() => setShowAttackPaths(true))}>
-                Attack paths
-              </button>
-              <button onClick={() => openSidebarPanel(() => setShowPacketCapture(true))}>
-                Packet capture
-              </button>
-              <span className="sidebar-section-label">Administration</span>
-              <button onClick={() => openSidebarPanel(() => setShowSystemStatus(true))}>
-                System status
-              </button>
-              <button onClick={() => openSidebarPanel(() => setShowAutomation(true))}>
-                Automation center
-              </button>
-              <button onClick={() => openSidebarPanel(() => setShowUsers(true))}>Manage users</button>
-              <button onClick={() => openSidebarPanel(() => setShowAudit(true))}>Audit log</button>
-              <button onClick={() => openSidebarPanel(() => setShowNotifications(true))}>
-                Notifications
-              </button>
-              <button onClick={() => openSidebarPanel(() => setShowReliability(true))}>
-                Backups & retention
-              </button>
-              <button onClick={() => openSidebarPanel(() => setShowDhcpImport(true))}>
-                Import DHCP leases
-              </button>
-            </>
-          )}
-        </nav>
-        <div className="sidebar-user">
-          <span>{auth.user.role}</span>
-          <strong>{auth.user.username}</strong>
-          <button onClick={() => openSidebarPanel(handleLogout)}>Sign out</button>
         </div>
       </aside>
       <main id="main-content" tabIndex="-1">
