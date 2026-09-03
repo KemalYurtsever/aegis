@@ -10,6 +10,7 @@ import {
 } from "./api.js";
 import { formatDate } from "./format.js";
 import aegisShield from "./assets/aegis-shield.png";
+import aegisShieldDark from "./assets/aegis-shield-dark.png";
 
 const TOOLS = [
   ["overview", "Overview", "01"],
@@ -1045,6 +1046,7 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
 
 export default function SecurityWorkbenchModal({
   devices,
+  visualTheme,
   onClose,
   onOpenCapture,
   onSelectDevice,
@@ -1099,7 +1101,10 @@ export default function SecurityWorkbenchModal({
         <aside>
           <div className="workbench-brand">
             <span>
-              <img src={aegisShield} alt="" />
+              <img
+                src={visualTheme === "goth" ? aegisShieldDark : aegisShield}
+                alt=""
+              />
             </span>
             <div>
               <strong id="workbench-title">Security workbench</strong>
