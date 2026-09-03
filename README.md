@@ -1,429 +1,358 @@
 # Aegis
 
-Aegis is an isolated-lab application for registering devices, checking their reachability, storing monitoring history, and presenting availability information. Existing `AEGIS_*` environment variables and local deployment paths remain supported for compatibility.
+Aegis is a self-hosted infrastructure monitoring and defensive operations console for authorized private networks and isolated labs. It combines asset inventory, availability monitoring, service checks, host telemetry, alerting, reporting, and bounded security diagnostics in one responsive web interface.
 
-## Week 1 status
+Aegis keeps operational data under the operator's control. The standard installation uses SQLite for application data, Prometheus for time-series scraping, and Grafana for long-range visualization. It does not require a cloud service.
 
-The first backend milestone includes:
+> Aegis is intended for systems and networks you own or are explicitly authorized to assess. Its discovery, capture, diagnostic, and assessment tools are deliberately bounded and are not a substitute for authorization or change control.
 
-- FastAPI health endpoint
-- SQLite database initialization
-- Device create, list, retrieve, update, and delete endpoints
-- IPv4/IPv6 normalization and validation
-- Duplicate-IP and missing-device error handling
-- Automated API tests
-- Safe cross-platform ping command execution with bounded timeouts
-- Manual monitoring checks persisted as online/offline results
-- Reverse-chronological monitoring history with bounded result limits
-- Availability, successful-latency, and current-status statistics
-- Derived online/offline status-transition events
-- Lifecycle-managed automatic monitoring of active devices every 60 seconds
-- Scheduler status endpoint and duplicate-start prevention
-- Dashboard aggregate API and initial responsive React dashboard
+## Product capabilities
 
-Email, Microsoft Teams, and SMS alert delivery, retry history, test actions, Prometheus metrics, and a provisioned Grafana dashboard are included.
+### Operations dashboard
 
-## Docker deployment
+| Function | What it does |
+|---|---|
+| Infrastructure summary | Shows total, online, offline, and unchecked devices together with active alerts and scheduler state. |
+| Device inventory | Presents current status, response time, availability, last check, type, group, and other identifying information in one table. |
+| Search and filters | Filters devices by name, IP address, type, group, and monitoring status. Saved views preserve frequently used filter combinations in the browser. |
+| Sorting and pagination | Sorts inventory by device name, status, latency, availability, or last-check time and supports 10, 25, or 50 rows per page. |
+| Bulk actions | Checks selected devices, changes their operational group, or enables and pauses monitoring as one validated operation. |
+| Operational insights | Highlights devices that need attention and links directly to the relevant device record. |
+| Inventory health | Identifies incomplete asset records so operators can improve ownership, classification, and support information. |
+| Service-health overview | Summarizes monitored TCP, HTTP, and HTTPS services and exposes unhealthy checks without opening each device. |
+| Remote-agent fleet | Summarizes enrolled collectors as waiting, reporting, delayed, or offline and prioritizes stale agents. |
+| Logical topology | Groups devices by VLAN and subnet, shows inferred network relationships, and displays operator-confirmed links separately. |
+| Command palette | Opens devices and operational panels from a keyboard-searchable menu using `Ctrl+K` or `Cmd+K`. |
+| Responsive navigation | Provides mobile navigation, fixed desktop navigation, collapsible sections, light and dark themes, readable typography, and keyboard focus states. |
 
-### Recommended Windows hybrid mode
+The dashboard refreshes every 15 seconds. **Check all** runs an immediate reachability check for every active device and stores the results through the same alert and history pipeline used by scheduled monitoring.
 
-For full Windows adapter discovery, Npcap capture, Windows metrics, and future Active Directory support, run AEGIS natively and keep only Prometheus and Grafana in Docker:
+### Asset inventory and device records
 
-```powershell
-cd "$HOME\Desktop\aegis"
-.\start-hybrid.ps1
-```
+| Function | What it does |
+|---|---|
+| Device management | Creates, edits, views, and deletes monitored devices with normalized IPv4 or IPv6 addresses and duplicate-address protection. |
+| Device groups | Assigns an operational group such as a site, floor, lab, or business unit for filtering and bulk administration. |
+| Device profile | Combines availability statistics, latency history, status transitions, service checks, telemetry, SNMP, alerts, assessments, and agent state on one page. |
+| Notes | Stores timestamped operational notes against a device. |
+| Attachments | Stores validated UTF-8 text, PDF, PNG, and JPEG files up to 5 MiB. Files use randomized storage names and download as attachments. |
+| Activity timeline | Merges important device events into a chronological operational history. |
+| Change history | Records material changes to inventory data for later review. |
+| DHCP import | Allows administrators to import lease information into inventory with validation and duplicate handling. |
+| CSV export | Exports the complete filtered and sorted inventory as UTF-8 CSV, independent of the current page. |
+| Excel export | Creates a formatted `.xlsx` workbook with typed values, filters, frozen headers, and a formula-driven summary sheet. The Excel library loads only when requested. |
+| Shareable device URLs | Gives every device a direct URL such as `/devices/1` and supports normal browser Back and Forward navigation. |
 
-The launcher waits for the frontend, API, agent ingress, Grafana, and Prometheus to pass readiness checks. Native service output is stored under `logs/` for troubleshooting.
+### Availability, services, and alerts
 
-This starts the Windows backend from `backend/.venv`, the Vite frontend, and the observability-only Compose file. Prometheus reaches the native backend at `host.docker.internal:8000`. Your original `backend/monitoring.db` and Windows functionality remain available.
+| Function | What it does |
+|---|---|
+| Reachability checks | Performs bounded cross-platform ping checks and stores online/offline state, successful latency, timestamps, and normalized errors. |
+| Automatic monitoring | Runs one lifecycle-managed scheduler that checks active devices at the configured interval. Operators can pause and resume scheduling without disabling manual checks. |
+| Availability statistics | Calculates successful and failed checks, availability percentage, average successful latency, and current state from stored history. |
+| Status transitions | Derives online-to-offline and offline-to-online events from monitoring history. |
+| Service checks | Monitors TCP ports and HTTP or HTTPS endpoints on registered devices. HTTP checks use a validated path and record response time and status code. |
+| Service history | Shows recent results, uptime, successful and failed totals, average response time, and a dependency-free response-time chart. |
+| Common-port scan | Checks a fixed infrastructure port allowlist against an authorized registered device and can turn an open port into a scheduled service check. |
+| Device fingerprinting | Uses bounded network evidence such as open services, manufacturer information, and mDNS data to suggest a device classification. |
+| Alert rules | Creates per-device rules for consecutive failures and high latency. Alerts persist, can be acknowledged, and resolve automatically after recovery. |
+| Alert history | Provides a searchable operational record of active, acknowledged, and resolved alert events. |
+| Maintenance windows | Suppresses expected monitoring noise during approved maintenance periods without deleting monitoring configuration. |
 
-Stop the hybrid stack without deleting data:
+### Host telemetry and anomaly detection
 
-```powershell
-.\stop-hybrid.ps1
-```
+| Function | What it does |
+|---|---|
+| Local host metrics | Collects CPU, memory, and system-disk utilization for loopback devices. |
+| Remote host agent | Accepts authenticated CPU, memory, and disk samples from enrolled Windows or Linux collectors. Each enrollment has a one-time token; only its SHA-256 digest is stored. |
+| Agent health | Derives waiting, reporting, delayed, and offline states from the collector's reporting interval. A previously reporting agent that becomes offline raises one persistent alert and resolves it when reporting resumes. |
+| SNMP v2c polling | Reads the standard system description, name, location, uptime, and interface-count OIDs. Community values stay in environment variables and are not stored in SQLite. |
+| Local anomaly detection | Builds a per-device baseline after at least 21 samples using the median and median absolute deviation, then flags unusual latency, CPU, memory, or disk values. |
 
-The current release validation results and remaining environment-only actions are recorded in [docs/RELEASE_STATUS.md](docs/RELEASE_STATUS.md).
+Anomaly results are operational indicators, not diagnoses. Aegis performs this analysis locally and does not send telemetry to an external AI provider.
 
-If PowerShell script execution is restricted, run once in the current terminal:
+### Network visibility and defensive security
 
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-```
+| Function | What it does |
+|---|---|
+| Local network discovery | Detects the active physical Windows adapter, presents its network for confirmation, and probes at most one local `/24`. Existing addresses are skipped and available MAC addresses are imported. |
+| Network topology | Infers logical placement from VLAN and subnet data and supports confirmed `UPLINK`, `CONNECTS TO`, `ROUTES TO`, and `MANAGES` relationships. |
+| Attack-surface assessment | Checks a fixed common-port set, identifies exposed management, cleartext, database, and infrastructure services, reads short passive banners, inspects HTTP security headers, and records TLS negotiation details. |
+| Assessment comparison | Compares the two latest assessments, calculates a capped 0–100 exposure score, and separates new, persistent, and resolved findings. Informational evidence does not increase the score. |
+| Passive attack paths | Correlates stored assessment results with groups, subnets, criticality, and remote-access services to prioritize possible paths between registered assets. It sends no additional traffic. |
+| Controlled packet capture | Captures packet metadata for 1–30 seconds and 1–1000 packets. It stores timestamps, addresses, protocol, ports, and length—never packet payloads or PCAP files. |
+| Remote diagnostics | Dispatches only fixed, administrator-approved diagnostic job types to explicitly enabled agents. Jobs are device-bound, parameter-bounded, expire after 15 minutes, and cannot contain arbitrary commands. |
+| Wireless status | Reports the local Aegis host's wireless-adapter state without collecting Wi-Fi keys or handshakes. |
 
-### Fully containerized mode
-
-Install Docker Desktop, then create the required local configuration from the project root:
-
-```powershell
-Copy-Item .env.docker.example .env
-New-Item -ItemType Directory -Force secrets
-$tokenBytes = New-Object byte[] 32
-$rng = New-Object Security.Cryptography.RNGCryptoServiceProvider
-$rng.GetBytes($tokenBytes)
-$rng.Dispose()
-($tokenBytes | ForEach-Object { $_.ToString("x2") }) -join "" |
-    Set-Content -NoNewline secrets/prometheus_token.txt
-```
-
-Edit `.env` and replace `GRAFANA_ADMIN_PASSWORD` with a unique long password. Then start the complete stack:
-
-```powershell
-docker compose up --build -d
-docker compose ps
-```
-
-Services become available at:
-
-- AEGIS dashboard: `http://127.0.0.1:5173`
-- AEGIS API documentation: `http://127.0.0.1:8000/docs`
-- Prometheus: `http://127.0.0.1:9090`
-- Grafana: `http://127.0.0.1:3000`
-
-AEGIS includes an **Observability** view that embeds the provisioned Grafana dashboard directly inside the application. The local read-only view does not require a separate login. Administrators can still open `http://127.0.0.1:3000` manually when they need Grafana configuration. The embedded dashboard defaults can be changed at frontend build time with `VITE_GRAFANA_URL` and `VITE_GRAFANA_DASHBOARD_URL`.
-
-SQLite, Prometheus time-series data, and Grafana state use named Docker volumes. Stop the stack with `docker compose down`; this preserves data. Only use `docker compose down -v` when you intentionally want to delete all Docker-managed AEGIS data.
-
-Device attachments accept only UTF-8 text, PDF, PNG, and JPEG files up to 5 MiB. Content signatures are validated by the API, files are stored under `backend/attachments` in native mode or `/data/attachments` in Docker using randomized `.blob` names, and downloads always use attachment disposition. Back up this directory together with the SQLite backup catalog when moving AEGIS to another machine.
-
-## Prometheus and Grafana
-
-The protected `/metrics` endpoint exposes device state and latency, unresolved-alert count, service state, latest host CPU/memory/disk utilization, and scheduler state in OpenMetrics format. Prometheus authenticates with the bearer token stored in `secrets/prometheus_token.txt`.
-
-Grafana is automatically provisioned with the Prometheus data source and **AEGIS Infrastructure Overview** dashboard. The dashboard contains device totals, online count, active alerts, scheduler state, device latency, resource utilization, device status, and service status. Provisioned dashboard files remain the source of truth.
-
-Grafana anonymous access is limited to the Viewer role and all published ports remain bound to `127.0.0.1`, so the embedded dashboard is available only on the AEGIS host by default. Administrative changes still require the Grafana administrator account.
-
-## Kubernetes and cloud deployment
-
-Cloud-ready Kustomize manifests are available under `deploy/kubernetes`. Build and push the backend and frontend images, replace `ghcr.io/replace-me/...` in the deployment files with your registry paths, then prepare the untracked secret:
-
-```powershell
-Copy-Item deploy/kubernetes/secret.example.yaml deploy/kubernetes/secret.yaml
-```
-
-Replace every placeholder in `secret.yaml`, change `aegis.example.com` in `ingress.yaml`, and ensure the cluster has a default StorageClass and ingress controller. Deploy with:
-
-```powershell
-kubectl apply -k deploy/kubernetes
-kubectl -n aegis get pods,svc,pvc,ingress
-```
-
-The stack includes health probes, resource requests/limits, persistent claims, Prometheus, Grafana provisioning, and secret-backed credentials. The backend intentionally remains at one replica because SQLite uses a single persistent database file. A horizontally scaled backend requires the later PostgreSQL migration.
-
-For production, enable Kubernetes secret encryption at rest, restrict secret RBAC, use a managed secret provider, configure TLS on the ingress, pin container images by digest, and configure backups for all persistent volumes.
-
-## Attack-surface assessment
-
-Administrators can run a bounded assessment against a registered device. It checks only the fixed common-port allowlist, flags exposed management, cleartext, database, and infrastructure services, reads short passive banners from greeting-based protocols, checks HTTP security headers and version disclosure, and records the negotiated TLS protocol, cipher, certificate fingerprint, and validation result. Findings include severity and remediation guidance; operators and viewers can review stored results but cannot start an assessment.
-
-The device page compares the two latest completed assessments. It assigns a capped 0–100 score to actionable findings and separates newly exposed, persistent, and resolved items. Informational evidence does not increase the score, so a clean follow-up scan clearly shows remediated exposure without treating positive informational records as new risk.
-
-The assessment does not exploit vulnerabilities, submit credentials, brute-force services, execute payloads, or enumerate arbitrary networks. In the hybrid lab launcher, `AEGIS_AUTHORIZED_LAB_MODE=true` removes address-range classification for explicit actions against devices already registered in AEGIS. Authentication, administrator checks, rate limits, bounded port sets, and input validation remain enabled. Results are exposure indicators—not proof that a CVE is present—and should be combined with authenticated patch and asset-management records.
-
-### Passive attack-path analysis
-
-Administrators can open **Attack paths** from the sidebar. AEGIS correlates the latest stored assessment for each active device with inventory groups, IP subnets, and target criticality. Exposed remote-access services such as SSH, SMB, RDP, VNC, FTP, and Telnet are shown as possible entry points toward related assets. The analysis sends no additional network traffic and clicking either endpoint opens that device's AEGIS record.
-
-These paths are prioritization hypotheses, not confirmed routes. Sharing a group or subnet does not prove that firewalls, credentials, or network segmentation permit lateral access. Confirm important paths with the network design and authorized validation before treating them as exploitable.
+Attack-surface findings and passive attack paths are prioritization evidence, not proof of exploitability. Confirm important results against firewall policy, network design, patch records, and approved validation procedures.
 
 ### Security workbench
 
-Administrators can open **Security workbench** from the sidebar for one consolidated defensive-investigation interface. It contains:
+The administrator-only **Security workbench** consolidates defensive investigation tools without turning Aegis into a credential or interception suite.
 
-- Browser-local Base64, hexadecimal, and URL encoding/decoding. Input is never sent to the API.
-- Searchable registered network inventory and existing packet-capture summaries.
-- Browser-local credential-hygiene feedback using disposable password examples.
-- A bounded traceroute to a selected registered device: at most 12 hops and 20 seconds.
-- Inventory-completeness and stored attack-path review without configuration extraction.
-- Local AEGIS-host wireless-adapter status without Wi-Fi keys or handshake collection.
-- Validated forward and reverse DNS queries without constructing shell commands.
+| Tool | What it does |
+|---|---|
+| Decoder and encoder | Converts Base64, hexadecimal, and URL components entirely in the browser. Input is not sent to the API. |
+| Integer and bitwise converter | Converts practical-size integers between decimal, hexadecimal, binary, and octal and performs signed AND, OR, XOR, NOT, left-shift, and right-shift operations locally. |
+| Secure password generator | Generates random 16-, 20-, 24-, or 32-character passwords with browser cryptographic randomness and supports masked display and copying. |
+| Password-strength guide | Evaluates a disposable example locally, displays a four-stage strength meter, and explains how length, character variety, repetition, sequences, and predictable words affect the result. Real passwords should never be entered. |
+| Registered inventory search | Searches known assets and their recorded details without scanning arbitrary targets. |
+| Capture review | Summarizes stored controlled packet-capture metadata and links to the capture workflow. |
+| Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
+| Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
+| DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
 
-This is deliberately not a credential-cracking or interception suite. AEGIS does not provide password/hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, wireless-key recovery, router-configuration theft, or arbitrary remote command execution. Packet inspection remains metadata-only and all workbench API routes require an administrator session.
+Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, payload capture, exploit execution, brute force, or arbitrary remote command execution.
 
-## Controlled packet capture
+### Reports and observability
 
-Administrators can open **Packet capture** from the sidebar and select an interface, a duration of 1–30 seconds, and a maximum of 1–1000 packets. AEGIS stores only metadata: timestamp, source/destination address, protocol, ports, and packet length. Packet payloads and PCAP files are not retained.
+| Function | What it does |
+|---|---|
+| Availability reports | Produces date-bounded availability, outage, and latency summaries from stored monitoring results. |
+| Scheduled reports | Generates local availability-report files on an administrator-defined schedule and keeps a downloadable report history. |
+| Prometheus metrics | Exposes authenticated OpenMetrics data for device state, latency, unresolved alerts, service health, host utilization, and scheduler state. |
+| Embedded Grafana | Displays the provisioned **Aegis Infrastructure Overview** dashboard inside the application with device, alert, service, latency, and resource panels. |
+| System status | Checks application readiness, database access, supporting tools, configured secrets, scheduler state, and integration availability from one administrator view. |
 
-Windows capture requires Npcap and may require launching the backend terminal as Administrator. Capture only networks and devices you own or are explicitly authorized to monitor. The feature disables promiscuous mode and does not inject or modify traffic.
+Prometheus authenticates with a bearer token stored in `secrets/prometheus_token.txt`. Grafana is provisioned automatically and its anonymous Viewer access is bound to the local host by default; administrative Grafana changes still require its administrator account.
 
-The hybrid launcher sets `AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY=true`, allowing discovery when the active physical Windows adapter receives a non-RFC-1918 address. This does not accept a browser-supplied target: discovery is restricted to the directly connected adapter, excludes VPN/virtual interfaces, and scans at most its local `/24`. Remove that environment assignment to restore private-network-only discovery.
+### Notifications, administration, and resilience
 
-ARP discovery is rate-limited by `AEGIS_DISCOVERY_ARP_PACKETS_PER_SECOND` (default `10`) and performs one retry-free pass. Lower values reduce broadcast traffic further but increase discovery duration.
+| Function | What it does |
+|---|---|
+| Notification channels | Sends alert notifications through email, Microsoft Teams, or Twilio SMS. Administrators can configure non-secret settings, send tests, inspect delivery history, and retry failures. |
+| Delivery control | Queues each alert/channel pair once and retries failed automatic deliveries at most three times. Integration secrets remain in environment variables. |
+| User administration | Creates local users, assigns roles, enables or disables accounts, resets passwords, and revokes sessions when access changes. |
+| Audit log | Records authenticated write operations with actor, role, method, route, response status, source address, and timestamp. Request bodies, passwords, and tokens are excluded. |
+| Automation center | Manages maintenance windows, correlated incidents, allowlisted incident diagnostics, scheduled reports, configuration baselines, agent-version visibility, and advisory health summaries. |
+| Configuration drift | Compares recorded device information with stored baselines and surfaces material changes for review. |
+| Health summary | Produces a built-in operational summary. An optional local Foundry model can rewrite that summary when explicitly configured; the built-in result remains the fallback. |
+| Backups | Creates verified SQLite snapshots at startup and on schedule, supports manual creation and verification, and keeps the configured number of recent backups. |
+| History retention | Previews aged monitoring data before deletion, requires an explicit confirmation phrase, and creates a verified safety backup before cleanup. Configuration and identity records are preserved. |
 
-All published Docker ports are explicitly bound to `127.0.0.1`. AEGIS, Grafana, and Prometheus are therefore accessible only from the local computer unless an operator deliberately changes the Compose bindings or places a separately secured reverse proxy in front of them.
+Network-changing automations—automatic discovery, service discovery, and paced defensive assessment—remain disabled until an administrator explicitly enables them.
 
-## Local anomaly detection
+## Authentication and roles
 
-After at least 21 samples, AEGIS builds a per-device robust local baseline using the median and median absolute deviation. It evaluates latency, CPU, memory, and disk measurements and records warning or critical anomalies when the latest value is significantly above that baseline. Detection runs after scheduled monitoring and can also be triggered from the device page.
+The first browser visit creates the initial local administrator. Passwords must contain at least 12 characters and are hashed with scrypt using a unique random salt. Sign-in creates a random 12-hour opaque session token; only its SHA-256 digest is stored in SQLite, and sign-out revokes it.
 
-This feature runs locally and does not send telemetry to an AI provider or require an API key. Its results are operational indicators rather than guaranteed diagnoses; review the underlying measurements before taking action.
+| Role | Access |
+|---|---|
+| Administrator | Full monitoring and reporting access plus security tools, packet capture, automation, notification settings, backups, system status, audit events, and user management. |
+| Operator | Device, group, discovery, monitoring, alert, agent, service, and topology management without administrative security or account controls. |
+| Viewer | Read-only dashboards, device details, histories, statistics, charts, and stored findings. |
+
+The API enforces permissions independently of the interface. Aegis prevents the last active administrator from being disabled or demoted. Disabling an account or resetting its password revokes existing sessions.
+
+## Architecture
+
+Aegis intentionally uses a small, inspectable architecture.
+
+| Component | Technology | Responsibility |
+|---|---|---|
+| Web interface | React and Vite | Responsive dashboard, device workflows, reporting, administration, and browser-local utilities. |
+| Application API | FastAPI and Pydantic | Authentication, validation, authorization, monitoring workflows, reporting, and administrative APIs. |
+| Data store | SQLite and SQLAlchemy | Inventory, users, sessions, monitoring history, alerts, audit records, automation state, and configuration. |
+| Scheduler | In-process asynchronous task | Periodic checks, alert evaluation, agent-health evaluation, notifications, backups, reports, and enabled automations. |
+| Agent ingress | Separate FastAPI process in hybrid mode | Narrow endpoint surface for remote metrics and diagnostic job exchange. |
+| Observability | Prometheus and Grafana | Metric retention, querying, and provisioned infrastructure dashboards. |
+
+SQLite is appropriate for a single Aegis application instance. The Kubernetes manifests intentionally run one backend replica; horizontal backend scaling requires migration to a shared database such as PostgreSQL and coordination of scheduled work.
 
 ## Requirements
 
 - Python 3.12 or newer
-- PowerShell (commands below) or an equivalent terminal
+- Node.js 20.19 or newer and npm
+- PowerShell on Windows, or an equivalent terminal for native development
+- Docker Desktop for Prometheus, Grafana, or the complete container stack
+- Npcap for Windows packet metadata capture
+- Nmap on remote agents that use service/version diagnostics
 
-## Authentication and roles
+## Installation
 
-On the first browser visit, AEGIS requires creation of a local administrator with a username and a password of at least 12 characters. Passwords are hashed with scrypt and a unique random salt. Successful sign-in creates a random 12-hour opaque session token; only its SHA-256 digest is stored in SQLite, and sign-out revokes it.
+### Prepare the application
 
-Roles are enforced by the API and reflected in the browser:
-
-- **Admin**: full monitoring access plus local-user creation, role changes, enable/disable controls, and session revocation when an account is disabled.
-- **Operator**: device, discovery, monitoring, alert, agent, and service-management access without user administration.
-- **Viewer**: read-only dashboards, details, histories, statistics, and charts.
-
-The health endpoint, first-run setup, login, API documentation, and authenticated remote-agent metric submission remain reachable without a browser session. All other application API endpoints require `Authorization: Bearer <session-token>`.
-
-Authenticated POST, PUT, and DELETE operations create persistent audit events containing the acting username and role, HTTP method, route, response status, source address, and timestamp. Request bodies, passwords, and tokens are never written to the audit trail. Administrators can search and filter the latest events from **Audit log** in the sidebar; the API is available at `GET /api/auth/audit-events`.
-
-AEGIS prevents the last active administrator from being disabled or demoted. Disabling an account or resetting its password revokes its existing sessions.
-
-## Run the backend
+From the repository root:
 
 ```powershell
 cd backend
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --reload
+
+cd ..\frontend
+npm.cmd install
+cd ..
 ```
 
-Open:
+Create the local Prometheus token used by hybrid and container deployments:
 
-- API documentation: <http://127.0.0.1:8000/docs>
-- Health check: <http://127.0.0.1:8000/api/health>
+```powershell
+New-Item -ItemType Directory -Force secrets
+$tokenBytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($tokenBytes)
+$rng.Dispose()
+($tokenBytes | ForEach-Object { $_.ToString("x2") }) -join "" |
+  Set-Content -NoNewline secrets/prometheus_token.txt
+```
 
-The local SQLite database is created as `backend/monitoring.db` and is intentionally ignored by Git.
+### Recommended Windows hybrid deployment
 
-## Run tests
+Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics, and agent ingress native while running Prometheus and Grafana in Docker:
+
+```powershell
+.\start-hybrid.ps1
+```
+
+The launcher verifies the frontend, API, agent ingress, Grafana, and Prometheus before returning. If Docker Desktop is unavailable, it starts the core Aegis services without the observability containers. Runtime logs are written to `logs/`.
+
+Stop the stack without deleting data:
+
+```powershell
+.\stop-hybrid.ps1
+```
+
+If script execution is restricted for the current terminal:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+### Native development
+
+Start the API from one PowerShell window:
 
 ```powershell
 cd backend
 .\.venv\Scripts\Activate.ps1
-python -m pytest
+python -m uvicorn app.main:app --reload
 ```
 
-Tests use a temporary SQLite database and do not modify the development database.
-
-## API endpoints
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/api/health` | Confirm the API is healthy |
-| POST | `/api/devices` | Create a device |
-| GET | `/api/devices` | List devices |
-| GET | `/api/devices/{id}` | Retrieve one device |
-| PUT | `/api/devices/{id}` | Update one device |
-| DELETE | `/api/devices/{id}` | Delete one device |
-| POST | `/api/devices/{id}/check` | Ping one device and store the result |
-| POST | `/api/devices/check-all` | Check every active device and return an online/offline summary |
-| GET | `/api/devices/{id}/history` | List recent monitoring results |
-| GET | `/api/devices/{id}/statistics` | Calculate availability and latency statistics |
-| GET | `/api/devices/{id}/status-events` | List derived online/offline transitions |
-| POST | `/api/devices/{id}/scan-ports` | Scan a bounded set of common TCP ports on a private registered device |
-| GET | `/api/scheduler/status` | Show automatic-monitoring status and interval |
-| POST | `/api/scheduler/pause` | Pause automatic monitoring without affecting manual checks |
-| POST | `/api/scheduler/resume` | Resume automatic monitoring when enabled by server configuration |
-| GET | `/api/dashboard` | Return dashboard counts, device summaries, and recent events |
-
-## Run the frontend
-
-Keep the backend running, then open a second PowerShell window:
+Start the interface from another:
 
 ```powershell
-cd "$HOME\Desktop\aegis\frontend"
-npm.cmd install
+cd frontend
 npm.cmd run dev
 ```
 
-Open <http://127.0.0.1:5173>. The dashboard refreshes automatically every 15 seconds and includes a **Check now** action for each device.
+Native development uses `http://127.0.0.1:8000` for the API and `http://127.0.0.1:5173` for the interface. The SQLite database is created as `backend/monitoring.db` and is ignored by Git.
 
-Use **Search** in the dashboard header (or `Ctrl+K` / `Cmd+K`) to quickly open devices and operational panels. The command palette supports typing to filter, arrow keys (or Home/End) to choose a result, `Enter` to open it, and `Esc` to close.
+### Fully containerized deployment
 
-The dashboard-level **Check all** action runs an immediate reachability check for every active device, stores normal history and alert evaluations, disables conflicting dashboard actions while running, and reports the resulting online/offline totals.
-
-The monitored-device table supports ascending/descending sorting by device name, status, latency, availability, and last-check time. Devices without a value remain at the end of either numeric/date ordering.
-
-The inventory can also be searched by device name, IP address, or type and filtered by monitoring status and device type. Search and filters combine with the selected table sort, and the heading shows the number of matching devices.
-
-Inventory results are paginated after filtering and sorting. The dashboard shows 10 rows by default, supports 10/25/50-row page sizes, and reports the visible result range and current page.
-
-The **Export CSV** action downloads the complete currently filtered and sorted inventory, regardless of the current page. The UTF-8 CSV includes device identity, status, latency, availability, and last-check time for spreadsheet use and reporting.
-
-The **Export Excel** action creates a native `.xlsx` workbook from the same filtered and sorted inventory. It contains a formatted, filterable **Device Inventory** table with frozen headers and typed latency, percentage, and date cells, plus a **Summary** sheet with formula-driven device-status counts. The Excel library is loaded only when export is requested so the normal dashboard bundle stays lightweight.
-
-The frontend also supports adding and editing devices, confirmed deletion, and a detail view containing statistics, monitoring history, and status transitions.
-
-Each device detail view has a shareable URL such as `/devices/1`, supports browser Back/Forward navigation, and plots the 30 most recent successful latency measurements without an external charting dependency.
-
-Local alert rules can be configured per device. AEGIS raises persistent critical alerts after a chosen number of consecutive failures, warning alerts above a latency threshold, resolves them automatically after recovery, and supports acknowledgement from the dashboard.
-
-Administrators can open **Notifications** from the sidebar to enable Email or Microsoft Teams, save non-secret settings, send test messages, inspect delivery history, and retry failures. Automatic alert deliveries are uniquely queued per alert/channel and retried at most three times by the scheduler.
-
-Secrets are intentionally supplied as environment variables before starting the backend and are never returned by the API or stored in SQLite:
+Create the Docker environment file:
 
 ```powershell
-$env:AEGIS_SMTP_PASSWORD = "your-smtp-app-password"
-$env:AEGIS_TEAMS_WEBHOOK_URL = "https://your-teams-workflow-webhook"
-$env:AEGIS_TWILIO_ACCOUNT_SID = "your-account-sid"
-$env:AEGIS_TWILIO_AUTH_TOKEN = "your-auth-token"
+Copy-Item .env.docker.example .env
 ```
 
-Configure the SMTP host, port, username, sender, recipients, and TLS option in the administrator UI. The Teams card only needs the webhook environment variable. Restart the backend after changing environment variables.
-
-The SMS channel uses Twilio's Messages API. Configure the sender and comma-separated recipients in **Notifications**; keep the account SID and authentication token in the environment variables above.
-
-## SNMP monitoring
-
-Each device detail page includes an opt-in SNMP v2c panel. AEGIS reads only the standard system description, system name, location, uptime, and interface-count OIDs and stores every result. Enable automatic polling or use **Poll now** for an immediate check.
-
-The SNMP community is never stored in SQLite. Set it before launching the backend:
+Set a unique `GRAFANA_ADMIN_PASSWORD` in `.env`, ensure `secrets/prometheus_token.txt` exists, and start the stack:
 
 ```powershell
-$env:AEGIS_SNMP_COMMUNITY = "your-read-only-community"
+docker compose up --build -d
+docker compose ps
 ```
 
-For devices that use different communities, create another environment variable and enter its name—not its value—in that device's SNMP panel. Restrict UDP port 161 and read-only community access to the AEGIS host on your isolated lab network.
+Stop containers while preserving named volumes:
 
-## Local network discovery
+```powershell
+docker compose down
+```
 
-On Windows, **Discover devices** identifies the active private IPv4 adapter, shows the exact interface and `/24` network for confirmation, then probes at most 254 local addresses. Responsive addresses are imported automatically, existing IPs are skipped, and MAC addresses are included when Windows has them in its ARP table.
+Do not add `-v` unless you intentionally want to remove Aegis, Prometheus, and Grafana volume data.
 
-Discovery is deliberately user-triggered and restricted to private networks. Use it only on networks you own or have explicit permission to test. `ipconfig /all` itself lists adapter configuration; it does not enumerate all devices, so AEGIS combines adapter detection, bounded ping discovery, and the ARP table.
+### Service addresses
 
-VPN, tunnel, Hyper-V, VirtualBox, VMware, loopback, and `/31`–`/32` interfaces are excluded from automatic LAN selection. If the physical adapter has a public IPv4 address, discovery stops instead of scanning a publicly routed range. Guest, campus, hotel, and mobile networks may also use client isolation, which prevents devices from discovering one another even when they share an apparent subnet.
+| Service | Hybrid mode | Container or native development |
+|---|---|---|
+| Aegis interface | `http://127.0.0.1:5173` | `http://127.0.0.1:5173` |
+| API documentation | `http://127.0.0.1:8001/docs` | `http://127.0.0.1:8000/docs` |
+| Agent ingress | `http://<host-LAN-IP>:8002` | Not included in the standard single-process development command |
+| Grafana | `http://127.0.0.1:3000` | `http://127.0.0.1:3000` with Docker |
+| Prometheus | `http://127.0.0.1:9090` | `http://127.0.0.1:9090` with Docker |
 
-## Service monitoring
+On first sign-in, follow the setup screen to create the initial administrator.
 
-Device detail pages support TCP, HTTP, and HTTPS service checks. TCP checks verify that a port accepts a connection; HTTP/HTTPS checks send a bounded `GET` request to a validated path and record response time plus status code. Checks use the registered device IP rather than arbitrary URLs, store history in SQLite, and run automatically with the normal scheduler when active.
+## Remote agent deployment
 
-Existing service checks can be edited from the device page, including their name, protocol, port, HTTP path, and automatic-check state. Individual checks can be paused without deleting their configuration or stored history.
-
-Each service check also exposes its 20 most recent results inline, including timestamp, up/down status, response time, HTTP status code when applicable, and normalized failure diagnostics.
-
-Expanded service history includes availability, average successful response time, successful/failed totals, and a dependency-free SVG response-time chart. Failed samples remain visible in the table but are omitted from the response-time line because they have no latency value. The statistics are also available from `GET /api/service-checks/{check_id}/statistics`.
-
-The **Scan common ports** action performs a user-confirmed, concurrent scan of a fixed infrastructure allowlist: FTP, SSH, Telnet, SMTP, DNS, HTTP(S), POP3, IMAP, LDAP, SMB, MySQL, RDP, PostgreSQL, VNC, Redis, HTTP alternate, and Elasticsearch. It reports open ports plus connection time. It is limited to registered devices on private/loopback addresses or, when `AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY=true`, the bounded `/24` of the active physical adapter. Unrelated public targets are rejected. The bounded scan is intended for devices you own or are explicitly authorized to test.
-
-Each discovered open port includes a **Monitor** action. AEGIS maps port 443 to HTTPS, ports 80/8080 to HTTP, and the remaining common ports to TCP, then creates a persistent scheduled service check. Ports already represented by a service check are marked **Monitored** and cannot be duplicated from the scan result.
-
-## Device groups and bulk operations
-
-Devices can be assigned to an optional operational group such as `Finance Lab`, `Server Room`, or `Floor 2`. Groups are searchable, filterable, visible in device details, and included in Excel inventory exports.
-
-Administrators and operators can select devices from the inventory table and assign or clear a group, enable or pause automatic monitoring, or run immediate checks. Bulk requests reject duplicate IDs and validate the complete selection before making changes; if any selected device no longer exists, no group or monitoring update is committed. Bulk deletion is deliberately not provided.
-
-## Local host metrics
-
-For loopback devices (`127.0.0.1` or `::1`), AEGIS collects CPU, memory, and system-disk usage through a built-in local collector. Samples are stored each scheduler cycle and can also be collected manually. Remote devices report through the separately enrolled authenticated agent described below.
-
-## Remote host agent
-
-Remote Windows/Linux devices can be enrolled from their device page. AEGIS displays a one-time token and stores only its SHA-256 hash. The agent submits metrics using the `X-Agent-Token` header; tokens can be rotated or revoked, and a token is bound to exactly one device.
-
-Hybrid mode keeps the administrative API on loopback port `8001` and starts a separate agent-only ingress on TCP `8002`. Run the following once from PowerShell as Administrator to allow only the active physical subnet through Windows Firewall:
+Enroll a remote device from its Aegis device page and copy the one-time token. In hybrid mode, run the firewall helper once as Administrator on the Aegis host; it limits inbound agent access to the active physical subnet:
 
 ```powershell
 .\configure-agent-access.ps1
 ```
 
-For a remote Windows host, copy the `agent` folder, open PowerShell as Administrator, and run the one-command installer. The token is prompted securely when omitted:
+On a remote Windows host, copy the `agent` directory and run:
 
 ```powershell
 .\install-windows.ps1 -ServerUrl "http://AEGIS-LAN-IP:8002"
 ```
 
-Remote diagnostics are disabled by default. To explicitly allow the administrator-only diagnostic job panel on that host, add `-EnableDiagnostics`:
+The installer prompts securely for the token when it is omitted, stores private configuration under `%ProgramData%\AEGIS Agent`, submits a verification sample, and registers an auto-restarting startup task. Enable the fixed diagnostic job set only when it is required:
 
 ```powershell
 .\install-windows.ps1 -ServerUrl "http://AEGIS-LAN-IP:8002" -EnableDiagnostics
 ```
 
-The agent accepts only fixed diagnostic types: local service/version scan, bounded packet metadata capture, operating-system warning/error summary, network connections, top processes, SUID audit, login history, local accounts, and firewall rules. It does not accept arbitrary command text. Every job is bound to one enrolled device, expires after 15 minutes, has bounded parameters and result size, and is recorded in the normal HTTP audit trail. Nmap must be installed on the agent host for service/version scanning. Packet metadata capture requires Scapy plus Npcap on Windows and never stores packet payloads.
-
-The installer first verifies that the dedicated agent ingress is reachable, creates a private configuration under `%ProgramData%\AEGIS Agent`, submits one authenticated verification sample, and then registers the auto-restarting `AEGIS Host Agent` startup task. Operational logs rotate under `%ProgramData%\AEGIS Agent\logs\agent.log`. Remove the agent with `%ProgramData%\AEGIS Agent\uninstall-windows.ps1` from an administrator terminal.
-
-Run a non-authenticated connectivity check on a remote host with:
+Test connectivity and enrollment from the remote host:
 
 ```powershell
 & "$env:ProgramData\AEGIS Agent\test-agent.ps1"
-```
-
-Test both connectivity and the enrolled token by submitting one real metric sample:
-
-```powershell
 & "$env:ProgramData\AEGIS Agent\test-agent.ps1" -SubmitSample
 ```
 
-On the remote machine, copy the `agent/` folder and run:
+For manual Windows or Linux execution:
 
 ```powershell
+cd agent
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:AEGIS_SERVER_URL = "http://192.168.10.74:8002"
+$env:AEGIS_SERVER_URL = "http://AEGIS-LAN-IP:8002"
 $env:AEGIS_AGENT_TOKEN = "PASTE_ONE_TIME_TOKEN"
-$env:AEGIS_AGENT_DIAGNOSTICS_ENABLED = "true" # Optional administrator diagnostics
+$env:AEGIS_AGENT_DIAGNOSTICS_ENABLED = "false"
 .\.venv\Scripts\python.exe aegis_agent.py
 ```
 
-Agent state is derived from the interval each collector reports: `WAITING`, `REPORTING`, `DELAYED`, or `OFFLINE`. The dashboard-level **Remote agent fleet** panel summarizes those states and links each collector to its device page. Expand it to filter by health state and see the reported hostname, platform, last report time, and reporting interval. Attention states and the stalest reports are listed first.
+Do not expose agent ingress directly to the public Internet. Use authenticated HTTPS and network-layer access controls for production or routed deployments. See [Remote diagnostics](docs/REMOTE_DIAGNOSTICS.md) for job types and operating boundaries.
 
-When a previously reporting agent becomes `OFFLINE`, the scheduler creates one persistent `AGENT_OFFLINE` critical alert. The alert respects device maintenance windows, uses the normal acknowledgement and notification flow, and resolves automatically as soon as reporting resumes. Agents that have never connected remain `WAITING` and do not generate false offline alerts. CPU, memory, and disk warning thresholds are configured in the normal per-device alert rule. Do not expose the agent ingress to the public Internet; production deployment, especially remote diagnostics, requires HTTPS.
+## Configuration
 
-## Logical network topology
+Backend settings can be supplied through the process environment or `backend/.env`. Secrets should remain in the process environment or dedicated secret files and must not be committed.
 
-The dashboard topology groups inventory by imported VLAN and IPv4 `/24` or IPv6 `/64`. It identifies the active adapter and gateway when available, then arranges classified routers, switches, access points, and endpoints into an inferred logical flow. These relationships are inventory inferences; they do not claim physical switch-port, LLDP, or cable discovery.
+| Variable | Default | Purpose |
+|---|---:|---|
+| `DATABASE_URL` | `sqlite:///./monitoring.db` | SQLAlchemy database connection. |
+| `PING_TIMEOUT_SECONDS` | `2` | Per-device reachability timeout. |
+| `MONITOR_INTERVAL_SECONDS` | `60` | Scheduler interval in seconds. |
+| `SCHEDULER_ENABLED` | `true` | Enables scheduled monitoring at application startup. |
+| `AEGIS_BACKUP_ENABLED` | `true` | Enables startup and scheduled database backups. |
+| `AEGIS_BACKUP_INTERVAL_HOURS` | `24` | Time between automatic backups. |
+| `AEGIS_BACKUP_KEEP_COUNT` | `14` | Number of newest backups retained. |
+| `AEGIS_BACKUP_DIRECTORY` | `./backups` | Backup storage directory. |
+| `AEGIS_HISTORY_RETENTION_DAYS` | `90` | Age threshold used by retention preview and cleanup. |
+| `AEGIS_REPORT_DIRECTORY` | `./reports` | Generated report storage directory. |
+| `AEGIS_ATTACHMENT_DIRECTORY` | `./attachments` | Device attachment storage directory. |
+| `AEGIS_PROMETHEUS_TOKEN` | unset | Direct bearer token for `/metrics`. |
+| `AEGIS_PROMETHEUS_TOKEN_FILE` | unset | File containing the Prometheus bearer token. |
+| `AEGIS_SNMP_COMMUNITY` | unset | Default read-only SNMP community. Device settings may reference another environment-variable name. |
+| `AEGIS_SMTP_PASSWORD` | unset | SMTP password for email delivery. |
+| `AEGIS_TEAMS_WEBHOOK_URL` | unset | Microsoft Teams workflow webhook. |
+| `AEGIS_TWILIO_ACCOUNT_SID` | unset | Twilio account identifier. |
+| `AEGIS_TWILIO_AUTH_TOKEN` | unset | Twilio authentication secret. |
+| `AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY` | `false` | Allows discovery only on the bounded `/24` of the active physical adapter when its address is not private. |
+| `AEGIS_AUTHORIZED_LAB_MODE` | `false` | Permits bounded defensive actions against explicitly registered devices outside normal private-address classification. |
+| `AEGIS_DISCOVERY_ARP_PACKETS_PER_SECOND` | `20` | Rate limit for the retry-free ARP discovery pass. |
+| `AEGIS_FOUNDRY_LOCAL_URL` | unset | Optional loopback or private Foundry Local-compatible endpoint for health-summary wording. |
+| `AEGIS_FOUNDRY_LOCAL_MODEL` | unset | Model identifier used with the optional local summary endpoint. |
+| `VITE_GRAFANA_URL` | `http://127.0.0.1:3000` | Browser-visible Grafana base URL set at frontend build time. |
+| `VITE_GRAFANA_DASHBOARD_URL` | provisioned dashboard | Optional complete embedded-dashboard URL set at frontend build time. |
 
-Operators can also record confirmed `UPLINK`, `CONNECTS TO`, `ROUTES TO`, and `MANAGES` relationships between registered devices. Confirmed links remain separate from inferred subnet layout and both endpoints are clickable.
+Notification recipients, SMTP server details, ports, sender addresses, TLS choices, and channel enablement are non-secret settings managed in the administrator interface. Restart the backend after changing secret environment variables.
 
-## Automatic monitoring
+## Data, backup, and restoration
 
-The backend starts one periodic monitoring task with the application. By default, it waits 60 seconds and then checks every active device. Inactive devices are skipped, and each result is stored exactly like a manual **Check Now** result.
+Native mode stores the database, reports, backups, and attachments under `backend/` by default. Docker stores them in the `aegis_data` named volume; Prometheus and Grafana use separate named volumes.
 
-The interval can be changed for local development before starting the server:
-
-```powershell
-$env:MONITOR_INTERVAL_SECONDS = "10"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
-```
-
-Use a short interval only for testing. The recommended normal MVP value is 60 seconds.
-
-## Operations automation
-
-Administrators can open **Automation center** from the sidebar. It provides
-recurring maintenance windows, correlated incidents, optional allowlisted
-incident diagnostics, scheduled local availability reports, configuration
-drift detection, desired-agent-version visibility, and an advisory health
-summary. Network-changing automations—automatic discovery, service discovery,
-and paced defensive assessment—are disabled until an administrator enables
-them.
-
-The automation scheduler reuses the normal monitoring cycle and database
-records. It does not create a second worker or duplicate the monitoring logic.
-See [docs/AUTOMATION.md](docs/AUTOMATION.md) for configuration and safety
-boundaries.
-
-## Backups and history retention
-
-Administrators can open **Backups & retention** from the sidebar. AEGIS creates a consistent SQLite snapshot at startup and every 24 hours, verifies it with SQLite's integrity check, and retains the newest 14 backups. Manual backups can also be created, re-verified, and downloaded from the same screen. Backup files are stored under `backend/backups` in native Windows mode and `/data/backups` in Docker.
-
-These environment variables customize the policy:
-
-```powershell
-$env:AEGIS_BACKUP_ENABLED = "true"
-$env:AEGIS_BACKUP_INTERVAL_HOURS = "24"
-$env:AEGIS_BACKUP_KEEP_COUNT = "14"
-$env:AEGIS_BACKUP_DIRECTORY = ".\backups"
-$env:AEGIS_HISTORY_RETENTION_DAYS = "90"
-```
-
-History cleanup always starts with a read-only preview. Applying it requires typing `DELETE HISTORY`, creates and verifies a safety backup first, and only removes old reachability results, service results, host metrics, SNMP results, and anomaly events. Devices, users, alert rules, service definitions, and other configuration are preserved.
-
-To restore a downloaded or local backup, stop AEGIS and run the guarded Windows restore command:
+To restore a downloaded or local backup on Windows:
 
 ```powershell
 .\stop-hybrid.ps1
@@ -431,18 +360,52 @@ To restore a downloaded or local backup, stop AEGIS and run the guarded Windows 
 .\start-hybrid.ps1
 ```
 
-The restore script refuses to continue while port 8001 is listening, verifies SQLite integrity and required AEGIS tables, and preserves the previous active database as `backend/backups/pre-restore-<timestamp>.db` before replacement.
+The restore script refuses to proceed while the native API port is listening, verifies SQLite integrity and required Aegis tables, and preserves the previous database as `backend/backups/pre-restore-<timestamp>.db` before replacement.
 
-The dashboard displays the scheduler as **Auto running**, **Auto paused**, or **Auto disabled**. Select the status control to pause or resume scheduled checks; manual device and batch checks remain available while paused. A server configured with `SCHEDULER_ENABLED=false` cannot be resumed from the browser.
+Back up the attachment directory together with the database when moving an installation. Attachment metadata is stored in SQLite, while file contents are stored separately.
 
-Example request:
+## API
 
-```json
-{
-  "name": "Ubuntu Server",
-  "ip_address": "192.168.56.20",
-  "device_type": "Server",
-  "description": "Isolated Linux test VM",
-  "is_active": true
-}
+Interactive OpenAPI documentation is available at `/docs`. The API is organized into authentication, devices, monitoring, alerts, discovery, services, host metrics, remote agents, SNMP, inventory health, reports, topology, notifications, reliability, automation, system status, and security operations.
+
+The health endpoint, first-run setup, login, API documentation, and authenticated agent submission endpoints are available without a browser session. Other application endpoints require `Authorization: Bearer <session-token>`. The Prometheus endpoint uses its own bearer token.
+
+## Testing and verification
+
+Run the backend test suite:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest
 ```
+
+Tests use temporary SQLite databases and do not modify the development database.
+
+Create a production frontend build:
+
+```powershell
+cd frontend
+npm.cmd run build
+```
+
+## Kubernetes deployment
+
+Kustomize manifests are provided in `deploy/kubernetes`. Build and publish the backend and frontend images, replace the placeholder image references, and create the untracked secret manifest:
+
+```powershell
+Copy-Item deploy/kubernetes/secret.example.yaml deploy/kubernetes/secret.yaml
+```
+
+Replace every placeholder, configure the intended ingress hostname and TLS, then deploy:
+
+```powershell
+kubectl apply -k deploy/kubernetes
+kubectl -n aegis get pods,svc,pvc,ingress
+```
+
+Before production use, configure secret encryption at rest, restrict secret RBAC, use a managed secret provider where possible, pin container images by digest, and back up all persistent volumes.
+
+## Additional documentation
+
+- [Automation behavior and safety controls](docs/AUTOMATION.md)
+- [Remote diagnostics operating guide](docs/REMOTE_DIAGNOSTICS.md)
