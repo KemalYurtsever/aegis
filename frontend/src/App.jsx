@@ -5,6 +5,7 @@ import SystemStatusModal from "./SystemStatusModal.jsx";
 import AttackPathsModal from "./AttackPathsModal.jsx";
 import SecurityWorkbenchModal from "./SecurityWorkbenchModal.jsx";
 import aegisShield from "./assets/aegis-shield.png";
+import aegisShieldDark from "./assets/aegis-shield-dark.png";
 import { formatDate, formatMetric, toDateTimeLocal } from "./format.js";
 import {
   checkDevice,
@@ -4460,7 +4461,10 @@ function AuthScreen({ setupRequired, onAuthenticated }) {
       <section className="auth-card">
         <div className="auth-brand">
           <span className="brand-mark">
-            <img src={aegisShield} alt="" />
+            <img
+              src={visualTheme === "goth" ? aegisShieldDark : aegisShield}
+              alt=""
+            />
           </span>
           <div>
             <strong>Aegis</strong>
@@ -6090,7 +6094,10 @@ export default function App() {
       >
         <div className="sidebar-brand">
           <div className="brand-mark">
-            <img src={aegisShield} alt="" />
+            <img
+              src={visualTheme === "goth" ? aegisShieldDark : aegisShield}
+              alt=""
+            />
           </div>
           <div>
             <strong>Aegis</strong>
@@ -6933,6 +6940,7 @@ export default function App() {
       {showSecurityWorkbench && (
         <SecurityWorkbenchModal
           devices={data.devices}
+          visualTheme={visualTheme}
           onClose={() => setShowSecurityWorkbench(false)}
           onOpenCapture={() => setShowPacketCapture(true)}
           onSelectDevice={navigateFromSecurityWorkbench}
