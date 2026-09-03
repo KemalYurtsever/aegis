@@ -6173,8 +6173,9 @@ kbd {
 :is(.app-shell--classic, .app-shell--goth) .sidebar-brand strong {
   font-family: inherit;
   font-size: 20px;
-  font-weight: 800;
-  letter-spacing: 0.045em;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 }
 :is(.app-shell--classic, .app-shell--goth) .sidebar-brand span {
   font-size: 13px;
