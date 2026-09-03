@@ -1,13 +1,13 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: liims
-  namespace: liims
+  name: aegis
+  namespace: aegis
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: 2m
 spec:
   rules:
-    - host: liims.example.com
+    - host: aegis.example.com
       http:
         paths:
           - path: /

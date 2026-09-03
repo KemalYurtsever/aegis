@@ -1,2 +1,2 @@
-"""LIIMS backend tests."""
+"""AEGIS backend tests."""
 

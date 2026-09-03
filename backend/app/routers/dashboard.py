@@ -138,7 +138,7 @@ def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
     ))
     notification_tested = bool(db.scalar(
         select(NotificationDelivery.id).where(
-            NotificationDelivery.subject == "LIIMS notification test",
+            NotificationDelivery.subject == "AEGIS notification test",
             NotificationDelivery.status == "SENT",
         ).limit(1)
     ))

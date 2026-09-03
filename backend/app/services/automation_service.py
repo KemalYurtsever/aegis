@@ -116,7 +116,7 @@ def correlate_incidents(db: Session) -> int:
         device_count = len({alert.device_id for alert in alerts})
         severity = "CRITICAL" if any(alert.severity == "CRITICAL" for alert in alerts) else "WARNING"
         title = f"Correlated outage affecting {device_count} devices"
-        summary = f"LIIMS grouped {len(alerts)} active alerts in {key}. Check shared gateway, switch, DNS, or power dependencies first."
+        summary = f"AEGIS grouped {len(alerts)} active alerts in {key}. Check shared gateway, switch, DNS, or power dependencies first."
         if incident is None:
             incident = Incident(
                 correlation_key=key,
@@ -168,7 +168,7 @@ def escalate_stale_alerts(db: Session) -> int:
             delivery.attempt_count = 0
             delivery.sent_at = None
             delivery.last_error = None
-            delivery.subject = f"LIIMS CRITICAL: {alert.device.name}"
+            delivery.subject = f"AEGIS CRITICAL: {alert.device.name}"
             delivery.message = alert.message
     db.flush()
     return len(alerts)
@@ -273,7 +273,7 @@ def _queue_report_notification(report: GeneratedReport, db: Session) -> None:
     for channel in db.scalars(select(NotificationChannel).where(NotificationChannel.enabled.is_(True))):
         db.add(NotificationDelivery(
             channel_type=channel.channel_type,
-            subject=f"LIIMS scheduled {report.period_days}-day availability report",
+            subject=f"AEGIS scheduled {report.period_days}-day availability report",
             message=f"Report {report.filename} was generated locally for {report.device_count} devices.",
         ))
 
@@ -289,7 +289,7 @@ def generate_scheduled_report(db: Session, force: bool = False) -> GeneratedRepo
     report = build_availability_report(config.report_days, db)
     directory = Path(get_settings().report_directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
-    filename = f"liims-availability-{report.generated_at:%Y%m%d-%H%M%S}.json"
+    filename = f"aegis-availability-{report.generated_at:%Y%m%d-%H%M%S}.json"
     path = directory / filename
     path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
     generated = GeneratedReport(
@@ -439,7 +439,7 @@ def _built_in_summary(db: Session) -> str:
         ):
             offline_agents += 1
     return (
-        f"Current LIIMS health: {active_alerts} active alerts, {incidents} open correlated incidents, "
+        f"Current AEGIS health: {active_alerts} active alerts, {incidents} open correlated incidents, "
         f"{offline_agents} agents not reporting, and {drift} recorded configuration-drift events. "
         "Review open incidents first, then agent health and recent drift events."
     )

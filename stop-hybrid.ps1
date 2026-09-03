@@ -29,4 +29,4 @@ if ($dockerAvailable) {
 } else {
     Write-Warning "Docker Desktop is not running. Prometheus and Grafana were already unavailable."
 }
-Write-Host "Hybrid LIIMS stopped. Persistent data was preserved."
+Write-Host "Hybrid AEGIS stopped. Persistent data was preserved."

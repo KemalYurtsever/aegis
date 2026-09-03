@@ -1,2 +1,2 @@
-"""LIIMS backend application."""
+"""AEGIS backend application."""
 

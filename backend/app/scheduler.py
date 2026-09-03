@@ -39,7 +39,7 @@ class PeriodicMonitor:
     def start(self) -> None:
         if not self.enabled or self.is_running:
             return
-        self._task = asyncio.create_task(self._run_loop(), name="liims-periodic-monitor")
+        self._task = asyncio.create_task(self._run_loop(), name="aegis-periodic-monitor")
         logger.info("Periodic monitoring started interval_seconds=%s", self.interval_seconds)
 
     async def stop(self) -> None:

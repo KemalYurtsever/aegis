@@ -62,7 +62,7 @@ def trace_registered_device(device: Device) -> TraceRouteRead:
     is_windows = platform.system() == "Windows"
     executable = "tracert" if is_windows else "traceroute"
     if shutil.which(executable) is None:
-        raise RuntimeError(f"{executable} is not installed on the LIIMS host")
+        raise RuntimeError(f"{executable} is not installed on the AEGIS host")
     command = (
         [executable, "-d", "-h", "12", "-w", "750", device.ip_address]
         if is_windows
@@ -239,7 +239,7 @@ def _windows_host_network_policy() -> HostNetworkPolicyRead:
 
 def _linux_host_network_policy() -> HostNetworkPolicyRead:
     if shutil.which("ip") is None:
-        raise RuntimeError("The ip command is not installed on the LIIMS host")
+        raise RuntimeError("The ip command is not installed on the AEGIS host")
     completed = subprocess.run(
         ["ip", "-j", "route", "show"], capture_output=True, text=True, errors="replace",
         timeout=15, shell=False, check=False,

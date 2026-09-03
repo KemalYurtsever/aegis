@@ -20,8 +20,8 @@ if (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyCont
     throw "Port 8000 is still occupied after stopping the previous backend."
 }
 
-$env:LIIMS_PROMETHEUS_TOKEN_FILE = $tokenFile
-$env:LIIMS_ALLOW_PUBLIC_LAN_DISCOVERY = "true"
+$env:AEGIS_PROMETHEUS_TOKEN_FILE = $tokenFile
+$env:AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY = "true"
 Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000") -WorkingDirectory $backend -WindowStyle Hidden
 
 $deadline = (Get-Date).AddSeconds(15)

@@ -4,8 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-AGENT_PATH = Path(__file__).parents[2] / "agent" / "liims_agent.py"
-SPEC = importlib.util.spec_from_file_location("liims_agent_client", AGENT_PATH)
+AGENT_PATH = Path(__file__).parents[2] / "agent" / "aegis_agent.py"
+SPEC = importlib.util.spec_from_file_location("aegis_agent_client", AGENT_PATH)
 agent = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(agent)
@@ -32,7 +32,7 @@ def test_agent_health_check_uses_dedicated_ingress(monkeypatch):
     def open_request(request, timeout):
         captured["url"] = request.full_url
         captured["timeout"] = timeout
-        return FakeResponse(200, {"status": "healthy", "service": "LIIMS agent ingress"})
+        return FakeResponse(200, {"status": "healthy", "service": "AEGIS agent ingress"})
 
     monkeypatch.setattr(agent.urllib.request, "urlopen", open_request)
     health = agent.check_server()
@@ -43,7 +43,7 @@ def test_agent_health_check_uses_dedicated_ingress(monkeypatch):
 def test_agent_loads_windows_powershell_bom_config(monkeypatch, tmp_path):
     config = tmp_path / "agent-config.json"
     config.write_bytes(b'\xef\xbb\xbf{"server_url":"http://192.0.2.10:8002","token":"secret"}')
-    monkeypatch.setenv("LIIMS_AGENT_CONFIG_FILE", str(config))
+    monkeypatch.setenv("AEGIS_AGENT_CONFIG_FILE", str(config))
     assert agent.load_config()["server_url"] == "http://192.0.2.10:8002"
 
 

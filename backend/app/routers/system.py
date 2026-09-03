@@ -135,8 +135,8 @@ def system_readiness(request: Request, db: Session = Depends(get_db)) -> SystemR
     ))
 
     secret_groups = {
-        "Prometheus token": "LIIMS_PROMETHEUS_TOKEN",
-        "SNMP community": "LIIMS_SNMP_COMMUNITY",
+        "Prometheus token": "AEGIS_PROMETHEUS_TOKEN",
+        "SNMP community": "AEGIS_SNMP_COMMUNITY",
     }
     configured = [
         label for label, variable in secret_groups.items()

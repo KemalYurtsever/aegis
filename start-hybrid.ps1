@@ -37,23 +37,23 @@ if ($dockerAvailable) {
     docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") up -d
     if ($LASTEXITCODE -ne 0) { throw "Unable to start Prometheus and Grafana." }
 } else {
-    Write-Warning "Docker Desktop is not running. Starting core LIIMS without Prometheus or Grafana."
+    Write-Warning "Docker Desktop is not running. Starting core AEGIS without Prometheus or Grafana."
 }
 
 $backend = Join-Path $projectRoot "backend"
 $frontend = Join-Path $projectRoot "frontend"
 $python = Join-Path $backend ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $python)) { throw "Backend virtual environment is missing: $python" }
-if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw "npm.cmd was not found. Install Node.js before starting LIIMS." }
+if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw "npm.cmd was not found. Install Node.js before starting AEGIS." }
 $backendPort = 8001
 $agentPort = 8002
-$env:LIIMS_PROMETHEUS_TOKEN_FILE = $tokenFile
+$env:AEGIS_PROMETHEUS_TOKEN_FILE = $tokenFile
 # Explicitly permit discovery on the directly connected physical LAN even when
 # the DHCP address is outside RFC 1918. Discovery remains capped to its local /24.
-$env:LIIMS_ALLOW_PUBLIC_LAN_DISCOVERY = "true"
+$env:AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY = "true"
 # Explicit lab mode permits defensive scan actions against any device already
-# registered in LIIMS. Authentication, rate limits, and bounded scan sets stay on.
-$env:LIIMS_AUTHORIZED_LAB_MODE = "true"
+# registered in AEGIS. Authentication, rate limits, and bounded scan sets stay on.
+$env:AEGIS_AUTHORIZED_LAB_MODE = "true"
 $env:VITE_API_BASE_URL = "http://127.0.0.1:$backendPort"
 
 if (-not (Get-NetTCPConnection -LocalPort $backendPort -State Listen -ErrorAction SilentlyContinue)) {
@@ -66,16 +66,16 @@ if (-not (Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction Silent
     Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1") -WorkingDirectory $frontend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory "frontend.out.log") -RedirectStandardError (Join-Path $logDirectory "frontend.err.log")
 }
 
-Wait-HttpEndpoint -Name "LIIMS frontend" -Url "http://127.0.0.1:5173/"
-Wait-HttpEndpoint -Name "LIIMS API" -Url "http://127.0.0.1:$backendPort/api/health"
-Wait-HttpEndpoint -Name "LIIMS agent ingress" -Url "http://127.0.0.1:$agentPort/api/agent/health"
+Wait-HttpEndpoint -Name "AEGIS frontend" -Url "http://127.0.0.1:5173/"
+Wait-HttpEndpoint -Name "AEGIS API" -Url "http://127.0.0.1:$backendPort/api/health"
+Wait-HttpEndpoint -Name "AEGIS agent ingress" -Url "http://127.0.0.1:$agentPort/api/agent/health"
 if ($dockerAvailable) {
     Wait-HttpEndpoint -Name "Grafana" -Url "http://127.0.0.1:3000/api/health"
     Wait-HttpEndpoint -Name "Prometheus" -Url "http://127.0.0.1:9090/-/ready"
 }
 
-Write-Host "Hybrid LIIMS started:"
-Write-Host "  LIIMS:      http://127.0.0.1:5173"
+Write-Host "Hybrid AEGIS started:"
+Write-Host "  AEGIS:      http://127.0.0.1:5173"
 Write-Host "  API:        http://127.0.0.1:$backendPort/docs"
 Write-Host "  Agents:     http://<this-PC-LAN-IP>:$agentPort/api/agent/health"
 if ($dockerAvailable) {
@@ -86,7 +86,7 @@ if ($dockerAvailable) {
     Write-Host "  Prometheus: skipped (Docker Desktop is not running)"
 }
 Write-Host "  Logs:       $logDirectory"
-Write-Host "All LIIMS services passed readiness checks."
-if (-not (Get-NetFirewallRule -DisplayName "LIIMS Agent Ingress" -ErrorAction SilentlyContinue)) {
+Write-Host "All AEGIS services passed readiness checks."
+if (-not (Get-NetFirewallRule -DisplayName "AEGIS Agent Ingress" -ErrorAction SilentlyContinue)) {
     Write-Warning "Agent firewall access is not configured. Run .\configure-agent-access.ps1 once as Administrator."
 }

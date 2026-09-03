@@ -36,7 +36,7 @@ def get_or_create_channel(channel_type: str, db: Session) -> NotificationChannel
 
 
 def secret_configured(channel_type: str) -> bool:
-    variables = {"EMAIL": ("LIIMS_SMTP_PASSWORD",), "TEAMS": ("LIIMS_TEAMS_WEBHOOK_URL",), "SMS": ("LIIMS_TWILIO_ACCOUNT_SID", "LIIMS_TWILIO_AUTH_TOKEN")}
+    variables = {"EMAIL": ("AEGIS_SMTP_PASSWORD",), "TEAMS": ("AEGIS_TEAMS_WEBHOOK_URL",), "SMS": ("AEGIS_TWILIO_ACCOUNT_SID", "AEGIS_TWILIO_AUTH_TOKEN")}
     return all(os.getenv(variable, "").strip() for variable in variables[channel_type])
 
 
@@ -51,7 +51,7 @@ def queue_alert_notifications(alert: AlertEvent, db: Session) -> list[Notificati
             delivery = NotificationDelivery(
                 alert_event_id=alert.id,
                 channel_type=channel.channel_type,
-                subject=f"LIIMS {alert.severity}: {alert.device.name}",
+                subject=f"AEGIS {alert.severity}: {alert.device.name}",
                 message=f"{alert.message}\nDevice: {alert.device.name} ({alert.device.ip_address})\nTriggered: {alert.triggered_at.isoformat()}",
             )
             db.add(delivery)
@@ -62,8 +62,8 @@ def queue_alert_notifications(alert: AlertEvent, db: Session) -> list[Notificati
 def create_test_delivery(channel_type: str, db: Session) -> NotificationDelivery:
     delivery = NotificationDelivery(
         channel_type=channel_type,
-        subject="LIIMS notification test",
-        message="This is a test notification from your LIIMS dashboard.",
+        subject="AEGIS notification test",
+        message="This is a test notification from your AEGIS dashboard.",
     )
     db.add(delivery)
     db.commit()
@@ -72,9 +72,9 @@ def create_test_delivery(channel_type: str, db: Session) -> NotificationDelivery
 
 
 def _send_email(channel: NotificationChannel, delivery: NotificationDelivery) -> None:
-    password = os.getenv("LIIMS_SMTP_PASSWORD", "")
+    password = os.getenv("AEGIS_SMTP_PASSWORD", "")
     if not all([channel.smtp_host, channel.smtp_port, channel.email_from, channel.email_to, password]):
-        raise RuntimeError("Email settings or LIIMS_SMTP_PASSWORD are incomplete")
+        raise RuntimeError("Email settings or AEGIS_SMTP_PASSWORD are incomplete")
     message = EmailMessage()
     message["Subject"] = delivery.subject
     message["From"] = channel.email_from
@@ -89,9 +89,9 @@ def _send_email(channel: NotificationChannel, delivery: NotificationDelivery) ->
 
 
 def _send_teams(delivery: NotificationDelivery) -> None:
-    webhook = os.getenv("LIIMS_TEAMS_WEBHOOK_URL", "").strip()
+    webhook = os.getenv("AEGIS_TEAMS_WEBHOOK_URL", "").strip()
     if not webhook:
-        raise RuntimeError("LIIMS_TEAMS_WEBHOOK_URL is not configured")
+        raise RuntimeError("AEGIS_TEAMS_WEBHOOK_URL is not configured")
     payload = json.dumps({"text": f"**{delivery.subject}**\n\n{delivery.message}"}).encode()
     request = Request(webhook, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     with urlopen(request, timeout=10) as response:
@@ -100,8 +100,8 @@ def _send_teams(delivery: NotificationDelivery) -> None:
 
 
 def _send_sms(channel: NotificationChannel, delivery: NotificationDelivery) -> None:
-    sid = os.getenv("LIIMS_TWILIO_ACCOUNT_SID", "").strip()
-    token = os.getenv("LIIMS_TWILIO_AUTH_TOKEN", "").strip()
+    sid = os.getenv("AEGIS_TWILIO_ACCOUNT_SID", "").strip()
+    token = os.getenv("AEGIS_TWILIO_AUTH_TOKEN", "").strip()
     if not all([sid, token, channel.sms_from, channel.sms_to]):
         raise RuntimeError("SMS settings or Twilio environment credentials are incomplete")
     authorization = base64.b64encode(f"{sid}:{token}".encode()).decode()

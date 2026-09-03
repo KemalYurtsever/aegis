@@ -14,7 +14,7 @@ def test_admin_can_persist_channels_and_delivery_history(client, monkeypatch):
     assert {item["channel_type"] for item in channels.json()} == {"EMAIL", "TEAMS", "SMS"}
     saved = client.put("/api/notifications/channels/EMAIL", headers=headers, json={
         "enabled": True, "smtp_host": "smtp.example.test", "smtp_port": 587,
-        "smtp_username": "liims", "email_from": "liims@example.test",
+        "smtp_username": "aegis", "email_from": "aegis@example.test",
         "email_to": "admin@example.test", "use_tls": True,
     })
     assert saved.status_code == 200

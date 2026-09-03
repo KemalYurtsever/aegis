@@ -1,7 +1,7 @@
-# LIIMS automation center
+# AEGIS automation center
 
 The **Automation center** is an administrator-only control surface. It reuses
-the normal LIIMS monitoring, alert, discovery, diagnostic, notification,
+the normal AEGIS monitoring, alert, discovery, diagnostic, notification,
 reporting, vulnerability, and agent records; it does not run a second hidden
 monitoring system.
 
@@ -23,7 +23,7 @@ monitoring system.
   due. Optional service discovery creates checks for one unconfigured device
   per cycle. Optional defensive assessment scans one device per interval.
 - The health summary uses Foundry Local only when a loopback endpoint and model
-  are configured. Otherwise, LIIMS produces a deterministic built-in summary.
+  are configured. Otherwise, AEGIS produces a deterministic built-in summary.
 
 Network-generating automations are disabled by default. Turn them on from the
 Automation center only for networks you administer.
@@ -33,18 +33,18 @@ Automation center only for networks you administer.
 Set both variables in `backend/.env`, then restart the hybrid backend:
 
 ```text
-LIIMS_FOUNDRY_LOCAL_URL=http://127.0.0.1:5272
-LIIMS_FOUNDRY_LOCAL_MODEL=your-local-model-id
+AEGIS_FOUNDRY_LOCAL_URL=http://127.0.0.1:5272
+AEGIS_FOUNDRY_LOCAL_MODEL=your-local-model-id
 ```
 
-LIIMS rejects non-loopback model endpoints. It sends only an aggregate health
+AEGIS rejects non-loopback model endpoints. It sends only an aggregate health
 sentence, not credentials, packet contents, diagnostic results, or device
 records. The model is advisory and cannot execute jobs or change settings.
 
 ## Reports
 
 Scheduled reports are stored under `backend/reports` by default. Change the
-directory with `LIIMS_REPORT_DIRECTORY`. Downloads validate the filename and
+directory with `AEGIS_REPORT_DIRECTORY`. Downloads validate the filename and
 never accept arbitrary paths.
 
 ## Safety boundaries

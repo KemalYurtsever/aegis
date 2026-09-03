@@ -2,13 +2,13 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
-  namespace: liims
+  namespace: aegis
 data:
   prometheus.yml: |
     global:
       scrape_interval: 15s
     scrape_configs:
-      - job_name: liims
+      - job_name: aegis
         metrics_path: /metrics
         authorization:
           type: Bearer
@@ -20,7 +20,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus
-  namespace: liims
+  namespace: aegis
 spec:
   replicas: 1
   selector:
@@ -46,13 +46,13 @@ spec:
         - name: data
           persistentVolumeClaim: {claimName: prometheus-data}
         - name: token
-          secret: {secretName: liims-secrets}
+          secret: {secretName: aegis-secrets}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: prometheus
-  namespace: liims
+  namespace: aegis
 spec:
   selector: {app: prometheus}
   ports:
@@ -62,7 +62,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: grafana
-  namespace: liims
+  namespace: aegis
 spec:
   replicas: 1
   selector:
@@ -79,7 +79,7 @@ spec:
           env:
             - {name: GF_SECURITY_ADMIN_USER, value: admin}
             - name: GF_SECURITY_ADMIN_PASSWORD
-              valueFrom: {secretKeyRef: {name: liims-secrets, key: grafana-admin-password}}
+              valueFrom: {secretKeyRef: {name: aegis-secrets, key: grafana-admin-password}}
             - {name: GF_USERS_ALLOW_SIGN_UP, value: "false"}
           volumeMounts:
             - {name: data, mountPath: /var/lib/grafana}
@@ -101,7 +101,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: grafana
-  namespace: liims
+  namespace: aegis
 spec:
   selector: {app: grafana}
   ports:
