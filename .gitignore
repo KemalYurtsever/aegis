@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+
+# Local data
+*.db
+*.sqlite
+*.sqlite3
+backups/
+attachments/
+logs/
+reports/
+*.log
+
+# Environment files and credentials. Keep sanitized examples versionable.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Secret material
+/secrets/*
+!/secrets/.gitignore
+*.key
+*.p12
+*.pfx
+credentials.json
+deploy/kubernetes/secret*.yaml
+!deploy/kubernetes/secret*.example.yaml
+
+# Frontend dependencies and build artifacts
+node_modules/
+dist/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

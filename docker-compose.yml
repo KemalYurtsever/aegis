@@ -1,0 +1,79 @@
+name: liims
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: sqlite:////data/monitoring.db
+      LIIMS_BACKUP_DIRECTORY: /data/backups
+      LIIMS_REPORT_DIRECTORY: /data/reports
+      LIIMS_ATTACHMENT_DIRECTORY: /data/attachments
+      LIIMS_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token
+      LIIMS_SMTP_PASSWORD: ${LIIMS_SMTP_PASSWORD:-}
+      LIIMS_TEAMS_WEBHOOK_URL: ${LIIMS_TEAMS_WEBHOOK_URL:-}
+      LIIMS_TWILIO_ACCOUNT_SID: ${LIIMS_TWILIO_ACCOUNT_SID:-}
+      LIIMS_TWILIO_AUTH_TOKEN: ${LIIMS_TWILIO_AUTH_TOKEN:-}
+      LIIMS_SNMP_COMMUNITY: ${LIIMS_SNMP_COMMUNITY:-}
+    secrets:
+      - prometheus_token
+    volumes:
+      - liims_data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_GRAFANA_URL: ${VITE_GRAFANA_URL:-http://127.0.0.1:3000}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5173:80"
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=30d"]
+    secrets:
+      - prometheus_token
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:12.3.1
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_ANONYMOUS_HIDE_VERSION: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+
+secrets:
+  prometheus_token:
+    file: ./secrets/prometheus_token.txt
+
+volumes:
+  liims_data:
+  prometheus_data:
+  grafana_data:

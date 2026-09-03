@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: liims
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: liims-backend}
+  template:
+    metadata:
+      labels: {app: liims-backend}
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/replace-me/liims-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8000}
+          env:
+            - {name: DATABASE_URL, value: "sqlite:////data/monitoring.db"}
+            - {name: LIIMS_PROMETHEUS_TOKEN_FILE, value: /run/secrets/prometheus-token}
+            - name: LIIMS_SMTP_PASSWORD
+              valueFrom: {secretKeyRef: {name: liims-secrets, key: smtp-password}}
+            - name: LIIMS_TEAMS_WEBHOOK_URL
+              valueFrom: {secretKeyRef: {name: liims-secrets, key: teams-webhook-url}}
+            - name: LIIMS_TWILIO_ACCOUNT_SID
+              valueFrom: {secretKeyRef: {name: liims-secrets, key: twilio-account-sid}}
+            - name: LIIMS_TWILIO_AUTH_TOKEN
+              valueFrom: {secretKeyRef: {name: liims-secrets, key: twilio-auth-token}}
+            - name: LIIMS_SNMP_COMMUNITY
+              valueFrom: {secretKeyRef: {name: liims-secrets, key: snmp-community}}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: prometheus-token, mountPath: /run/secrets/prometheus-token, subPath: prometheus-token, readOnly: true}
+          readinessProbe: {httpGet: {path: /api/health, port: http}, initialDelaySeconds: 5, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /api/health, port: http}, initialDelaySeconds: 15, periodSeconds: 20}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: liims-data}
+        - name: prometheus-token
+          secret: {secretName: liims-secrets}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: liims
+spec:
+  selector: {app: liims-backend}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
