@@ -1069,6 +1069,12 @@ td:first-child span {
   background: #62e5b4;
   font-weight: 900;
 }
+.workbench-brand > span img {
+  width: 135%;
+  height: 135%;
+  max-width: none;
+  object-fit: contain;
+}
 .workbench-brand > div {
   display: grid;
   gap: 2px;
