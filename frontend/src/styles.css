@@ -6224,6 +6224,33 @@ kbd {
   min-height: 80.8081vh;
   min-height: 80.8081dvh;
 }
+.modal-backdrop {
+  /* Fixed descendants inherit the root zoom. Use the inverse dimensions so
+     the overlay maps to the real browser viewport instead of extending past it. */
+  inset: 0 auto auto 0;
+  width: 80.8081vw;
+  height: 80.8081vh;
+  height: 80.8081dvh;
+  overflow: hidden;
+}
+.modal-backdrop > .modal {
+  max-height: calc(80.8081vh - 40px);
+  max-height: calc(80.8081dvh - 40px);
+  overscroll-behavior: contain;
+}
+.modal-backdrop > .modal.attack-path-modal {
+  width: min(980px, 100%);
+  overflow-y: auto;
+}
+.attack-path-modal .modal-heading {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  background: #fff;
+}
+.app-shell--goth .attack-path-modal .modal-heading {
+  background: var(--surface);
+}
 :is(.app-shell--classic, .app-shell--goth) {
   grid-template-columns: 224px minmax(0, 1fr);
 }
