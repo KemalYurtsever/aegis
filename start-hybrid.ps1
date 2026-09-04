@@ -23,6 +23,34 @@ function Wait-HttpEndpoint {
     throw "$Name did not become ready at $Url. Review the logs in $logDirectory."
 }
 
+function Remove-StaleComposeContainers {
+    param([string]$WorkingDirectory)
+
+    $containerIds = @(docker ps -aq --filter "label=com.docker.compose.project.working_dir=$WorkingDirectory")
+    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect existing Docker containers." }
+    if ($containerIds.Count -eq 0) { return }
+
+    Write-Host "Removing $($containerIds.Count) stale container(s) created from this Aegis directory. Docker volumes will be preserved."
+    docker rm -f $containerIds | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to remove stale Aegis containers." }
+}
+
+function Assert-PortAvailable {
+    param([int]$Port, [string]$Service)
+
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) { return }
+
+    $containerNames = @(docker ps --filter "publish=$Port" --format "{{.Names}}")
+    $owner = if ($containerNames.Count -gt 0) {
+        "Docker container(s): $($containerNames -join ', ')"
+    } else {
+        $processIds = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
+        "process ID(s): $($processIds -join ', ')"
+    }
+    throw "$Service cannot start because 127.0.0.1:$Port is already in use by $owner. Stop that workload or change its published port, then run start-hybrid.ps1 again."
+}
+
 $dockerAvailable = $false
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     $previousErrorPreference = $ErrorActionPreference
@@ -34,6 +62,9 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
 if ($dockerAvailable) {
     docker compose -f (Join-Path $projectRoot "docker-compose.yml") down
     if ($LASTEXITCODE -ne 0) { throw "Unable to stop the fully containerized stack." }
+    Remove-StaleComposeContainers -WorkingDirectory $projectRoot
+    Assert-PortAvailable -Port 9090 -Service "Prometheus"
+    Assert-PortAvailable -Port 3000 -Service "Grafana"
     docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") up -d
     if ($LASTEXITCODE -ne 0) { throw "Unable to start Prometheus and Grafana." }
 } else {
