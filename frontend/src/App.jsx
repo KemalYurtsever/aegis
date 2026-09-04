@@ -4428,7 +4428,7 @@ function DeviceDetail({
   );
 }
 
-function AuthScreen({ setupRequired, onAuthenticated }) {
+function AuthScreen({ setupRequired, onAuthenticated, visualTheme }) {
   const [form, setForm] = useState({
     username: "",
     password: "",
@@ -6088,6 +6088,7 @@ export default function App() {
     return (
       <AuthScreen
         setupRequired={auth.setup_required}
+        visualTheme={visualTheme}
         onAuthenticated={(user) =>
           setAuth({ setup_required: false, authenticated: true, user })
         }
