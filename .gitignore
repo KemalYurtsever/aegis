@@ -2,8 +2,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
 .coverage
+coverage.xml
+htmlcov/
 .venv/
+*.egg-info/
 
 # Local data
 *.db
@@ -25,8 +32,11 @@ reports/
 /secrets/*
 !/secrets/.gitignore
 *.key
+*.pem
 *.p12
 *.pfx
+*.jks
+*.keystore
 credentials.json
 deploy/kubernetes/secret*.yaml
 !deploy/kubernetes/secret*.example.yaml
@@ -34,9 +44,16 @@ deploy/kubernetes/secret*.yaml
 # Frontend dependencies and build artifacts
 node_modules/
 dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Editors and operating systems
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
