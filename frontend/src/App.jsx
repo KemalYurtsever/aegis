@@ -5097,8 +5097,11 @@ export default function App() {
   });
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
-  const [expandedSidebarSection, setExpandedSidebarSection] =
-    useState("reports");
+  const [expandedSidebarSections, setExpandedSidebarSections] = useState({
+    reports: true,
+    security: false,
+    administration: false,
+  });
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [data, setData] = useState(EMPTY_DASHBOARD);
   const [inventoryHealth, setInventoryHealth] = useState(
@@ -6061,9 +6064,10 @@ export default function App() {
   }
 
   function toggleSidebarSection(section) {
-    setExpandedSidebarSection((current) =>
-      current === section ? null : section,
-    );
+    setExpandedSidebarSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
   }
 
   if (authError)
@@ -6145,7 +6149,7 @@ export default function App() {
             <button
               className="sidebar-section-toggle"
               type="button"
-              aria-expanded={expandedSidebarSection === "reports"}
+              aria-expanded={expandedSidebarSections.reports}
               aria-controls="sidebar-reports"
               onClick={() => toggleSidebarSection("reports")}
             >
@@ -6155,7 +6159,7 @@ export default function App() {
             <div
               id="sidebar-reports"
               className="sidebar-section-items"
-              hidden={expandedSidebarSection !== "reports"}
+              hidden={!expandedSidebarSections.reports}
             >
               <button onClick={() => openSidebarPanel(showSetupGuide)}>
                 Setup guide
@@ -6174,7 +6178,7 @@ export default function App() {
                 <button
                   className="sidebar-section-toggle"
                   type="button"
-                  aria-expanded={expandedSidebarSection === "security"}
+                  aria-expanded={expandedSidebarSections.security}
                   aria-controls="sidebar-security"
                   onClick={() => toggleSidebarSection("security")}
                 >
@@ -6184,7 +6188,7 @@ export default function App() {
                 <div
                   id="sidebar-security"
                   className="sidebar-section-items"
-                  hidden={expandedSidebarSection !== "security"}
+                  hidden={!expandedSidebarSections.security}
                 >
                   <button onClick={() => openSidebarPanel(() => setShowSecurityWorkbench(true))}>
                     Security workbench
@@ -6201,7 +6205,7 @@ export default function App() {
                 <button
                   className="sidebar-section-toggle"
                   type="button"
-                  aria-expanded={expandedSidebarSection === "administration"}
+                  aria-expanded={expandedSidebarSections.administration}
                   aria-controls="sidebar-administration"
                   onClick={() => toggleSidebarSection("administration")}
                 >
@@ -6211,7 +6215,7 @@ export default function App() {
                 <div
                   id="sidebar-administration"
                   className="sidebar-section-items"
-                  hidden={expandedSidebarSection !== "administration"}
+                  hidden={!expandedSidebarSections.administration}
                 >
                   <button onClick={() => openSidebarPanel(() => setShowSystemStatus(true))}>
                     System status
