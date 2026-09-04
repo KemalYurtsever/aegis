@@ -6216,8 +6216,8 @@ kbd {
 
 /* Fixed sidebar navigation ------------------------------------------------
    Keep the primary tool and account controls visible while the page moves.
-   The accordion limits the navigation height without introducing a second
-   scroll area inside the sidebar. */
+   Independent collapsible groups keep the navigation organized without
+   introducing a second scroll area inside the sidebar. */
 :is(.app-shell--classic, .app-shell--goth) {
   grid-template-columns: 224px minmax(0, 1fr);
 }
