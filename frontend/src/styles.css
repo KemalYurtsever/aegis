@@ -6225,8 +6225,11 @@ kbd {
   position: sticky;
   top: 0;
   align-self: start;
-  height: 100vh;
-  height: 100dvh;
+  /* The complete interface is rendered at 1.2375x. Compensate the sidebar's
+     viewport unit so its rendered bottom remains inside the visible window. */
+  height: 80.8081vh;
+  height: 80.8081dvh;
+  gap: 16px;
   overflow: hidden;
 }
 .sidebar-tools {
