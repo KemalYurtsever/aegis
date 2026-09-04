@@ -336,7 +336,7 @@ function CommandPalette({ commands, onClose }) {
   return (
     <div
       className="modal-backdrop command-palette-backdrop"
-      onMouseDown={(event) => {
+      onPointerDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
@@ -419,14 +419,6 @@ function CommandPalette({ commands, onClose }) {
 function ObservabilityModal({ onClose }) {
   const [frameKey, setFrameKey] = useState(0);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
 
   function reload() {
     setLoading(true);
@@ -5152,6 +5144,51 @@ export default function App() {
   const [pageSize, setPageSize] = useState(10);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState([]);
 
+  const closeTopSidebarWindow = useCallback(() => {
+    if (showObservability) setShowObservability(false);
+    else if (showReports) setShowReports(false);
+    else if (showSecurityWorkbench) setShowSecurityWorkbench(false);
+    else if (showAttackPaths) setShowAttackPaths(false);
+    else if (showSystemStatus) setShowSystemStatus(false);
+    else if (showAutomation) setShowAutomation(false);
+    else if (showReliability) setShowReliability(false);
+    else if (showDhcpImport) setShowDhcpImport(false);
+    else if (showPacketCapture) setShowPacketCapture(false);
+    else if (showNotifications) setShowNotifications(false);
+    else if (showAlertHistory) setShowAlertHistory(false);
+    else if (showAudit) setShowAudit(false);
+    else if (showUsers) setShowUsers(false);
+  }, [
+    showAlertHistory,
+    showAttackPaths,
+    showAudit,
+    showAutomation,
+    showDhcpImport,
+    showNotifications,
+    showObservability,
+    showPacketCapture,
+    showReliability,
+    showReports,
+    showSecurityWorkbench,
+    showSystemStatus,
+    showUsers,
+  ]);
+
+  const sidebarWindowOpen =
+    showUsers ||
+    showAudit ||
+    showAlertHistory ||
+    showNotifications ||
+    showPacketCapture ||
+    showDhcpImport ||
+    showReliability ||
+    showAutomation ||
+    showSystemStatus ||
+    showAttackPaths ||
+    showSecurityWorkbench ||
+    showReports ||
+    showObservability;
+
   useEffect(() => {
     document.documentElement.dataset.aegisTheme = visualTheme;
     try {
@@ -5160,6 +5197,27 @@ export default function App() {
       /* Theme persistence is optional when storage is unavailable. */
     }
   }, [visualTheme]);
+
+  useEffect(() => {
+    if (!sidebarWindowOpen) return undefined;
+    function dismissSidebarWindow(event) {
+      if (
+        event.key !== "Escape" ||
+        commandPaletteOpen ||
+        formDevice !== undefined
+      )
+        return;
+      event.preventDefault();
+      closeTopSidebarWindow();
+    }
+    document.addEventListener("keydown", dismissSidebarWindow);
+    return () => document.removeEventListener("keydown", dismissSidebarWindow);
+  }, [
+    closeTopSidebarWindow,
+    commandPaletteOpen,
+    formDevice,
+    sidebarWindowOpen,
+  ]);
 
   useEffect(() => {
     if (!headerMenuOpen) return undefined;
@@ -6098,6 +6156,15 @@ export default function App() {
   return (
     <div
       className={`app-shell app-shell--${auth.user.role.toLowerCase()} app-shell--${visualTheme}`}
+      onMouseDown={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.classList.contains("modal-backdrop") &&
+          !commandPaletteOpen &&
+          formDevice === undefined
+        )
+          closeTopSidebarWindow();
+      }}
     >
       <a className="skip-link" href="#main-content">
         Skip to main content
