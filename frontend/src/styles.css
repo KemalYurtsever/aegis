@@ -90,8 +90,10 @@ button {
 }
 .sidebar-brand {
   display: flex;
+  flex: 0 0 auto;
   gap: 11px;
   align-items: flex-start;
+  align-self: flex-start;
 }
 .sidebar-brand > div:last-child {
   display: grid;
@@ -2335,9 +2337,18 @@ td:first-child span {
 }
 .detail-header {
   display: flex;
+  width: 100%;
   justify-content: space-between;
   gap: 25px;
   align-items: flex-start;
+}
+.detail-header > div:first-child {
+  min-width: 0;
+}
+.detail-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-left: auto;
 }
 .detail-metrics {
   margin-top: 28px;
@@ -3893,10 +3904,14 @@ td:first-child span {
   }
   .detail-header {
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .header-actions,
   .detail-actions {
     flex-wrap: wrap;
+  }
+  .detail-actions {
+    justify-self: end;
   }
   .metrics {
     grid-template-columns: repeat(2, 1fr);
@@ -3936,6 +3951,17 @@ td:first-child span {
   }
   .report-summary {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  .detail-header {
+    grid-template-columns: 1fr;
+  }
+  .detail-actions {
+    width: 100%;
+    justify-self: stretch;
+    justify-content: flex-end;
   }
 }
 
