@@ -6259,9 +6259,9 @@ kbd {
 }
 
 /* Fixed sidebar navigation ------------------------------------------------
-   Keep the primary tool and account controls visible while the page moves.
-   Independent collapsible groups keep the navigation organized without
-   introducing a second scroll area inside the sidebar. */
+   Keep the brand, primary tool, and account controls visible while the page
+   moves. The navigation list gets its own contained scroll area when several
+   independent groups are expanded at once. */
 .auth-page {
   /* Match the rendered height to the viewport after the 1.2375x interface
      scale so the authentication card is visually centered. */
@@ -6318,12 +6318,15 @@ kbd {
 }
 .sidebar-navigation {
   display: grid;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   gap: 5px;
   align-content: start;
   min-height: 0;
-  overflow: hidden;
-  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 0 4px 8px 0;
 }
 .sidebar-section {
   display: grid;
