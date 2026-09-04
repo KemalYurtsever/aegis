@@ -94,6 +94,16 @@ button {
   gap: 11px;
   align-items: flex-start;
   align-self: flex-start;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.sidebar-brand:hover .brand-mark {
+  filter: brightness(1.08);
 }
 .sidebar-brand > div:last-child {
   display: grid;

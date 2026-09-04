@@ -6172,7 +6172,15 @@ export default function App() {
       <aside
         className={`sidebar${mobileNavigationOpen ? " sidebar--menu-open" : ""}`}
       >
-        <div className="sidebar-brand">
+        <button
+          className="sidebar-brand"
+          type="button"
+          aria-label="Go to the Aegis dashboard"
+          onClick={() => {
+            setMobileNavigationOpen(false);
+            navigateToDashboard();
+          }}
+        >
           <div className="brand-mark">
             <img
               src={visualTheme === "goth" ? aegisShieldDark : aegisShield}
@@ -6183,7 +6191,7 @@ export default function App() {
             <strong>Aegis</strong>
             <span>Infrastructure monitor</span>
           </div>
-        </div>
+        </button>
         <button
           className="sidebar-menu-toggle"
           type="button"
