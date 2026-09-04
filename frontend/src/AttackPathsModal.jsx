@@ -22,17 +22,29 @@ export default function AttackPathsModal({ onClose, onSelectDevice }) {
 
   useEffect(() => { load(); }, []);
 
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   function selectDevice(deviceId) {
     onClose();
     onSelectDevice(deviceId);
   }
 
+  function closeFromBackdrop(event) {
+    if (event.target === event.currentTarget) onClose();
+  }
+
   return (
-    <div className="modal-backdrop">
+    <div className="modal-backdrop" onMouseDown={closeFromBackdrop}>
       <section className="modal attack-path-modal" role="dialog" aria-modal="true" aria-labelledby="attack-path-title">
         <div className="modal-heading">
           <div><p className="eyebrow">Passive security analysis</p><h2 id="attack-path-title">Candidate attack paths</h2></div>
-          <button className="icon-button" onClick={onClose} aria-label="Close">×</button>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close">×</button>
         </div>
         <p className="panel-help">Candidate paths correlate stored service exposure, shared subnets, and asset criticality. They are defensive hypotheses and do not send traffic or demonstrate exploitation.</p>
         <div className="attack-path-toolbar">
