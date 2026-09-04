@@ -6218,6 +6218,12 @@ kbd {
    Keep the primary tool and account controls visible while the page moves.
    Independent collapsible groups keep the navigation organized without
    introducing a second scroll area inside the sidebar. */
+.auth-page {
+  /* Match the rendered height to the viewport after the 1.2375x interface
+     scale so the authentication card is visually centered. */
+  min-height: 80.8081vh;
+  min-height: 80.8081dvh;
+}
 :is(.app-shell--classic, .app-shell--goth) {
   grid-template-columns: 224px minmax(0, 1fr);
 }
