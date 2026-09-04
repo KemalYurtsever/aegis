@@ -6194,7 +6194,7 @@ export default function App() {
           <span aria-hidden="true">{mobileNavigationOpen ? "×" : "☰"}</span>
           {mobileNavigationOpen ? "Close" : "Menu"}
         </button>
-        <div className="goth-ornament" aria-hidden="true">
+        <div className="sidebar-divider" aria-hidden="true">
           <span>◇</span>
           <i />
         </div>
