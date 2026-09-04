@@ -1067,13 +1067,6 @@ export default function SecurityWorkbenchModal({
       })
       .catch((requestError) => setError(requestError.message));
   }, []);
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
   const selectedLabel = useMemo(
     () => TOOLS.find(([value]) => value === tab)?.[1],
     [tab],

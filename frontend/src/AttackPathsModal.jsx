@@ -22,25 +22,13 @@ export default function AttackPathsModal({ onClose, onSelectDevice }) {
 
   useEffect(() => { load(); }, []);
 
-  useEffect(() => {
-    function handleKeyDown(event) {
-      if (event.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
   function selectDevice(deviceId) {
     onClose();
     onSelectDevice(deviceId);
   }
 
-  function closeFromBackdrop(event) {
-    if (event.target === event.currentTarget) onClose();
-  }
-
   return (
-    <div className="modal-backdrop" onMouseDown={closeFromBackdrop}>
+    <div className="modal-backdrop">
       <section className="modal attack-path-modal" role="dialog" aria-modal="true" aria-labelledby="attack-path-title">
         <div className="modal-heading">
           <div><p className="eyebrow">Passive security analysis</p><h2 id="attack-path-title">Candidate attack paths</h2></div>

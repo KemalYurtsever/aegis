@@ -6242,13 +6242,16 @@ kbd {
   width: min(980px, 100%);
   overflow-y: auto;
 }
-.attack-path-modal .modal-heading {
+.modal-backdrop > .modal:not(.security-workbench) > .modal-heading {
   position: sticky;
   z-index: 5;
   top: 0;
   background: #fff;
 }
-.app-shell--goth .attack-path-modal .modal-heading {
+.app-shell--goth
+  .modal-backdrop
+  > .modal:not(.security-workbench)
+  > .modal-heading {
   background: var(--surface);
 }
 :is(.app-shell--classic, .app-shell--goth) {
