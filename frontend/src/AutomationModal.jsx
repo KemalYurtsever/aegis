@@ -477,6 +477,13 @@ export default function AutomationModal({ onClose }) {
               <option value="DAILY">Daily</option>
               <option value="WEEKLY">Weekly</option>
             </select>
+            <input
+              placeholder="Reason (optional)"
+              value={form.reason}
+              onChange={(event) =>
+                setForm({ ...form, reason: event.target.value })
+              }
+            />
             <div className="automation-window-form__actions">
               <button className="button button--primary" disabled={busy}>
                 {editingWindowId ? "Save window" : "Add window"}
@@ -508,6 +515,7 @@ export default function AutomationModal({ onClose }) {
                       {formatDate(window.starts_at)} to{" "}
                       {formatDate(window.ends_at)}
                     </small>
+                    {window.reason && <small>Reason: {window.reason}</small>}
                   </div>
                   <div className="automation-list__actions">
                     <button
