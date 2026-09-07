@@ -116,6 +116,13 @@ def test_maintenance_window_schedule_can_be_updated(client):
     )
     assert invalid.status_code == 422
 
+    malformed = client.patch(
+        f"/api/automation/maintenance-windows/{created.json()['id']}",
+        headers=headers,
+        json={"name": None},
+    )
+    assert malformed.status_code == 422
+
 
 def test_active_maintenance_suppresses_new_alerts(client, monkeypatch):
     headers = admin_headers(client)
