@@ -1087,6 +1087,10 @@ class MaintenanceWindowRead(MaintenanceWindowCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MaintenanceWindowUpdate(BaseModel):
+    enabled: bool
+
+
 class IncidentRead(BaseModel):
     id: int
     correlation_key: str

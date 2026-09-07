@@ -14,6 +14,7 @@ import {
   resolveIncident,
   runAutomation,
   updateIncident,
+  updateMaintenanceWindow,
   updateAutomationSettings,
 } from "./api.js";
 import { formatDate } from "./format.js";
@@ -464,7 +465,7 @@ export default function AutomationModal({ onClose }) {
                   <span
                     className={`service-status service-status--${window.active_now ? "up" : "unknown"}`}
                   >
-                    {window.active_now ? "ACTIVE" : window.repeat}
+                    {window.active_now ? "ACTIVE" : window.enabled ? window.repeat : "PAUSED"}
                   </span>
                   <div>
                     <strong>{window.name}</strong>
@@ -474,18 +475,34 @@ export default function AutomationModal({ onClose }) {
                       {formatDate(window.ends_at)}
                     </small>
                   </div>
-                  <button
-                    className="button button--danger"
-                    disabled={busy}
-                    onClick={() =>
-                      perform(
-                        () => deleteMaintenanceWindow(window.id),
-                        "Maintenance window removed.",
-                      )
-                    }
-                  >
-                    Delete
-                  </button>
+                  <div className="automation-list__actions">
+                    <button
+                      className="button button--secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        perform(
+                          () => updateMaintenanceWindow(window.id, { enabled: !window.enabled }),
+                          window.enabled
+                            ? "Maintenance window paused."
+                            : "Maintenance window resumed.",
+                        )
+                      }
+                    >
+                      {window.enabled ? "Pause" : "Resume"}
+                    </button>
+                    <button
+                      className="button button--danger"
+                      disabled={busy}
+                      onClick={() =>
+                        perform(
+                          () => deleteMaintenanceWindow(window.id),
+                          "Maintenance window removed.",
+                        )
+                      }
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>

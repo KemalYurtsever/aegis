@@ -45,6 +45,39 @@ def test_automation_settings_maintenance_and_summary(client):
     assert "active alerts" in summary.json()["text"]
 
 
+def test_maintenance_window_can_be_paused_and_resumed(client):
+    headers = admin_headers(client)
+    now = utc_now()
+    created = client.post("/api/automation/maintenance-windows", headers=headers, json={
+        "name": "Switch replacement",
+        "starts_at": (now - timedelta(minutes=10)).isoformat(),
+        "ends_at": (now + timedelta(minutes=50)).isoformat(),
+        "reason": "Scheduled replacement",
+    })
+    assert created.status_code == 201
+    assert created.json()["enabled"] is True
+    assert created.json()["active_now"] is True
+
+    window_id = created.json()["id"]
+    paused = client.patch(
+        f"/api/automation/maintenance-windows/{window_id}",
+        headers=headers,
+        json={"enabled": False},
+    )
+    assert paused.status_code == 200
+    assert paused.json()["enabled"] is False
+    assert paused.json()["active_now"] is False
+
+    resumed = client.patch(
+        f"/api/automation/maintenance-windows/{window_id}",
+        headers=headers,
+        json={"enabled": True},
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["enabled"] is True
+    assert resumed.json()["active_now"] is True
+
+
 def test_active_maintenance_suppresses_new_alerts(client, monkeypatch):
     headers = admin_headers(client)
     now = utc_now()
