@@ -94,6 +94,15 @@ def test_related_alerts_are_correlated_into_one_incident(client, monkeypatch):
     assert incidents[0]["status"] == "OPEN"
     assert len(incidents[0]["alert_ids"]) == 2
 
+    updated = client.patch(
+        f"/api/automation/incidents/{incidents[0]['id']}",
+        json={"assigned_to": "  on-call engineer ", "operator_note": "  Checking the shared switch.  "},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["assigned_to"] == "on-call engineer"
+    assert updated.json()["operator_note"] == "Checking the shared switch."
+
     monkeypatch.setattr(
         "app.services.monitoring_service.check_ip",
         lambda *_args, **_kwargs: PingResult("ONLINE", 1.0),

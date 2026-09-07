@@ -13,6 +13,7 @@ import {
   refreshAssetBaselines,
   resolveIncident,
   runAutomation,
+  updateIncident,
   updateAutomationSettings,
 } from "./api.js";
 import { formatDate } from "./format.js";
@@ -39,6 +40,7 @@ export default function AutomationModal({ onClose }) {
   const [events, setEvents] = useState([]);
   const [form, setForm] = useState(EMPTY_WINDOW);
   const [summary, setSummary] = useState(null);
+  const [incidentDrafts, setIncidentDrafts] = useState({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -498,7 +500,7 @@ export default function AutomationModal({ onClose }) {
           ) : (
             <div className="automation-list">
               {incidents.map((incident) => (
-                <article key={incident.id}>
+                <article key={incident.id} className="incident-workflow">
                   <span
                     className={`service-status service-status--${incident.status === "OPEN" ? "down" : "up"}`}
                   >
@@ -507,20 +509,91 @@ export default function AutomationModal({ onClose }) {
                   <div>
                     <strong>{incident.title}</strong>
                     <small>{incident.summary}</small>
+                    <small>
+                      {incident.assigned_to
+                        ? `Assigned to ${incident.assigned_to}`
+                        : "Unassigned"}
+                    </small>
+                    {incident.operator_note && (
+                      <small>Note: {incident.operator_note}</small>
+                    )}
                   </div>
                   {incident.status === "OPEN" && (
-                    <button
-                      className="button button--secondary"
-                      disabled={busy}
-                      onClick={() =>
-                        perform(
-                          () => resolveIncident(incident.id),
-                          "Incident resolved.",
-                        )
-                      }
-                    >
-                      Resolve
-                    </button>
+                    <div className="incident-workflow__controls">
+                      <input
+                        value={
+                          incidentDrafts[incident.id]?.assigned_to ??
+                          incident.assigned_to ??
+                          ""
+                        }
+                        onChange={(event) =>
+                          setIncidentDrafts((current) => ({
+                            ...current,
+                            [incident.id]: {
+                              ...(current[incident.id] || {
+                                operator_note: incident.operator_note || "",
+                              }),
+                              assigned_to: event.target.value,
+                            },
+                          }))
+                        }
+                        maxLength="80"
+                        placeholder="Assign owner"
+                        aria-label={`Assign owner for ${incident.title}`}
+                      />
+                      <input
+                        value={
+                          incidentDrafts[incident.id]?.operator_note ??
+                          incident.operator_note ??
+                          ""
+                        }
+                        onChange={(event) =>
+                          setIncidentDrafts((current) => ({
+                            ...current,
+                            [incident.id]: {
+                              ...(current[incident.id] || {
+                                assigned_to: incident.assigned_to || "",
+                              }),
+                              operator_note: event.target.value,
+                            },
+                          }))
+                        }
+                        maxLength="500"
+                        placeholder="Handoff note"
+                        aria-label={`Handoff note for ${incident.title}`}
+                      />
+                      <button
+                        className="button button--secondary"
+                        disabled={busy}
+                        onClick={() =>
+                          perform(
+                            () =>
+                              updateIncident(
+                                incident.id,
+                                incidentDrafts[incident.id] || {
+                                  assigned_to: incident.assigned_to,
+                                  operator_note: incident.operator_note,
+                                },
+                              ),
+                            "Incident handoff saved.",
+                          )
+                        }
+                      >
+                        Save handoff
+                      </button>
+                      <button
+                        className="button button--secondary"
+                        disabled={busy}
+                        onClick={() =>
+                          perform(
+                            () => resolveIncident(incident.id),
+                            "Incident resolved.",
+                          )
+                        }
+                      >
+                        Resolve
+                      </button>
+                    </div>
                   )}
                 </article>
               ))}

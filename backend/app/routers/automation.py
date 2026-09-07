@@ -25,6 +25,7 @@ from app.schemas import (
     AutomationSummary,
     GeneratedReportRead,
     IncidentRead,
+    IncidentUpdate,
     MaintenanceWindowCreate,
     MaintenanceWindowRead,
 )
@@ -56,6 +57,8 @@ def _incident_read(incident: Incident) -> IncidentRead:
         severity=incident.severity,
         status=incident.status,
         alert_ids=json.loads(incident.alert_ids_json),
+        assigned_to=incident.assigned_to,
+        operator_note=incident.operator_note,
         opened_at=incident.opened_at,
         updated_at=incident.updated_at,
         resolved_at=incident.resolved_at,
@@ -150,6 +153,23 @@ def list_incidents(
         statement = statement.where(Incident.status == status)
     incidents = db.scalars(statement.order_by(Incident.opened_at.desc()).limit(limit))
     return [_incident_read(incident) for incident in incidents]
+
+
+@router.patch("/incidents/{incident_id}", response_model=IncidentRead)
+def update_incident(
+    incident_id: int,
+    payload: IncidentUpdate,
+    db: Session = Depends(get_db),
+) -> IncidentRead:
+    incident = db.get(Incident, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(incident, field, value)
+    incident.updated_at = utc_now()
+    db.commit()
+    db.refresh(incident)
+    return _incident_read(incident)
 
 
 @router.post("/incidents/{incident_id}/resolve", response_model=IncidentRead)

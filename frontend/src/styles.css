@@ -3443,6 +3443,36 @@ td:first-child span {
   color: #6f7d94;
   overflow-wrap: anywhere;
 }
+.incident-workflow {
+  grid-template-columns: auto minmax(0, 1fr) !important;
+}
+.incident-workflow__controls {
+  display: grid;
+  grid-column: 2;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(160px, 1.4fr) auto auto;
+  gap: 8px;
+  margin-top: 4px;
+}
+.incident-workflow__controls input {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid #ced7e4;
+  border-radius: 7px;
+  color: #263650;
+  background: #fff;
+  font: inherit;
+  font-size: 11px;
+}
+.app-shell--goth .incident-workflow__controls input {
+  border-color: var(--border-strong);
+  color: var(--ink);
+  background: var(--surface-soft);
+}
+@media (max-width: 760px) {
+  .incident-workflow__controls {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 @media (max-width: 900px) {
   .automation-metrics {
     grid-template-columns: repeat(2, 1fr);

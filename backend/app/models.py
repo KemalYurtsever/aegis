@@ -536,6 +536,8 @@ class Incident(Base):
     severity: Mapped[str] = mapped_column(String(10), nullable=False)
     status: Mapped[str] = mapped_column(String(10), index=True, nullable=False, default="OPEN")
     alert_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    assigned_to: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    operator_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

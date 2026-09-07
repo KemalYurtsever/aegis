@@ -550,6 +550,9 @@ export function listIncidents() {
 export function resolveIncident(id) {
   return request(`/api/automation/incidents/${id}/resolve`, { method: "POST" });
 }
+export function updateIncident(id, payload) {
+  return jsonRequest(`/api/automation/incidents/${id}`, "PATCH", payload);
+}
 export function listGeneratedReports() {
   return request("/api/automation/reports");
 }
