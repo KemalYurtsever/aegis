@@ -1088,12 +1088,12 @@ class MaintenanceWindowRead(MaintenanceWindowCreate):
 
 
 class MaintenanceWindowUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=100)
+    name: str = Field(default=None, min_length=1, max_length=100)
     device_group: str | None = Field(default=None, max_length=80)
-    starts_at: datetime | None = None
-    ends_at: datetime | None = None
-    repeat: Literal["NONE", "DAILY", "WEEKLY"] | None = None
-    enabled: bool | None = None
+    starts_at: datetime = None
+    ends_at: datetime = None
+    repeat: Literal["NONE", "DAILY", "WEEKLY"] = None
+    enabled: bool = None
     reason: str | None = Field(default=None, max_length=300)
 
     @field_validator("name", "device_group", "reason")
