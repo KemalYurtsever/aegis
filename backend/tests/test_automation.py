@@ -78,6 +78,45 @@ def test_maintenance_window_can_be_paused_and_resumed(client):
     assert resumed.json()["active_now"] is True
 
 
+def test_maintenance_window_schedule_can_be_updated(client):
+    headers = admin_headers(client)
+    now = utc_now()
+    created = client.post("/api/automation/maintenance-windows", headers=headers, json={
+        "name": "Original window",
+        "device_group": "Servers",
+        "starts_at": (now + timedelta(hours=1)).isoformat(),
+        "ends_at": (now + timedelta(hours=2)).isoformat(),
+        "reason": "Initial timing",
+    })
+    assert created.status_code == 201
+
+    updated_starts = now + timedelta(hours=3)
+    updated = client.patch(
+        f"/api/automation/maintenance-windows/{created.json()['id']}",
+        headers=headers,
+        json={
+            "name": "Network upgrade",
+            "device_group": "Network",
+            "starts_at": updated_starts.isoformat(),
+            "ends_at": (updated_starts + timedelta(hours=2)).isoformat(),
+            "repeat": "WEEKLY",
+            "reason": "Core switch replacement",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Network upgrade"
+    assert updated.json()["device_group"] == "Network"
+    assert updated.json()["repeat"] == "WEEKLY"
+    assert updated.json()["reason"] == "Core switch replacement"
+
+    invalid = client.patch(
+        f"/api/automation/maintenance-windows/{created.json()['id']}",
+        headers=headers,
+        json={"ends_at": (updated_starts - timedelta(minutes=1)).isoformat()},
+    )
+    assert invalid.status_code == 422
+
+
 def test_active_maintenance_suppresses_new_alerts(client, monkeypatch):
     headers = admin_headers(client)
     now = utc_now()

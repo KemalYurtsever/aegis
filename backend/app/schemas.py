@@ -1088,7 +1088,21 @@ class MaintenanceWindowRead(MaintenanceWindowCreate):
 
 
 class MaintenanceWindowUpdate(BaseModel):
-    enabled: bool
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    device_group: str | None = Field(default=None, max_length=80)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    repeat: Literal["NONE", "DAILY", "WEEKLY"] | None = None
+    enabled: bool | None = None
+    reason: str | None = Field(default=None, max_length=300)
+
+    @field_validator("name", "device_group", "reason")
+    @classmethod
+    def clean_maintenance_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        return cleaned or None
 
 
 class IncidentRead(BaseModel):

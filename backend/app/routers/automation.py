@@ -1,4 +1,5 @@
 import json
+from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -143,7 +144,21 @@ def update_maintenance_window(
     window = db.get(MaintenanceWindow, window_id)
     if window is None:
         raise HTTPException(status_code=404, detail="Maintenance window not found")
-    window.enabled = payload.enabled
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="At least one maintenance field is required")
+
+    starts_at = changes.get("starts_at", window.starts_at)
+    ends_at = changes.get("ends_at", window.ends_at)
+    if starts_at is not None and starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=timezone.utc)
+    if ends_at is not None and ends_at.tzinfo is None:
+        ends_at = ends_at.replace(tzinfo=timezone.utc)
+    if starts_at is None or ends_at is None or ends_at <= starts_at:
+        raise HTTPException(status_code=422, detail="Maintenance must end after it starts")
+
+    for field, value in changes.items():
+        setattr(window, field, value)
     db.commit()
     db.refresh(window)
     return MaintenanceWindowRead.model_validate(window).model_copy(

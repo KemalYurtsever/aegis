@@ -3418,6 +3418,11 @@ td:first-child span {
   gap: 8px !important;
   padding: 0 0 14px !important;
 }
+.automation-window-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .automation-list {
   display: grid;
   gap: 8px;
