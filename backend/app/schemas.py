@@ -1095,9 +1095,24 @@ class IncidentRead(BaseModel):
     severity: Literal["WARNING", "CRITICAL"]
     status: Literal["OPEN", "RESOLVED"]
     alert_ids: list[int]
+    assigned_to: str | None
+    operator_note: str | None
     opened_at: datetime
     updated_at: datetime
     resolved_at: datetime | None
+
+
+class IncidentUpdate(BaseModel):
+    assigned_to: str | None = Field(default=None, max_length=80)
+    operator_note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("assigned_to", "operator_note")
+    @classmethod
+    def normalize_incident_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        return normalized or None
 
 
 class GeneratedReportRead(BaseModel):

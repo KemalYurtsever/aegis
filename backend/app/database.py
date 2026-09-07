@@ -194,28 +194,34 @@ def migrate_agent_monitoring_columns(engine) -> None:
 
 
 def migrate_automation_columns(engine) -> None:
-    """Keep the small single-row automation table compatible during local upgrades."""
+    """Keep local automation and incident data compatible during upgrades."""
     if engine.dialect.name != "sqlite":
         return
     with engine.begin() as connection:
         inspector = inspect(connection)
-        if "automation_settings" not in inspector.get_table_names():
-            return
-        columns = {column["name"] for column in inspector.get_columns("automation_settings")}
-        additions = {
-            "discovery_enabled": "BOOLEAN NOT NULL DEFAULT 0",
-            "vulnerability_scans_enabled": "BOOLEAN NOT NULL DEFAULT 0",
-            "service_discovery_enabled": "BOOLEAN NOT NULL DEFAULT 0",
-            "discovery_interval_hours": "INTEGER NOT NULL DEFAULT 6",
-            "vulnerability_interval_hours": "INTEGER NOT NULL DEFAULT 168",
-            "alert_escalation_minutes": "INTEGER NOT NULL DEFAULT 30",
-            "notification_window_enabled": "BOOLEAN NOT NULL DEFAULT 0",
-            "notification_start_hour": "INTEGER NOT NULL DEFAULT 8",
-            "notification_end_hour": "INTEGER NOT NULL DEFAULT 18",
-            "last_discovery_at": "DATETIME",
-            "last_discovery_network": "VARCHAR(80)",
-            "last_vulnerability_at": "DATETIME",
-        }
-        for name, definition in additions.items():
-            if name not in columns:
-                connection.execute(text(f"ALTER TABLE automation_settings ADD COLUMN {name} {definition}"))
+        tables = inspector.get_table_names()
+        if "automation_settings" in tables:
+            columns = {column["name"] for column in inspector.get_columns("automation_settings")}
+            additions = {
+                "discovery_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+                "vulnerability_scans_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+                "service_discovery_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+                "discovery_interval_hours": "INTEGER NOT NULL DEFAULT 6",
+                "vulnerability_interval_hours": "INTEGER NOT NULL DEFAULT 168",
+                "alert_escalation_minutes": "INTEGER NOT NULL DEFAULT 30",
+                "notification_window_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+                "notification_start_hour": "INTEGER NOT NULL DEFAULT 8",
+                "notification_end_hour": "INTEGER NOT NULL DEFAULT 18",
+                "last_discovery_at": "DATETIME",
+                "last_discovery_network": "VARCHAR(80)",
+                "last_vulnerability_at": "DATETIME",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE automation_settings ADD COLUMN {name} {definition}"))
+        if "incidents" in tables:
+            incident_columns = {column["name"] for column in inspector.get_columns("incidents")}
+            if "assigned_to" not in incident_columns:
+                connection.execute(text("ALTER TABLE incidents ADD COLUMN assigned_to VARCHAR(80)"))
+            if "operator_note" not in incident_columns:
+                connection.execute(text("ALTER TABLE incidents ADD COLUMN operator_note VARCHAR(500)"))
