@@ -152,6 +152,13 @@ const DEFAULT_DEVICE_FILTERS = {
   group: "ALL",
   tag: "ALL",
 };
+const DASHBOARD_SECTION_DEFAULTS = {
+  alerts: true,
+  services: true,
+  agents: true,
+  topology: true,
+  inventoryHealth: true,
+};
 const DEVICE_TYPES = [
   "Server",
   "Workstation",
@@ -611,6 +618,74 @@ function SavedViewsControl({ views, onApply, onSave, onDelete }) {
         >
           Delete view
         </button>
+      )}
+    </div>
+  );
+}
+
+function DashboardDisplayControl({ sections, onChange, onReset }) {
+  const [open, setOpen] = useState(false);
+  const controlRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function dismiss(event) {
+      if (event.type === "keydown" && event.key !== "Escape") return;
+      if (
+        event.type === "pointerdown" &&
+        controlRef.current?.contains(event.target)
+      )
+        return;
+      setOpen(false);
+    }
+    document.addEventListener("keydown", dismiss);
+    document.addEventListener("pointerdown", dismiss);
+    return () => {
+      document.removeEventListener("keydown", dismiss);
+      document.removeEventListener("pointerdown", dismiss);
+    };
+  }, [open]);
+
+  return (
+    <div className="dashboard-display-control" ref={controlRef}>
+      <button
+        className="button button--secondary"
+        type="button"
+        aria-expanded={open}
+        aria-controls="dashboard-display-options"
+        onClick={() => setOpen((value) => !value)}
+      >
+        Customize
+      </button>
+      {open && (
+        <div
+          id="dashboard-display-options"
+          className="dashboard-display-options"
+          role="dialog"
+          aria-label="Customize dashboard"
+        >
+          <strong>Dashboard sections</strong>
+          <p>Choose the operational context you want to see.</p>
+          {[
+            ["alerts", "Active alerts"],
+            ["services", "Service health"],
+            ["agents", "Agent fleet"],
+            ["topology", "Network topology"],
+            ["inventoryHealth", "Inventory health"],
+          ].map(([key, label]) => (
+            <label key={key}>
+              <input
+                type="checkbox"
+                checked={sections[key]}
+                onChange={(event) => onChange(key, event.target.checked)}
+              />
+              {label}
+            </label>
+          ))}
+          <button className="text-button" type="button" onClick={onReset}>
+            Restore defaults
+          </button>
+        </div>
       )}
     </div>
   );
@@ -5172,6 +5247,18 @@ export default function App() {
       return [];
     }
   });
+  const [dashboardSections, setDashboardSections] = useState(() => {
+    try {
+      const stored = JSON.parse(
+        window.localStorage.getItem("aegis_dashboard_sections") || "{}",
+      );
+      return stored && typeof stored === "object"
+        ? { ...DASHBOARD_SECTION_DEFAULTS, ...stored }
+        : DASHBOARD_SECTION_DEFAULTS;
+    } catch {
+      return DASHBOARD_SECTION_DEFAULTS;
+    }
+  });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState([]);
@@ -5807,6 +5894,30 @@ export default function App() {
       );
     } catch {
       /* Saved views remain available for the current session. */
+    }
+  }
+
+  function updateDashboardSection(section, enabled) {
+    setDashboardSections((current) => {
+      const next = { ...current, [section]: enabled };
+      try {
+        window.localStorage.setItem(
+          "aegis_dashboard_sections",
+          JSON.stringify(next),
+        );
+      } catch {
+        /* Dashboard preferences remain available for this session. */
+      }
+      return next;
+    });
+  }
+
+  function resetDashboardSections() {
+    setDashboardSections(DASHBOARD_SECTION_DEFAULTS);
+    try {
+      window.localStorage.removeItem("aegis_dashboard_sections");
+    } catch {
+      /* Storage can be unavailable in private browsing modes. */
     }
   }
 
@@ -6447,6 +6558,11 @@ export default function App() {
                 >
                   {loading ? "Refreshing…" : "Refresh"}
                 </button>
+                <DashboardDisplayControl
+                  sections={dashboardSections}
+                  onChange={updateDashboardSection}
+                  onReset={resetDashboardSections}
+                />
                 {canWrite && (
                   <>
                     <div className="header-menu" ref={headerMenuRef}>
@@ -6572,7 +6688,7 @@ export default function App() {
               devices={data.devices}
               onSelectDevice={navigateToDevice}
             />
-            {data.active_alerts.length > 0 && (
+            {dashboardSections.alerts && data.active_alerts.length > 0 && (
               <section className="panel alerts-panel">
                 <div className="panel-heading">
                   <div>
@@ -6626,24 +6742,32 @@ export default function App() {
                 </div>
               </section>
             )}
-            <ServiceOverviewPanel
-              overview={serviceOverview}
-              onSelectDevice={navigateToDevice}
-            />
-            <AgentFleetPanel
-              overview={agentOverview}
-              onSelectDevice={navigateToDevice}
-            />
-            <LogicalNetworkPanel
-              topology={topology}
-              onSelectDevice={navigateToDevice}
-              canWrite={canWrite}
-              onChanged={loadDashboard}
-            />
-            <InventoryHealthPanel
-              health={inventoryHealth}
-              onSelectDevice={navigateToDevice}
-            />
+            {dashboardSections.services && (
+              <ServiceOverviewPanel
+                overview={serviceOverview}
+                onSelectDevice={navigateToDevice}
+              />
+            )}
+            {dashboardSections.agents && (
+              <AgentFleetPanel
+                overview={agentOverview}
+                onSelectDevice={navigateToDevice}
+              />
+            )}
+            {dashboardSections.topology && (
+              <LogicalNetworkPanel
+                topology={topology}
+                onSelectDevice={navigateToDevice}
+                canWrite={canWrite}
+                onChanged={loadDashboard}
+              />
+            )}
+            {dashboardSections.inventoryHealth && (
+              <InventoryHealthPanel
+                health={inventoryHealth}
+                onSelectDevice={navigateToDevice}
+              />
+            )}
             <div className="content-grid">
               <section className="panel panel--wide">
                 <div className="panel-heading">
