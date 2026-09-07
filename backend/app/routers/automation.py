@@ -263,11 +263,14 @@ def refresh_baselines(db: Session = Depends(get_db)) -> dict[str, int]:
 def list_events(
     limit: int = Query(default=100, ge=1, le=500),
     device_id: int | None = Query(default=None, ge=1),
+    severity: str | None = Query(default=None, pattern="^(INFO|WARNING|CRITICAL)$"),
     db: Session = Depends(get_db),
 ) -> list[AutomationEventRead]:
     statement = select(AutomationEvent)
     if device_id is not None:
         statement = statement.where(AutomationEvent.device_id == device_id)
+    if severity is not None:
+        statement = statement.where(AutomationEvent.severity == severity)
     events = db.scalars(statement.order_by(AutomationEvent.created_at.desc()).limit(limit))
     return [_event_read(event) for event in events]
 

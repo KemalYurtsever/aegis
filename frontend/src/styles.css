@@ -3427,6 +3427,17 @@ td:first-child span {
   display: grid;
   gap: 8px;
 }
+.automation-event-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -2px 0 12px;
+}
+.automation-event-filter .is-active {
+  border-color: #2f61df;
+  color: #fff;
+  background: #2f61df;
+}
 .automation-list article {
   display: grid;
   grid-template-columns: auto 1fr auto;
