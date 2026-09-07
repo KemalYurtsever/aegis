@@ -33,6 +33,13 @@ function localToIso(value) {
   return value ? new Date(value).toISOString() : null;
 }
 
+function isoToLocalInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
+}
+
 export default function AutomationModal({ onClose }) {
   const [overview, setOverview] = useState(null);
   const [windows, setWindows] = useState([]);
@@ -40,6 +47,7 @@ export default function AutomationModal({ onClose }) {
   const [reports, setReports] = useState([]);
   const [events, setEvents] = useState([]);
   const [form, setForm] = useState(EMPTY_WINDOW);
+  const [editingWindowId, setEditingWindowId] = useState(null);
   const [summary, setSummary] = useState(null);
   const [incidentDrafts, setIncidentDrafts] = useState({});
   const [busy, setBusy] = useState(false);
@@ -96,19 +104,38 @@ export default function AutomationModal({ onClose }) {
     );
   }
 
-  async function addWindow(event) {
+  async function saveWindow(event) {
     event.preventDefault();
+    const payload = {
+      ...form,
+      device_group: form.device_group || null,
+      reason: form.reason || null,
+      starts_at: localToIso(form.starts_at),
+      ends_at: localToIso(form.ends_at),
+    };
     await perform(
-      () =>
-        createMaintenanceWindow({
-          ...form,
-          device_group: form.device_group || null,
-          reason: form.reason || null,
-          starts_at: localToIso(form.starts_at),
-          ends_at: localToIso(form.ends_at),
-        }),
-      "Maintenance window created.",
+      () => editingWindowId ? updateMaintenanceWindow(editingWindowId, payload) : createMaintenanceWindow(payload),
+      editingWindowId ? "Maintenance window updated." : "Maintenance window created.",
     );
+    setForm(EMPTY_WINDOW);
+    setEditingWindowId(null);
+  }
+
+  function editWindow(window) {
+    setEditingWindowId(window.id);
+    setForm({
+      name: window.name,
+      device_group: window.device_group || "",
+      starts_at: isoToLocalInput(window.starts_at),
+      ends_at: isoToLocalInput(window.ends_at),
+      repeat: window.repeat,
+      reason: window.reason || "",
+      enabled: window.enabled,
+    });
+  }
+
+  function cancelWindowEdit() {
+    setEditingWindowId(null);
     setForm(EMPTY_WINDOW);
   }
 
@@ -408,7 +435,7 @@ export default function AutomationModal({ onClose }) {
               <p>Leave group empty to suppress alerts for all devices.</p>
             </div>
           </div>
-          <form className="automation-window-form" onSubmit={addWindow}>
+          <form className="automation-window-form" onSubmit={saveWindow}>
             <input
               placeholder="Window name"
               required
@@ -450,9 +477,16 @@ export default function AutomationModal({ onClose }) {
               <option value="DAILY">Daily</option>
               <option value="WEEKLY">Weekly</option>
             </select>
-            <button className="button button--primary" disabled={busy}>
-              Add window
-            </button>
+            <div className="automation-window-form__actions">
+              <button className="button button--primary" disabled={busy}>
+                {editingWindowId ? "Save window" : "Add window"}
+              </button>
+              {editingWindowId && (
+                <button type="button" className="button button--secondary" onClick={cancelWindowEdit}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
           {windows.length === 0 ? (
             <div className="empty-state empty-state--compact">
@@ -476,6 +510,13 @@ export default function AutomationModal({ onClose }) {
                     </small>
                   </div>
                   <div className="automation-list__actions">
+                    <button
+                      className="button button--secondary"
+                      disabled={busy}
+                      onClick={() => editWindow(window)}
+                    >
+                      Edit
+                    </button>
                     <button
                       className="button button--secondary"
                       disabled={busy}
