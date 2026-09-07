@@ -2279,6 +2279,27 @@ td:first-child span {
   font-size: 14px;
   font-weight: 700;
 }
+.device-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.device-tags > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #315fda;
+  background: #eaf1ff;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+.app-shell--goth .device-link .device-tags > span,
+.app-shell--goth .asset-details .device-tags > span {
+  color: #f1a3bb;
+  background: rgba(195, 69, 113, 0.16);
+}
 .asset-description {
   margin: 0;
   padding: 13px 18px;

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import json
+
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,6 +35,7 @@ class Device(Base):
     maintenance_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     maintenance_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
     device_group: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     device_type: Mapped[str] = mapped_column(String(20), nullable=False, default="Other")
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -66,6 +69,18 @@ class Device(Base):
     attachments: Mapped[list["DeviceAttachment"]] = relationship(
         back_populates="device", cascade="all, delete-orphan", passive_deletes=True
     )
+
+    @property
+    def tags(self) -> list[str]:
+        try:
+            tags = json.loads(self.tags_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return tags if isinstance(tags, list) and all(isinstance(tag, str) for tag in tags) else []
+
+    @tags.setter
+    def tags(self, values: list[str]) -> None:
+        self.tags_json = json.dumps(values)
 
 
 class DeviceNote(Base):

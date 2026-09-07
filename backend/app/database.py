@@ -75,6 +75,8 @@ def migrate_device_inventory_columns(engine) -> None:
             connection.execute(text("ALTER TABLE devices ADD COLUMN maintenance_reason VARCHAR(300)"))
         if "device_group" not in columns:
             connection.execute(text("ALTER TABLE devices ADD COLUMN device_group VARCHAR(80)"))
+        if "tags_json" not in columns:
+            connection.execute(text("ALTER TABLE devices ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'"))
 
 
 def migrate_notification_tables(engine) -> None:

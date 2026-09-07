@@ -31,6 +31,7 @@ class DeviceFields(BaseModel):
     maintenance_until: datetime | None = None
     maintenance_reason: str | None = Field(default=None, max_length=300)
     device_group: str | None = Field(default=None, max_length=80)
+    tags: list[str] = Field(default_factory=list, max_length=12)
     is_active: bool = True
 
     @field_validator("name")
@@ -56,6 +57,20 @@ class DeviceFields(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            tag = " ".join(value.split()).lower()
+            if not tag:
+                continue
+            if len(tag) > 32 or not re.fullmatch(r"[a-z0-9][a-z0-9 ._/-]*", tag):
+                raise ValueError("Tags must use letters, numbers, spaces, dots, underscores, slashes, or hyphens")
+            if tag not in normalized:
+                normalized.append(tag)
+        return normalized
 
 
 class DeviceCreate(DeviceFields):
@@ -237,6 +252,7 @@ class DashboardDevice(BaseModel):
     maintenance_until: datetime | None
     maintenance_reason: str | None
     device_group: str | None
+    tags: list[str] = Field(default_factory=list)
     device_type: DeviceType
     is_active: bool
     current_status: Literal["ONLINE", "OFFLINE", "UNKNOWN"]

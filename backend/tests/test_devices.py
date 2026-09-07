@@ -156,6 +156,26 @@ def test_asset_metadata_is_normalized_and_validated(client):
     assert invalid.status_code == 422
 
 
+def test_device_tags_are_normalized_and_persisted(client):
+    response = create_device(
+        client,
+        tags=[" Production ", "edge", "production", "Finance Lab"],
+    )
+    assert response.status_code == 201
+    device = response.json()
+    assert device["tags"] == ["production", "edge", "finance lab"]
+
+    updated = client.put(
+        f"/api/devices/{device['id']}",
+        json=DEVICE | {"tags": ["core/network"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["tags"] == ["core/network"]
+
+    invalid = create_device(client, ip_address="192.168.56.21", tags=["not@valid"])
+    assert invalid.status_code == 422
+
+
 def test_device_persists_across_database_reconnection(tmp_path):
     from sqlalchemy import select
     from sqlalchemy.orm import sessionmaker
