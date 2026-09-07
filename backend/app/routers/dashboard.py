@@ -109,6 +109,7 @@ def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
                 maintenance_until=device.maintenance_until,
                 maintenance_reason=device.maintenance_reason,
                 device_group=device.device_group,
+                tags=device.tags,
                 device_type=device.device_type,
                 is_active=device.is_active,
                 current_status=latest.status if latest else "UNKNOWN",

@@ -140,6 +140,7 @@ const EMPTY_FORM = {
   operating_system: "",
   criticality: "MEDIUM",
   device_group: "",
+  tags: "",
   maintenance_until: "",
   maintenance_reason: "",
   is_active: true,
@@ -1290,6 +1291,7 @@ function DeviceForm({ device, onClose, onSaved }) {
           operating_system: device.operating_system || "",
           criticality: device.criticality || "MEDIUM",
           device_group: device.device_group || "",
+          tags: (device.tags || []).join(", "),
           maintenance_until: toDateTimeLocal(device.maintenance_until),
           maintenance_reason: device.maintenance_reason || "",
           is_active: device.is_active,
@@ -1320,6 +1322,10 @@ function DeviceForm({ device, onClose, onSaved }) {
         location: form.location.trim() || null,
         operating_system: form.operating_system.trim() || null,
         device_group: form.device_group.trim() || null,
+        tags: form.tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean),
         maintenance_until: form.maintenance_until
           ? new Date(form.maintenance_until).toISOString()
           : null,
@@ -1417,6 +1423,16 @@ function DeviceForm({ device, onClose, onSaved }) {
                 onChange={updateField}
                 maxLength="80"
                 placeholder="Finance Lab"
+              />
+            </label>
+            <label>
+              Tags
+              <input
+                name="tags"
+                value={form.tags}
+                onChange={updateField}
+                maxLength="395"
+                placeholder="production, edge"
               />
             </label>
             <label>
@@ -4147,6 +4163,20 @@ function DeviceDetail({
             <dd>{device.device_group || "Ungrouped"}</dd>
           </div>
           <div>
+            <dt>Tags</dt>
+            <dd>
+              {device.tags?.length ? (
+                <span className="device-tags">
+                  {device.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
+                </span>
+              ) : (
+                "None"
+              )}
+            </dd>
+          </div>
+          <div>
             <dt>Owner or team</dt>
             <dd>{device.owner || "Not assigned"}</dd>
           </div>
@@ -5270,7 +5300,7 @@ export default function App() {
     const query = filters.query.trim().toLocaleLowerCase();
     return data.devices.filter((device) => {
       const searchable =
-        `${device.name} ${device.ip_address} ${device.device_type} ${device.asset_tag || ""} ${device.device_group || ""} ${device.owner || ""} ${device.location || ""} ${device.operating_system || ""} ${device.criticality || ""} ${device.mac_address || ""} ${device.manufacturer || ""} ${device.vlan || ""}`.toLocaleLowerCase();
+        `${device.name} ${device.ip_address} ${device.device_type} ${device.asset_tag || ""} ${device.device_group || ""} ${(device.tags || []).join(" ")} ${device.owner || ""} ${device.location || ""} ${device.operating_system || ""} ${device.criticality || ""} ${device.mac_address || ""} ${device.manufacturer || ""} ${device.vlan || ""}`.toLocaleLowerCase();
       return (
         (!query || searchable.includes(query)) &&
         (filters.status === "ALL" ||
@@ -6937,6 +6967,13 @@ export default function App() {
                                       ? " · Maintenance"
                                       : ""}
                                   </span>
+                                  {device.tags?.length > 0 && (
+                                    <span className="device-tags">
+                                      {device.tags.map((tag) => (
+                                        <span key={tag}>{tag}</span>
+                                      ))}
+                                    </span>
+                                  )}
                                   {device.mac_address && (
                                     <span>
                                       {device.mac_address}
