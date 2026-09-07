@@ -539,6 +539,9 @@ export function listMaintenanceWindows() {
 export function createMaintenanceWindow(payload) {
   return jsonRequest("/api/automation/maintenance-windows", "POST", payload);
 }
+export function updateMaintenanceWindow(id, payload) {
+  return jsonRequest(`/api/automation/maintenance-windows/${id}`, "PATCH", payload);
+}
 export function deleteMaintenanceWindow(id) {
   return request(`/api/automation/maintenance-windows/${id}`, {
     method: "DELETE",

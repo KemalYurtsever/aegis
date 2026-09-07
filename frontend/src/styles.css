@@ -3434,6 +3434,12 @@ td:first-child span {
 .automation-list article div {
   min-width: 0;
 }
+.automation-list__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .automation-list article strong,
 .automation-list article small {
   display: block;

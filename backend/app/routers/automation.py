@@ -28,6 +28,7 @@ from app.schemas import (
     IncidentUpdate,
     MaintenanceWindowCreate,
     MaintenanceWindowRead,
+    MaintenanceWindowUpdate,
 )
 from app.services.automation_service import (
     automation_overview,
@@ -131,6 +132,23 @@ def create_maintenance_window(
     db.commit()
     db.refresh(window)
     return MaintenanceWindowRead.model_validate(window).model_copy(update={"active_now": window_is_active(window)})
+
+
+@router.patch("/maintenance-windows/{window_id}", response_model=MaintenanceWindowRead)
+def update_maintenance_window(
+    window_id: int,
+    payload: MaintenanceWindowUpdate,
+    db: Session = Depends(get_db),
+) -> MaintenanceWindowRead:
+    window = db.get(MaintenanceWindow, window_id)
+    if window is None:
+        raise HTTPException(status_code=404, detail="Maintenance window not found")
+    window.enabled = payload.enabled
+    db.commit()
+    db.refresh(window)
+    return MaintenanceWindowRead.model_validate(window).model_copy(
+        update={"active_now": window_is_active(window)}
+    )
 
 
 @router.delete("/maintenance-windows/{window_id}", status_code=204)
