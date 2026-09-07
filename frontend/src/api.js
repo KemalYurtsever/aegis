@@ -565,8 +565,10 @@ export function generateAutomationReport() {
 export function refreshAssetBaselines() {
   return request("/api/automation/baselines/refresh", { method: "POST" });
 }
-export function listAutomationEvents() {
-  return request("/api/automation/events?limit=100");
+export function listAutomationEvents(severity = "") {
+  const query = new URLSearchParams({ limit: "100" });
+  if (severity) query.set("severity", severity);
+  return request(`/api/automation/events?${query}`);
 }
 export function getDeviceChangeEvents(deviceId, limit = 30) {
   return request(`/api/automation/events?device_id=${deviceId}&limit=${limit}`);

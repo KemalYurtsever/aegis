@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models import MaintenanceWindow, utc_now
+from app.models import AutomationEvent, MaintenanceWindow, utc_now
 from app.services.automation_service import local_summary, report_path, window_is_active
 from app.services.ping_service import PingResult
 
@@ -122,6 +122,31 @@ def test_maintenance_window_schedule_can_be_updated(client):
         json={"name": None},
     )
     assert malformed.status_code == 422
+
+
+def test_automation_events_can_be_filtered_by_severity(client):
+    headers = admin_headers(client)
+    with client.app.state.session_factory() as db:
+        db.add_all([
+            AutomationEvent(
+                event_type="CONFIGURATION_DRIFT",
+                severity="WARNING",
+                message="Configuration changed",
+            ),
+            AutomationEvent(
+                event_type="ESCALATION",
+                severity="CRITICAL",
+                message="Alert escalated",
+            ),
+        ])
+        db.commit()
+
+    critical = client.get("/api/automation/events?severity=CRITICAL", headers=headers)
+    assert critical.status_code == 200
+    assert [event["severity"] for event in critical.json()] == ["CRITICAL"]
+
+    invalid = client.get("/api/automation/events?severity=LOW", headers=headers)
+    assert invalid.status_code == 422
 
 
 def test_active_maintenance_suppresses_new_alerts(client, monkeypatch):

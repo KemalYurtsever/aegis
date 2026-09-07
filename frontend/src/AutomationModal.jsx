@@ -46,6 +46,7 @@ export default function AutomationModal({ onClose }) {
   const [incidents, setIncidents] = useState([]);
   const [reports, setReports] = useState([]);
   const [events, setEvents] = useState([]);
+  const [eventSeverity, setEventSeverity] = useState("");
   const [form, setForm] = useState(EMPTY_WINDOW);
   const [editingWindowId, setEditingWindowId] = useState(null);
   const [summary, setSummary] = useState(null);
@@ -66,7 +67,7 @@ export default function AutomationModal({ onClose }) {
         listMaintenanceWindows(),
         listIncidents(),
         listGeneratedReports(),
-        listAutomationEvents(),
+        listAutomationEvents(eventSeverity),
       ]);
       setOverview(nextOverview);
       setWindows(nextWindows);
@@ -76,7 +77,7 @@ export default function AutomationModal({ onClose }) {
     } catch (error) {
       setMessage(error.message);
     }
-  }, []);
+  }, [eventSeverity]);
 
   useEffect(() => {
     load();
@@ -727,6 +728,23 @@ export default function AutomationModal({ onClose }) {
             >
               Refresh baselines
             </button>
+          </div>
+          <div className="automation-event-filter" aria-label="Filter automation events by severity">
+            {[
+              ["", "All"],
+              ["INFO", "Info"],
+              ["WARNING", "Warning"],
+              ["CRITICAL", "Critical"],
+            ].map(([value, label]) => (
+              <button
+                key={value || "all"}
+                type="button"
+                className={`button button--secondary ${eventSeverity === value ? "is-active" : ""}`}
+                onClick={() => setEventSeverity(value)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           {events.length === 0 ? (
             <div className="empty-state empty-state--compact">
