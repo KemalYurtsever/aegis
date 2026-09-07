@@ -145,6 +145,13 @@ const EMPTY_FORM = {
   maintenance_reason: "",
   is_active: true,
 };
+const DEFAULT_DEVICE_FILTERS = {
+  query: "",
+  status: "ALL",
+  type: "ALL",
+  group: "ALL",
+  tag: "ALL",
+};
 const DEVICE_TYPES = [
   "Server",
   "Workstation",
@@ -5154,12 +5161,7 @@ export default function App() {
   const [discovering, setDiscovering] = useState(false);
   const [discoveryMessage, setDiscoveryMessage] = useState("");
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
-  const [filters, setFilters] = useState({
-    query: "",
-    status: "ALL",
-    type: "ALL",
-    group: "ALL",
-  });
+  const [filters, setFilters] = useState(DEFAULT_DEVICE_FILTERS);
   const [savedViews, setSavedViews] = useState(() => {
     try {
       const stored = JSON.parse(
@@ -5295,6 +5297,13 @@ export default function App() {
       ].sort((left, right) => left.localeCompare(right)),
     [data.devices],
   );
+  const deviceTags = useMemo(
+    () =>
+      [...new Set(data.devices.flatMap((device) => device.tags || []))].sort(
+        (left, right) => left.localeCompare(right),
+      ),
+    [data.devices],
+  );
 
   const filteredDevices = useMemo(() => {
     const query = filters.query.trim().toLocaleLowerCase();
@@ -5309,7 +5318,11 @@ export default function App() {
         (filters.group === "ALL" ||
           (filters.group === "__UNGROUPED__"
             ? !device.device_group
-            : device.device_group === filters.group))
+            : device.device_group === filters.group)) &&
+        (filters.tag === "ALL" ||
+          (filters.tag === "__UNTAGGED__"
+            ? !device.tags?.length
+            : device.tags?.includes(filters.tag)))
       );
     });
   }, [data.devices, filters]);
@@ -5344,7 +5357,8 @@ export default function App() {
     filters.query !== "" ||
     filters.status !== "ALL" ||
     filters.type !== "ALL" ||
-    filters.group !== "ALL";
+    filters.group !== "ALL" ||
+    filters.tag !== "ALL";
   const pageCount = Math.max(1, Math.ceil(sortedAllDevices.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const paginatedDevices = useMemo(
@@ -5808,7 +5822,7 @@ export default function App() {
   }
 
   function applySavedView(view) {
-    setFilters({ ...view.filters });
+    setFilters({ ...DEFAULT_DEVICE_FILTERS, ...view.filters });
     setSort({ ...view.sort });
     setPageSize(normalizedDevicePageSize(view.pageSize));
     setPage(1);
@@ -6717,16 +6731,31 @@ export default function App() {
                         ))}
                       </select>
                     </label>
+                    <label>
+                      <span className="sr-only">Filter by tag</span>
+                      <select
+                        value={filters.tag}
+                        onChange={(event) =>
+                          setFilters((current) => ({
+                            ...current,
+                            tag: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="ALL">All tags</option>
+                        <option value="__UNTAGGED__">Untagged</option>
+                        {deviceTags.map((tag) => (
+                          <option key={tag} value={tag}>
+                            {tag}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     {filtersActive && (
                       <button
                         className="button button--secondary"
                         onClick={() =>
-                          setFilters({
-                            query: "",
-                            status: "ALL",
-                            type: "ALL",
-                            group: "ALL",
-                          })
+                          setFilters(DEFAULT_DEVICE_FILTERS)
                         }
                       >
                         Clear filters

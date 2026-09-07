@@ -661,7 +661,7 @@ h2 {
 }
 .device-filters {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) repeat(3, minmax(135px, auto)) auto;
+  grid-template-columns: minmax(210px, 1fr) repeat(4, minmax(125px, auto)) auto;
   gap: 9px;
   padding: 11px 14px;
   border-bottom: 1px solid #e8edf3;
