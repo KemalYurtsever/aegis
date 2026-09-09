@@ -3,9 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getAttackPaths,
   getHostNetworkPolicy,
+  getNeighborTable,
   getWirelessAdapters,
   listPacketCaptures,
   runDnsQuery,
+  runArpScan,
+  runCurlRequest,
+  runDigQuery,
+  runNmapScan,
   runSecurityTraceroute,
 } from "./api.js";
 import { formatDate } from "./format.js";
@@ -23,6 +28,7 @@ const TOOLS = [
   ["wireless", "Wireless", "08"],
   ["query", "DNS query", "09"],
   ["policy", "Firewall & routing", "10"],
+  ["lab-cli", "Network CLI", "11"],
 ];
 
 function textToBytes(value) {
@@ -978,6 +984,103 @@ function QueryTool() {
   );
 }
 
+function LabCliTool({ devices }) {
+  const [tool, setTool] = useState("nmap");
+  const [deviceId, setDeviceId] = useState(devices[0]?.id || "");
+  const [ports, setPorts] = useState("22,80,443,445,3389");
+  const [target, setTarget] = useState("");
+  const [recordType, setRecordType] = useState("A");
+  const [interfaceName, setInterfaceName] = useState("");
+  const [grep, setGrep] = useState("");
+  const [serviceDetection, setServiceDetection] = useState(false);
+  const [insecure, setInsecure] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function run(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setResult(null);
+    const common = grep.trim() ? { grep: grep.trim() } : {};
+    try {
+      let response;
+      if (tool === "nmap") {
+        const parsedPorts = ports.split(",").map((value) => Number(value.trim())).filter(Number.isInteger);
+        response = await runNmapScan({ device_id: Number(deviceId), ports: parsedPorts, service_detection: serviceDetection, ...common });
+      } else if (tool === "arp-scan") {
+        response = await runArpScan({ interface_name: interfaceName.trim() || null, ...common });
+      } else if (tool === "ip-neigh") {
+        response = await getNeighborTable(common);
+      } else if (tool === "curl") {
+        response = await runCurlRequest({ url: target.trim(), method: "GET", insecure, ...common });
+      } else {
+        response = await runDigQuery({ query: target.trim(), record_type: recordType, ...common });
+      }
+      setResult(response);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="workbench-tool lab-cli-tool">
+      <header>
+        <p className="eyebrow">Administrator learning lab</p>
+        <h3>Network command tools</h3>
+        <span>Nmap, ARP discovery, neighbor tables, curl and dig run as typed commands without a shell.</span>
+      </header>
+      <form className="lab-cli-form" onSubmit={run}>
+        <label>Tool
+          <select value={tool} onChange={(event) => { setTool(event.target.value); setResult(null); }}>
+            <option value="nmap">Nmap TCP scan</option>
+            <option value="arp-scan">arp-scan local network</option>
+            <option value="ip-neigh">ip neigh show</option>
+            <option value="curl">curl HTTP GET</option>
+            <option value="dig">dig DNS query</option>
+          </select>
+        </label>
+        {tool === "nmap" && <>
+          <label>Registered target
+            <select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} required>
+              <option value="">Select a device</option>
+              {devices.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.ip_address}</option>)}
+            </select>
+          </label>
+          <label>TCP ports (comma separated)
+            <input value={ports} onChange={(event) => setPorts(event.target.value)} placeholder="22,80,443,8080" required />
+          </label>
+          <label className="checkbox-label"><input type="checkbox" checked={serviceDetection} onChange={(event) => setServiceDetection(event.target.checked)} /> Light service detection</label>
+        </>}
+        {tool === "arp-scan" && <label>Interface (optional)
+          <input value={interfaceName} onChange={(event) => setInterfaceName(event.target.value)} placeholder="eth0" />
+        </label>}
+        {(tool === "curl" || tool === "dig") && <label>{tool === "curl" ? "HTTP(S) URL" : "DNS name or address"}
+          <input value={target} onChange={(event) => setTarget(event.target.value)} required />
+        </label>}
+        {tool === "curl" && <label className="checkbox-label"><input type="checkbox" checked={insecure} onChange={(event) => setInsecure(event.target.checked)} /> Allow an untrusted lab certificate</label>}
+        {tool === "dig" && <label>Record type
+          <select value={recordType} onChange={(event) => setRecordType(event.target.value)}>
+            {["A", "AAAA", "CNAME", "MX", "NS", "PTR", "SOA", "TXT", "ANY"].map((value) => <option key={value}>{value}</option>)}
+          </select>
+        </label>}
+        <label>Grep output (optional text)
+          <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="open, tcp, 192.168..." />
+        </label>
+        <button className="button button--primary" disabled={busy || (tool === "nmap" && !deviceId)}>{busy ? "Running…" : "Run tool"}</button>
+      </form>
+      {error && <div className="form-error">{error}</div>}
+      {result && <div className="lab-cli-result">
+        <div><strong>{result.tool}</strong><span> exit {result.exit_code} · {result.duration_ms} ms{result.truncated ? " · truncated" : ""}</span></div>
+        <pre>{result.output || "Command completed without output."}</pre>
+      </div>}
+    </section>
+  );
+}
+
 function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
   const cards = [
     [
@@ -1013,6 +1116,7 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
     ],
     ["traceroute", "Traceroute", "12 HOPS", "Trace registered devices only"],
     ["query", "DNS query", "SAFE", "Validated forward and reverse lookup"],
+    ["lab-cli", "Network CLI", "ADMIN", "Nmap, arp-scan, neighbors, curl and dig"],
     [
       "policy",
       "Firewall & routing",
@@ -1171,6 +1275,7 @@ export default function SecurityWorkbenchModal({
           {tab === "wireless" && <WirelessTool adapters={adapters} />}
           {tab === "query" && <QueryTool />}
           {tab === "policy" && <HostNetworkPolicyTool />}
+          {tab === "lab-cli" && <LabCliTool devices={devices} />}
         </main>
       </section>
     </div>

@@ -18,6 +18,7 @@ import {
   acknowledgeAllAlerts,
   createDevice,
   createServiceCheck,
+  clearAllDevices,
   deleteDevice,
   getDeviceNotes,
   getDeviceActivity,
@@ -112,6 +113,8 @@ const EMPTY_INVENTORY_HEALTH = {
   duplicate_mac_records: 0,
   issues: [],
 };
+const LAST_DISCOVERY_NETWORK_KEY = "aegis_last_discovery_network";
+const CLEAR_DEVICES_CONFIRMATION = "CLEAR ALL DEVICES";
 const EMPTY_TOPOLOGY = { interface_name: null, local_ip: null, groups: [], links: [] };
 const EMPTY_AGENT_OVERVIEW = {
   total_agents: 0,
@@ -4532,6 +4535,117 @@ function DeviceDetail({
   );
 }
 
+function NetworkActionDialog({
+  action,
+  confirmation,
+  busy,
+  onConfirmationChange,
+  onCancel,
+  onConfirm,
+}) {
+  const clearsInventory = action.kind === "reset" || action.requiresReset;
+  const title =
+    action.kind === "reset"
+      ? "Clear device inventory"
+      : action.requiresReset
+        ? "Switch network and discover"
+        : "Review network discovery";
+  const submitLabel =
+    action.kind === "reset"
+      ? "Clear all devices"
+      : action.requiresReset
+        ? "Clear old devices and scan"
+        : "Start discovery";
+  const confirmationMatches =
+    !clearsInventory || confirmation.trim() === CLEAR_DEVICES_CONFIRMATION;
+
+  return (
+    <div className="modal-backdrop">
+      <section
+        className="modal network-action-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="network-action-title"
+        aria-describedby="network-action-description"
+      >
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">Network inventory</p>
+            <h2 id="network-action-title">{title}</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            aria-label="Close network action"
+          >
+            ×
+          </button>
+        </div>
+        <p id="network-action-description" className="panel-help">
+          {action.kind === "reset"
+            ? "Use this when you want to discard the current lab inventory and start again."
+            : action.requiresReset
+              ? `The last scan used ${action.previousNetwork}. AEGIS detected a different subnet and can clear the old inventory before scanning it.`
+              : "Confirm the active adapter and subnet before AEGIS searches for devices."}
+        </p>
+        {action.network && (
+          <dl className="network-action-summary">
+            <div><dt>Subnet</dt><dd>{action.network.network}</dd></div>
+            <div><dt>Adapter</dt><dd>{action.network.interface_name}</dd></div>
+            <div><dt>Local address</dt><dd>{action.network.local_ip}</dd></div>
+            <div><dt>Gateway</dt><dd>{action.network.gateway || "Unknown"}</dd></div>
+          </dl>
+        )}
+        {clearsInventory && (
+          <div className="network-reset-warning">
+            <strong>{action.deviceCount} registered devices will be removed.</strong>
+            <p>
+              This also deletes their monitoring history, alerts, scans, notes,
+              topology links, agent enrollments, and attachments.
+            </p>
+          </div>
+        )}
+        {action.error && (
+          <div className="form-error" role="alert">{action.error}</div>
+        )}
+        <form className="network-action-form" onSubmit={onConfirm}>
+          {clearsInventory && (
+            <label>
+              Type <strong>{CLEAR_DEVICES_CONFIRMATION}</strong> to confirm
+              <input
+                value={confirmation}
+                onChange={(event) => onConfirmationChange(event.target.value)}
+                autoComplete="off"
+                spellCheck="false"
+                autoFocus
+              />
+            </label>
+          )}
+          <div className="network-action-buttons">
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={onCancel}
+              disabled={busy}
+              autoFocus={!clearsInventory}
+            >
+              Cancel
+            </button>
+            <button
+              className={clearsInventory ? "button button--danger" : "button button--primary"}
+              disabled={busy || !confirmationMatches}
+            >
+              {busy ? "Working…" : submitLabel}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function AuthScreen({ setupRequired, onAuthenticated, visualTheme }) {
   const [form, setForm] = useState({
     username: "",
@@ -4540,6 +4654,7 @@ function AuthScreen({ setupRequired, onAuthenticated, visualTheme }) {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   async function submit(event) {
     event.preventDefault();
     setError("");
@@ -4605,22 +4720,31 @@ function AuthScreen({ setupRequired, onAuthenticated, visualTheme }) {
           </label>
           <label>
             Password
-            <input
-              type="password"
-              value={form.password}
-              onChange={(event) =>
-                setForm({ ...form, password: event.target.value })
-              }
-              autoComplete={setupRequired ? "new-password" : "current-password"}
-              minLength={setupRequired ? 12 : 1}
-              required
-            />
+            <span className="password-field">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={form.password}
+                onChange={(event) =>
+                  setForm({ ...form, password: event.target.value })
+                }
+                autoComplete={setupRequired ? "new-password" : "current-password"}
+                minLength={setupRequired ? 12 : 1}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </span>
           </label>
           {setupRequired && (
             <label>
               Confirm password
               <input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 value={form.confirmPassword}
                 onChange={(event) =>
                   setForm({ ...form, confirmPassword: event.target.value })
@@ -5234,6 +5358,16 @@ export default function App() {
   );
   const [formDevice, setFormDevice] = useState(undefined);
   const [discovering, setDiscovering] = useState(false);
+  const [clearingDevices, setClearingDevices] = useState(false);
+  const [networkAction, setNetworkAction] = useState(null);
+  const [networkActionConfirmation, setNetworkActionConfirmation] = useState("");
+  const [lastDiscoveryNetwork, setLastDiscoveryNetwork] = useState(() => {
+    try {
+      return window.localStorage.getItem(LAST_DISCOVERY_NETWORK_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [discoveryMessage, setDiscoveryMessage] = useState("");
   const [sort, setSort] = useState({ key: "name", direction: "asc" });
   const [filters, setFilters] = useState(DEFAULT_DEVICE_FILTERS);
@@ -5357,16 +5491,38 @@ export default function App() {
     };
   }, [headerMenuOpen]);
 
+  useEffect(() => {
+    if (!networkAction || clearingDevices || discovering) return undefined;
+    setHeaderMenuOpen(false);
+    setCommandPaletteOpen(false);
+    function closeNetworkActionOnEscape(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setNetworkAction(null);
+      setNetworkActionConfirmation("");
+    }
+    document.addEventListener("keydown", closeNetworkActionOnEscape);
+    return () => document.removeEventListener("keydown", closeNetworkActionOnEscape);
+  }, [networkAction, clearingDevices, discovering]);
+
   const [bulkGroup, setBulkGroup] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const canWrite =
     auth?.user?.role === "ADMIN" || auth?.user?.role === "OPERATOR";
 
-  useEffect(() => {
-    getAuthStatus()
-      .then(setAuth)
-      .catch((requestError) => setAuthError(requestError.message));
+  const refreshAuthStatus = useCallback(async () => {
+    setAuthError("");
+    setAuth(null);
+    try {
+      setAuth(await getAuthStatus());
+    } catch (requestError) {
+      setAuthError(requestError.message);
+    }
   }, []);
+
+  useEffect(() => {
+    refreshAuthStatus();
+  }, [refreshAuthStatus]);
 
   const deviceTypes = useMemo(
     () =>
@@ -6056,6 +6212,10 @@ export default function App() {
           icon: "+",
           action: () => setFormDevice(null),
         },
+      );
+    }
+    if (auth?.user?.role === "ADMIN") {
+      commands.push(
         {
           id: "discover-devices",
           label: "Discover network devices",
@@ -6063,10 +6223,13 @@ export default function App() {
           icon: "⌁",
           action: handleDiscovery,
         },
-      );
-    }
-    if (auth?.user?.role === "ADMIN") {
-      commands.push(
+        {
+          id: "clear-device-inventory",
+          label: "Clear all devices",
+          description: "Reset device inventory before changing lab networks",
+          icon: "×",
+          action: handleClearAllDevices,
+        },
         {
           id: "security-workbench",
           label: "Open Security Workbench",
@@ -6121,7 +6284,13 @@ export default function App() {
       });
     });
     return commands;
-  }, [auth?.user?.role, canWrite, data.devices, loadDashboard]);
+  }, [
+    auth?.user?.role,
+    canWrite,
+    data.devices,
+    lastDiscoveryNetwork,
+    loadDashboard,
+  ]);
 
   useEffect(() => {
     function handleCommandShortcut(event) {
@@ -6228,25 +6397,112 @@ export default function App() {
   async function handleDiscovery() {
     setDiscovering(true);
     setDiscoveryMessage("");
+    setError("");
     try {
       const network = await getDiscoveryNetwork();
-      const approved = window.confirm(
-        `Scan ${network.network} on ${network.interface_name} and automatically add responsive devices?\n\n` +
-          `Local address: ${network.local_ip}\nGateway: ${network.gateway || "Unknown"}`,
-      );
-      if (!approved) return;
-      const result = await discoverDevices();
-      setDiscoveryMessage(
-        `Discovery finished: ${result.responsive_devices} responsive, ${result.devices_added} added, ${result.devices_skipped} already registered.`,
-      );
-      await loadDashboard({ quiet: true });
+      setNetworkActionConfirmation("");
+      setNetworkAction({
+        kind: "discover",
+        network,
+        previousNetwork: lastDiscoveryNetwork,
+        requiresReset: Boolean(
+          lastDiscoveryNetwork &&
+          lastDiscoveryNetwork !== network.network &&
+          data.total_devices > 0,
+        ),
+        deviceCount: data.total_devices,
+        error: "",
+      });
     } catch (requestError) {
-      setDiscoveryMessage(
+      setError(
         `Discovery unavailable: ${requestError.message}. Add devices manually or connect to an RFC 1918 private network.`,
       );
     } finally {
       setDiscovering(false);
     }
+  }
+
+  async function confirmNetworkAction(event) {
+    event.preventDefault();
+    if (!networkAction) return;
+    const clearsInventory =
+      networkAction.kind === "reset" || networkAction.requiresReset;
+    if (
+      clearsInventory &&
+      networkActionConfirmation.trim() !== CLEAR_DEVICES_CONFIRMATION
+    )
+      return;
+
+    setClearingDevices(clearsInventory);
+    setDiscovering(networkAction.kind === "discover");
+    setError("");
+    try {
+      let cleared = null;
+      if (clearsInventory) {
+        cleared = await clearAllDevices(CLEAR_DEVICES_CONFIRMATION);
+        setSelectedDeviceIds([]);
+        setPage(1);
+        try {
+          window.localStorage.removeItem(LAST_DISCOVERY_NETWORK_KEY);
+        } catch {
+          /* Reset succeeds even when storage is unavailable. */
+        }
+        setLastDiscoveryNetwork(null);
+      }
+
+      let discovered = null;
+      if (networkAction.kind === "discover") {
+        discovered = await discoverDevices();
+        try {
+          window.localStorage.setItem(
+            LAST_DISCOVERY_NETWORK_KEY,
+            discovered.network.network,
+          );
+        } catch {
+          /* Discovery works even when storage is unavailable. */
+        }
+        setLastDiscoveryNetwork(discovered.network.network);
+      }
+
+      await loadDashboard({ quiet: true });
+      if (discovered) {
+        const resetSummary = cleared
+          ? `${cleared.deleted_devices} old devices cleared. `
+          : "";
+        setDiscoveryMessage(
+          `${resetSummary}Discovery finished on ${discovered.network.network}: ${discovered.responsive_devices} responsive, ${discovered.devices_added} added, ${discovered.devices_skipped} already registered.`,
+        );
+      } else if (cleared) {
+        setDiscoveryMessage(
+          `Device inventory cleared: ${cleared.deleted_devices} devices and ${cleared.deleted_attachments} attachments removed.`,
+        );
+      }
+      setNetworkAction(null);
+      setNetworkActionConfirmation("");
+    } catch (requestError) {
+      setNetworkAction((current) =>
+        current ? { ...current, error: requestError.message } : current,
+      );
+    } finally {
+      setClearingDevices(false);
+      setDiscovering(false);
+    }
+  }
+
+  function handleClearAllDevices() {
+    setNetworkActionConfirmation("");
+    setNetworkAction({
+      kind: "reset",
+      requiresReset: true,
+      deviceCount: data.total_devices,
+      error: "",
+    });
+  }
+
+  function closeNetworkAction() {
+    if (clearingDevices || discovering) return;
+    setNetworkAction(null);
+    setNetworkActionConfirmation("");
   }
 
   async function handleSaved(saved) {
@@ -6286,9 +6542,14 @@ export default function App() {
   if (authError)
     return (
       <main className="auth-page">
-        <div className="error-banner">
-            <strong>Unable to reach Aegis.</strong> {authError}
-        </div>
+        <section className="auth-card auth-recovery" role="alert">
+          <p className="eyebrow">Connection unavailable</p>
+          <h1>Unable to reach Aegis</h1>
+          <p>{authError}</p>
+          <button className="button button--primary" onClick={refreshAuthStatus}>
+            Try again
+          </button>
+        </section>
       </main>
     );
   if (auth === null)
@@ -6321,11 +6582,28 @@ export default function App() {
           closeTopSidebarWindow();
       }}
     >
-      <a className="skip-link" href="#main-content">
+      {networkAction && (
+        <NetworkActionDialog
+          action={networkAction}
+          confirmation={networkActionConfirmation}
+          busy={clearingDevices || discovering}
+          onConfirmationChange={setNetworkActionConfirmation}
+          onCancel={closeNetworkAction}
+          onConfirm={confirmNetworkAction}
+        />
+      )}
+      <a
+        className="skip-link"
+        href="#main-content"
+        tabIndex={networkAction ? -1 : undefined}
+        aria-hidden={networkAction ? "true" : undefined}
+      >
         Skip to main content
       </a>
       <aside
         className={`sidebar${mobileNavigationOpen ? " sidebar--menu-open" : ""}`}
+        inert={networkAction ? true : undefined}
+        aria-hidden={networkAction ? "true" : undefined}
       >
         <button
           className="sidebar-brand"
@@ -6495,7 +6773,12 @@ export default function App() {
           </button>
         </div>
       </aside>
-      <main id="main-content" tabIndex="-1">
+      <main
+        id="main-content"
+        tabIndex="-1"
+        inert={networkAction ? true : undefined}
+        aria-hidden={networkAction ? "true" : undefined}
+      >
         {selectedId ? (
           <DeviceDetail
             deviceId={selectedId}
@@ -6534,6 +6817,14 @@ export default function App() {
                 <span>
                   Updated {lastUpdated ? lastUpdated.toLocaleTimeString() : "—"}
                 </span>
+                {lastDiscoveryNetwork && (
+                  <span
+                    className="network-context"
+                    title="Subnet represented by the most recent device discovery"
+                  >
+                    Network <strong>{lastDiscoveryNetwork}</strong>
+                  </span>
+                )}
                 {scheduler && canWrite && (
                   <button
                     className={`scheduler-control scheduler-control--${scheduler.running ? "running" : "paused"}`}
@@ -6592,36 +6883,54 @@ export default function App() {
                               Run a reachability check for every device
                             </small>
                           </button>
-                          <button
-                            role="menuitem"
-                            onClick={() => {
-                              setHeaderMenuOpen(false);
-                              handleFingerprintAll();
-                            }}
-                            disabled={
-                              fingerprintingAll ||
-                              checkingAll ||
-                              data.active_devices === 0
-                            }
-                          >
-                            {fingerprintingAll
-                              ? "Fingerprinting…"
-                              : "Fingerprint all devices"}
-                            <small>Refresh discovered platform details</small>
-                          </button>
-                          <button
-                            role="menuitem"
-                            onClick={() => {
-                              setHeaderMenuOpen(false);
-                              handleDiscovery();
-                            }}
-                            disabled={discovering || checkingAll}
-                          >
-                            {discovering
-                              ? "Discovering…"
-                              : "Discover network devices"}
-                            <small>Find devices on the connected network</small>
-                          </button>
+                          {auth.user.role === "ADMIN" && (
+                            <>
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setHeaderMenuOpen(false);
+                                  handleFingerprintAll();
+                                }}
+                                disabled={
+                                  fingerprintingAll ||
+                                  checkingAll ||
+                                  data.active_devices === 0
+                                }
+                              >
+                                {fingerprintingAll
+                                  ? "Fingerprinting…"
+                                  : "Fingerprint all devices"}
+                                <small>Refresh discovered platform details</small>
+                              </button>
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setHeaderMenuOpen(false);
+                                  handleDiscovery();
+                                }}
+                                disabled={discovering || checkingAll || clearingDevices}
+                              >
+                                {discovering
+                                  ? "Discovering…"
+                                  : "Discover network devices"}
+                                <small>Find devices on the connected network</small>
+                              </button>
+                              <button
+                                className="header-menu__danger"
+                                role="menuitem"
+                                onClick={() => {
+                                  setHeaderMenuOpen(false);
+                                  handleClearAllDevices();
+                                }}
+                                disabled={clearingDevices || data.total_devices === 0}
+                              >
+                                {clearingDevices
+                                  ? "Clearing devices…"
+                                  : "Clear all devices"}
+                                <small>Reset inventory before switching networks</small>
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

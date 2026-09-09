@@ -11,9 +11,10 @@ NETWORK = LocalNetwork(
 )
 
 
-def test_discovery_imports_new_devices_and_skips_existing(client, monkeypatch):
+def test_discovery_imports_new_devices_and_skips_existing(client, admin_headers, monkeypatch):
     client.post(
         "/api/devices",
+        headers=admin_headers,
         json={"name": "Router", "ip_address": "192.168.1.1", "device_type": "Router", "description": None, "is_active": True},
     )
     monkeypatch.setattr("app.services.discovery_service.get_primary_private_network", lambda: NETWORK)
@@ -24,7 +25,7 @@ def test_discovery_imports_new_devices_and_skips_existing(client, monkeypatch):
     monkeypatch.setattr("app.services.discovery_service.resolve_hostnames", lambda _addresses: {"192.168.1.50": "printer.office"})
     monkeypatch.setattr("app.services.mdns_service.discover_mdns", lambda _network: {})
 
-    response = client.post("/api/discovery/import")
+    response = client.post("/api/discovery/import", headers=admin_headers)
 
     assert response.status_code == 200
     body = response.json()

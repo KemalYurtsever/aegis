@@ -37,9 +37,9 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
 }
 if ($dockerAvailable) {
     docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") down
-    if ($LASTEXITCODE -ne 0) { throw "Unable to stop Prometheus and Grafana cleanly." }
+    if ($LASTEXITCODE -ne 0) { throw "Unable to stop the network toolbox, Prometheus, and Grafana cleanly." }
     Remove-StaleComposeContainers -WorkingDirectory $projectRoot
 } else {
-    Write-Warning "Docker Desktop is not running. Prometheus and Grafana were already unavailable."
+    Write-Warning "Docker Desktop is not running. The network toolbox, Prometheus, and Grafana were already unavailable."
 }
 Write-Host "Hybrid AEGIS stopped. Persistent data was preserved."

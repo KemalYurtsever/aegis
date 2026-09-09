@@ -1,6 +1,7 @@
 import json
 import os
 import smtplib
+import ssl
 import base64
 from datetime import datetime
 from email.message import EmailMessage
@@ -82,7 +83,7 @@ def _send_email(channel: NotificationChannel, delivery: NotificationDelivery) ->
     message.set_content(delivery.message)
     with smtplib.SMTP(channel.smtp_host, channel.smtp_port, timeout=10) as smtp:
         if channel.use_tls:
-            smtp.starttls()
+            smtp.starttls(context=ssl.create_default_context())
         if channel.smtp_username:
             smtp.login(channel.smtp_username, password)
         smtp.send_message(message)

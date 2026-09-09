@@ -21,19 +21,19 @@ def test_classification_requires_strong_service_evidence():
     assert classify_from_evidence([80], None, None)[0] is None
 
 
-def test_device_fingerprint_is_stored_and_classifies_other_device(client, monkeypatch):
-    device = client.post("/api/devices", json=DEVICE).json()
+def test_device_fingerprint_is_stored_and_classifies_other_device(client, admin_headers, monkeypatch):
+    device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     timestamp = datetime.now(timezone.utc)
     monkeypatch.setattr(
         "app.routers.services.fingerprint_target",
         lambda *_args: FingerprintEvidence([631, 9100], "Printer", "printing service; open TCP: 631, 9100", timestamp),
     )
 
-    response = client.post(f"/api/devices/{device['id']}/fingerprint")
+    response = client.post(f"/api/devices/{device['id']}/fingerprint", headers=admin_headers)
 
     assert response.status_code == 200
     assert response.json()["classification"] == "Printer"
-    stored = client.get(f"/api/devices/{device['id']}").json()
+    stored = client.get(f"/api/devices/{device['id']}", headers=admin_headers).json()
     assert stored["device_type"] == "Printer"
     assert stored["fingerprint_ports"] == "631,9100"
     assert stored["fingerprint_summary"].startswith("printing service")
@@ -62,9 +62,9 @@ def test_fingerprint_ports_are_probed_in_one_bounded_wave(monkeypatch):
     assert evidence.open_ports == []
 
 
-def test_fingerprint_all_commits_results_once(client, monkeypatch):
+def test_fingerprint_all_commits_results_once(client, admin_headers, monkeypatch):
     for index in range(3):
-        client.post("/api/devices", json={**DEVICE, "name": f"Device {index}", "ip_address": f"192.168.56.{70 + index}"})
+        client.post("/api/devices", headers=admin_headers, json={**DEVICE, "name": f"Device {index}", "ip_address": f"192.168.56.{70 + index}"})
 
     timestamp = datetime.now(timezone.utc)
     monkeypatch.setattr(
@@ -81,8 +81,9 @@ def test_fingerprint_all_commits_results_once(client, monkeypatch):
 
     monkeypatch.setattr(Session, "commit", counted_commit)
 
-    response = client.post("/api/devices/fingerprint-all")
+    response = client.post("/api/devices/fingerprint-all", headers=admin_headers)
 
     assert response.status_code == 200
     assert response.json()["fingerprinted_devices"] == 3
-    assert commits == 1
+    # One auth activity commit plus one batch commit for all fingerprint results.
+    assert commits == 2

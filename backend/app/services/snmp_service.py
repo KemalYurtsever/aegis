@@ -13,6 +13,7 @@ OIDS = {
     "location": "1.3.6.1.2.1.1.6.0",
     "interface_count": "1.3.6.1.2.1.2.1.0",
 }
+SNMP_COMMUNITY_ENV = "AEGIS_SNMP_COMMUNITY"
 
 
 def get_or_create_config(device_id: int, db: Session) -> SnmpConfig:
@@ -45,7 +46,11 @@ async def query_snmp(host: str, port: int, community: str, timeout: float = 2.0)
 
 
 def poll_device(device: Device, config: SnmpConfig, db: Session) -> SnmpResult:
-    community = os.getenv(config.community_env, "").strip()
+    if config.community_env != SNMP_COMMUNITY_ENV:
+        result = SnmpResult(device_id=device.id, status="FAILED", error="SNMP credential reference is not allowed")
+        db.add(result); db.commit(); db.refresh(result)
+        return result
+    community = os.getenv(SNMP_COMMUNITY_ENV, "").strip()
     if not community:
         result = SnmpResult(device_id=device.id, status="FAILED", error=f"Environment variable {config.community_env} is not configured")
     else:

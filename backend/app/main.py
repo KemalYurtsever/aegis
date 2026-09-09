@@ -32,7 +32,7 @@ from app.routers.security import router as security_router
 from app.scheduler import PeriodicMonitor
 from app.schemas import HealthResponse, SchedulerStatus
 from app.services.auth_service import session_user
-from app.security import InMemoryRateLimiter, rate_limit_for, request_identity
+from app.security import InMemoryRateLimiter, RequestBodyLimitMiddleware, rate_limit_for, request_identity
 from app.services.backup_service import BackupService, PeriodicBackup
 
 
@@ -83,6 +83,11 @@ async def lifespan(application: FastAPI):
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_body_size=1_048_576,
+    path_limits={r"/api/devices/\d+/attachments": 7_200_000},
+)
+app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://127.0.0.1:5173",
@@ -104,13 +109,6 @@ _AUTH_PUBLIC_PREFIXES = ("/api/agent/",)
 @app.middleware("http")
 async def authenticate_request(request: Request, call_next):
     if request.url.path.startswith("/api/") or request.url.path == "/metrics":
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                if int(content_length) > 1_048_576:
-                    return JSONResponse(status_code=413, content={"detail": "Request body is too large"})
-            except ValueError:
-                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header"})
         bucket, limit = rate_limit_for(request)
         retry_after = request.app.state.rate_limiter.check(bucket, request_identity(request), limit)
         if retry_after is not None:

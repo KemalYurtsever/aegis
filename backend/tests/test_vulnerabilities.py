@@ -1,6 +1,3 @@
-from types import SimpleNamespace
-
-from app.services.discovery_service import LocalNetwork
 from app.services.port_scan_service import OpenPort
 from app.services.vulnerability_service import TlsPosture
 
@@ -39,17 +36,9 @@ def test_scan_with_no_common_ports_records_positive_information(client, monkeypa
     assert body["findings"][0]["severity"] == "INFO"
 
 
-def test_scan_allows_registered_target_on_authorized_public_lan(client, monkeypatch):
+def test_scan_allows_registered_target_on_public_lan(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json={**DEVICE, "ip_address": "172.2.4.14"}, headers=headers).json()
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_settings",
-        lambda: SimpleNamespace(allow_public_lan_discovery=True, authorized_lab_mode=False),
-    )
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_primary_private_network",
-        lambda: LocalNetwork("Wi-Fi", "172.2.4.125", "172.2.4.0/24", "172.2.4.1"),
-    )
     monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [])
 
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
@@ -58,31 +47,19 @@ def test_scan_allows_registered_target_on_authorized_public_lan(client, monkeypa
     assert response.json()["status"] == "COMPLETED"
 
 
-def test_scan_rejects_public_target_outside_authorized_lan(client, monkeypatch):
+def test_scan_allows_registered_public_target_outside_connected_lan(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json={**DEVICE, "ip_address": "8.8.8.8"}, headers=headers).json()
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_settings",
-        lambda: SimpleNamespace(allow_public_lan_discovery=True, authorized_lab_mode=False),
-    )
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_primary_private_network",
-        lambda: LocalNetwork("Wi-Fi", "172.2.4.125", "172.2.4.0/24", "172.2.4.1"),
-    )
+    monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [])
 
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Vulnerability scanning is restricted to the connected authorized LAN"
+    assert response.status_code == 201
 
 
-def test_authorized_lab_mode_allows_registered_target_outside_connected_lan(client, monkeypatch):
+def test_scan_allows_registered_documentation_target(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json={**DEVICE, "ip_address": "203.0.113.25"}, headers=headers).json()
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_settings",
-        lambda: SimpleNamespace(allow_public_lan_discovery=True, authorized_lab_mode=True),
-    )
     monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [])
 
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)

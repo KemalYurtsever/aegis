@@ -18,6 +18,8 @@ from app.schemas import (
     BulkDeviceUpdateResponse,
     BulkGroupRequest,
     BulkMonitoringRequest,
+    ClearDevicesRequest,
+    ClearDevicesResponse,
     DeviceCreate,
     DeviceRead,
     DeviceNoteCreate,
@@ -30,6 +32,7 @@ from app.schemas import (
     MonitorResultRead,
     StatusEvent,
 )
+from app.routers.auth import require_admin
 from app.services.monitoring_service import check_and_store_device
 from app.services.statistics_service import calculate_device_statistics, derive_status_events
 
@@ -94,6 +97,34 @@ def create_device(payload: DeviceCreate, db: Session = Depends(get_db)) -> Devic
 @router.get("", response_model=list[DeviceRead])
 def list_devices(db: Session = Depends(get_db)) -> list[Device]:
     return list(db.scalars(select(Device).order_by(Device.id)))
+
+
+@router.post(
+    "/actions/clear-all",
+    response_model=ClearDevicesResponse,
+    dependencies=[Depends(require_admin)],
+)
+def clear_all_devices(payload: ClearDevicesRequest, db: Session = Depends(get_db)) -> ClearDevicesResponse:
+    if payload.confirmation != "CLEAR ALL DEVICES":
+        raise HTTPException(status_code=400, detail="Type CLEAR ALL DEVICES to confirm")
+
+    devices = list(db.scalars(select(Device).order_by(Device.id)))
+    attachments = list(db.scalars(select(DeviceAttachment).order_by(DeviceAttachment.id)))
+    attachment_paths = [attachment_directory() / item.storage_name for item in attachments]
+    for device in devices:
+        db.delete(device)
+    db.commit()
+    for path in attachment_paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            # The database reset is authoritative. A locked orphaned blob can
+            # be removed later without restoring any device data.
+            pass
+    return ClearDevicesResponse(
+        deleted_devices=len(devices),
+        deleted_attachments=len(attachments),
+    )
 
 
 @router.post("/check-all", response_model=BatchCheckResponse, status_code=status.HTTP_201_CREATED)

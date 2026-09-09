@@ -1,11 +1,81 @@
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from typing import Awaitable, Callable
 
 from fastapi import Request
+from starlette.responses import JSONResponse
+
+
+class RequestBodyLimitMiddleware:
+    """Read and replay bounded ASGI request bodies, including chunked uploads."""
+
+    def __init__(self, app, max_body_size: int, path_limits: dict[str, int] | None = None) -> None:
+        self.app = app
+        self.max_body_size = max_body_size
+        self.path_limits = [(re.compile(pattern), limit) for pattern, limit in (path_limits or {}).items()]
+
+    async def __call__(self, scope, receive: Callable[[], Awaitable[dict]], send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_limit = next(
+            (limit for pattern, limit in self.path_limits if pattern.fullmatch(scope.get("path", ""))),
+            self.max_body_size,
+        )
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        declared = headers.get(b"content-length")
+        if declared is not None:
+            try:
+                declared_size = int(declared)
+                if declared_size < 0:
+                    raise ValueError
+            except ValueError:
+                await self._reject(scope, receive, send, 400, "Invalid Content-Length header")
+                return
+            if declared_size > request_limit:
+                await self._reject(scope, receive, send, 413, "Request body is too large")
+                return
+
+        body = bytearray()
+        disconnected = False
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                disconnected = True
+                break
+            if message["type"] != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > request_limit:
+                await self._reject(scope, receive, send, 413, "Request body is too large")
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        replayed = False
+
+        async def replay_receive() -> dict:
+            nonlocal replayed
+            if disconnected:
+                return {"type": "http.disconnect"}
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        await self.app(scope, replay_receive, send)
+
+    @staticmethod
+    async def _reject(scope, receive, send, status_code: int, detail: str) -> None:
+        response = JSONResponse(status_code=status_code, content={"detail": detail})
+        await response(scope, receive, send)
 
 
 @dataclass(frozen=True)
@@ -47,6 +117,7 @@ def rate_limit_for(request: Request) -> tuple[str, RateLimit]:
         return "authentication", RateLimit(10, 60)
     expensive = (
         path == "/api/discovery/import"
+        or path == "/api/devices/actions/clear-all"
         or path == "/api/devices/check-all"
         or path == "/api/devices/bulk/check"
         or path == "/api/packet-captures"
@@ -64,7 +135,7 @@ def rate_limit_for(request: Request) -> tuple[str, RateLimit]:
         or path == "/api/automation/run"
         or path == "/api/automation/reports/generate"
         or path == "/api/automation/baselines/refresh"
-        or path == "/api/security/toolbox/traceroute"
+        or path.startswith("/api/security/toolbox/")
         or (path.endswith("/check") and method == "POST")
     )
     if expensive and method == "POST":

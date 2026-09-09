@@ -36,3 +36,14 @@ def client(tmp_path):
     del app.state.backup_service
     del app.state.backup_scheduler
     test_engine.dispose()
+
+
+@pytest.fixture
+def admin_headers(client):
+    response = client.post(
+        "/api/auth/setup",
+        json={"username": "test-admin", "password": "correct-horse-battery-staple"},
+    )
+    assert response.status_code == 201
+    client.app.state.auth_required = True
+    return {"Authorization": f"Bearer {response.json()['token']}"}

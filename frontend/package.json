@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
     "exceljs": "^4.4.0",
     "react": "latest",
     "react-dom": "latest",

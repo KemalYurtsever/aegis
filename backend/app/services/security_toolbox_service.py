@@ -1,10 +1,13 @@
 import ipaddress
+import os
 import platform
 import re
 import shutil
 import socket
 import subprocess
 import json
+import tempfile
+import time
 
 import psutil
 
@@ -18,8 +21,9 @@ from app.schemas import (
     TraceRouteHop,
     TraceRouteRead,
     WirelessAdapterRead,
+    LabCommandRead,
 )
-from app.services.discovery_service import get_primary_private_network
+from app.services.discovery_service import active_arp_discovery, get_primary_private_network, read_windows_arp_table
 
 
 _WIRELESS_NAME = re.compile(r"wi[ -]?fi|wlan|wireless|802\.11", re.I)
@@ -30,6 +34,118 @@ _HOSTNAME = re.compile(
 )
 _ADDRESS_TOKEN = re.compile(r"(?<![0-9a-f:.])(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]{2,})(?![0-9a-f:.])", re.I)
 _LATENCY_TOKEN = re.compile(r"<?(\d+(?:\.\d+)?)\s*ms", re.I)
+_MAX_TOOL_OUTPUT = 100_000
+_DOCKER_TOOLBOX_COMMANDS = {"nmap", "arp-scan", "curl", "dig"}
+
+
+def _filter_output(output: str, grep: str | None) -> str:
+    if not grep:
+        return output
+    needle = grep.casefold()
+    return "\n".join(line for line in output.splitlines() if needle in line.casefold())
+
+
+def _run_lab_tool(tool: str, command: list[str], *, target: str | None = None, grep: str | None = None, timeout: int = 60) -> LabCommandRead:
+    executable = shutil.which(command[0])
+    if executable is None:
+        container = os.getenv("AEGIS_NETWORK_TOOLBOX_CONTAINER", "").strip()
+        docker = shutil.which("docker")
+        if tool not in _DOCKER_TOOLBOX_COMMANDS or not container or docker is None:
+            raise RuntimeError(f"{command[0]} is not installed on the AEGIS host and no Docker toolbox is available")
+        command = [docker, "exec", container, *command]
+        executable = command[0]
+    started = time.monotonic()
+    timed_out = False
+    with tempfile.TemporaryFile() as output_file:
+        try:
+            completed = subprocess.run(
+                [executable, *command[1:]], stdout=output_file, stderr=subprocess.STDOUT,
+                timeout=timeout, shell=False, check=False,
+            )
+            exit_code = completed.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            exit_code = 124
+        output_file.seek(0)
+        encoded = output_file.read(_MAX_TOOL_OUTPUT + 1)
+    truncated = len(encoded) > _MAX_TOOL_OUTPUT
+    output = encoded[:_MAX_TOOL_OUTPUT].decode("utf-8", errors="replace").strip()
+    if timed_out:
+        output = f"{output}\nCommand timed out after {timeout} seconds".strip()
+    if truncated:
+        output += "\n[output truncated]"
+    output = _filter_output(output, grep)
+    return LabCommandRead(
+        tool=tool, target=target, exit_code=exit_code, output=output,
+        duration_ms=round((time.monotonic() - started) * 1000, 2), truncated=truncated,
+    )
+
+
+def nmap_tcp_scan(address: str, ports: list[int], service_detection: bool, grep: str | None = None) -> LabCommandRead:
+    command = ["nmap", "-Pn", "-sT", "--max-retries", "2", "--host-timeout", "60s", "-p", ",".join(map(str, ports))]
+    if ipaddress.ip_address(address).version == 6:
+        command.append("-6")
+    if service_detection:
+        command.extend(["-sV", "--version-light"])
+    command.append(address)
+    return _run_lab_tool("nmap", command, target=address, grep=grep, timeout=70)
+
+
+def arp_scan(interface_name: str | None = None, grep: str | None = None) -> LabCommandRead:
+    if platform.system() == "Windows" and shutil.which("arp-scan") is None:
+        started = time.monotonic()
+        network = get_primary_private_network()
+        if interface_name and interface_name.casefold() != network.interface_name.casefold():
+            raise RuntimeError(f"The active physical interface is {network.interface_name}")
+        discovered = active_arp_discovery(network)
+        subnet = ipaddress.ip_network(network.network)
+        cached = {
+            address: mac for address, mac in read_windows_arp_table().items()
+            if ipaddress.ip_address(address) in subnet
+        }
+        cached.update(discovered)
+        lines = [f"Interface: {network.interface_name}\tNetwork: {network.network}"]
+        lines.extend(f"{address}\t{mac}" for address, mac in sorted(cached.items(), key=lambda item: ipaddress.ip_address(item[0])))
+        output = _filter_output("\n".join(lines), grep)
+        return LabCommandRead(
+            tool="arp-scan", target=network.network, exit_code=0, output=output,
+            duration_ms=round((time.monotonic() - started) * 1000, 2), truncated=False,
+        )
+    command = ["arp-scan", "--localnet", "--retry", "2", "--timeout", "500"]
+    if interface_name:
+        command.extend(["--interface", interface_name])
+    return _run_lab_tool("arp-scan", command, grep=grep, timeout=45)
+
+
+def neighbor_table(grep: str | None = None) -> LabCommandRead:
+    if platform.system() == "Windows":
+        command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Get-NetNeighbor | Sort-Object InterfaceIndex,IPAddress | Format-Table -AutoSize"]
+    else:
+        command = ["ip", "neigh", "show"]
+    return _run_lab_tool("ip-neigh", command, grep=grep, timeout=15)
+
+
+def curl_request(url: str, method: str, insecure: bool, grep: str | None = None) -> LabCommandRead:
+    command = [
+        "curl", "--silent", "--show-error", "--location", "--max-time", "20",
+        "--max-filesize", "1048576", "--limit-rate", "1M", "--proto", "=http,https",
+        "--proto-redir", "=http,https", "--request", method,
+    ]
+    if method == "HEAD":
+        command.append("--head")
+    if insecure:
+        command.append("--insecure")
+    command.extend(["--", url])
+    return _run_lab_tool("curl", command, target=url, grep=grep, timeout=25)
+
+
+def dig_query(query: str, record_type: str, grep: str | None = None) -> LabCommandRead:
+    if platform.system() == "Windows" and shutil.which("dig") is None:
+        return _run_lab_tool(
+            "dig", ["nslookup", f"-type={record_type}", query],
+            target=query, grep=grep, timeout=10,
+        )
+    return _run_lab_tool("dig", ["dig", "+time=3", "+tries=1", query, record_type], target=query, grep=grep, timeout=10)
 
 
 def _valid_address_token(line: str) -> str | None:

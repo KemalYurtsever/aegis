@@ -49,8 +49,14 @@ def system_readiness(request: Request, db: Session = Depends(get_db)) -> SystemR
         f"({sys.maxsize.bit_length() + 1}-bit).",
     ))
 
+    docker_toolbox = bool(os.getenv("AEGIS_NETWORK_TOOLBOX_CONTAINER", "").strip() and shutil.which("docker"))
     tool_states = {
-        "Nmap": bool(shutil.which("nmap")),
+        "Nmap": bool(shutil.which("nmap")) or docker_toolbox,
+        "ARP scan": bool(shutil.which("arp-scan")) or bool(os.name == "nt" and (Path(os.environ.get("WINDIR", "C:/Windows")) / "System32/Npcap/wpcap.dll").exists()),
+        "curl": bool(shutil.which("curl")),
+        "DNS query CLI": bool(shutil.which("dig")) or bool(os.name == "nt" and shutil.which("nslookup")) or docker_toolbox,
+        "Traceroute": bool(shutil.which("tracert" if os.name == "nt" else "traceroute")),
+        "Neighbor table": bool(shutil.which("powershell.exe" if os.name == "nt" else "ip")),
         "Docker CLI": bool(shutil.which("docker")),
         "Npcap": bool(
             os.name == "nt"
@@ -62,7 +68,7 @@ def system_readiness(request: Request, db: Session = Depends(get_db)) -> SystemR
         "Optional tools",
         "WARNING" if missing_tools else "HEALTHY",
         "Missing: " + ", ".join(missing_tools)
-        if missing_tools else "Nmap, Npcap, and Docker CLI detected.",
+        if missing_tools else "Network lab tools are available locally or through the Docker toolbox; Npcap and Docker CLI detected.",
     ))
 
     try:

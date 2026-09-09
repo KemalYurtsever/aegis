@@ -53,7 +53,7 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 | Status transitions | Derives online-to-offline and offline-to-online events from monitoring history. |
 | Service checks | Monitors TCP ports and HTTP or HTTPS endpoints on registered devices. HTTP checks use a validated path and record response time and status code. |
 | Service history | Shows recent results, uptime, successful and failed totals, average response time, and a dependency-free response-time chart. |
-| Common-port scan | Checks a fixed infrastructure port allowlist against an authorized registered device and can turn an open port into a scheduled service check. |
+| Common-port scan | Checks a fixed infrastructure port allowlist against a registered device and can turn an open port into a scheduled service check. |
 | Device fingerprinting | Uses bounded network evidence such as open services, manufacturer information, and mDNS data to suggest a device classification. |
 | Alert rules | Creates per-device rules for consecutive failures and high latency. Alerts persist, can be acknowledged, and resolve automatically after recovery. |
 | Alert history | Provides a searchable operational record of active, acknowledged, and resolved alert events. |
@@ -76,6 +76,7 @@ Anomaly results are operational indicators, not diagnoses. Aegis performs this a
 | Function | What it does |
 |---|---|
 | Local network discovery | Detects the active physical Windows adapter, presents its network for confirmation, and probes at most one local `/24`. Existing addresses are skipped and available MAC addresses are imported. |
+| Network change reset | Remembers the last discovered subnet in the browser. When the connected subnet changes, the administrator is offered an exact-phrase reset before discovery so identical private IP ranges from different labs are not mixed. The same reset is available under **More actions**. |
 | Network topology | Infers logical placement from VLAN and subnet data and supports confirmed `UPLINK`, `CONNECTS TO`, `ROUTES TO`, and `MANAGES` relationships. |
 | Attack-surface assessment | Checks a fixed common-port set, identifies exposed management, cleartext, database, and infrastructure services, reads short passive banners, inspects HTTP security headers, and records TLS negotiation details. |
 | Assessment comparison | Compares the two latest assessments, calculates a capped 0–100 exposure score, and separates new, persistent, and resolved findings. Informational evidence does not increase the score. |
@@ -101,6 +102,7 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
 | Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
 | DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
+| Network CLI | Runs administrator-only Nmap TCP scans against registered devices, local ARP discovery, the host neighbor table, HTTP(S) `curl`, and DNS record queries, with optional literal line filtering. Linux uses `arp-scan` and `dig`; Windows uses Npcap/Scapy and `nslookup` when those binaries are unavailable. Commands use typed arguments, fixed timeouts, and capped output without invoking a shell. |
 
 Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, payload capture, exploit execution, brute force, or arbitrary remote command execution.
 
@@ -139,7 +141,7 @@ The first browser visit creates the initial local administrator. Passwords must 
 | Role | Access |
 |---|---|
 | Administrator | Full monitoring and reporting access plus security tools, packet capture, automation, notification settings, backups, system status, audit events, and user management. |
-| Operator | Device, group, discovery, monitoring, alert, agent, service, and topology management without administrative security or account controls. |
+| Operator | Device metadata, groups, basic monitoring, alerts, and topology management without active security testing or account controls. |
 | Viewer | Read-only dashboards, device details, histories, statistics, charts, and stored findings. |
 
 The API enforces permissions independently of the interface. Aegis prevents the last active administrator from being disabled or demoted. Disabling an account or resetting its password revokes existing sessions.
@@ -166,7 +168,8 @@ SQLite is appropriate for a single Aegis application instance. The Kubernetes ma
 - PowerShell on Windows, or an equivalent terminal for native development
 - Docker Desktop for Prometheus, Grafana, or the complete container stack
 - Npcap for Windows packet metadata capture
-- Nmap on remote agents that use service/version diagnostics
+- Nmap for local TCP scans and remote-agent service/version diagnostics
+- `arp-scan`, `curl`, `dig` (`dnsutils`), `iproute2`, and `traceroute` when running the backend directly on Linux; the backend container installs these packages
 
 ## Installation
 
@@ -199,13 +202,13 @@ $rng.Dispose()
 
 ### Recommended Windows hybrid deployment
 
-Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics, and agent ingress native while running Prometheus and Grafana in Docker:
+Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics, and agent ingress native while running a network-toolbox sidecar, Prometheus, and Grafana in Docker. When Nmap or another supported CLI is missing from Windows, the API executes it inside the toolbox container without invoking a shell:
 
 ```powershell
 .\start-hybrid.ps1
 ```
 
-The launcher verifies the frontend, API, agent ingress, Grafana, and Prometheus before returning. If Docker Desktop is unavailable, it starts the core Aegis services without the observability containers. Runtime logs are written to `logs/`.
+The launcher verifies the frontend, API, agent ingress, network toolbox, Grafana, and Prometheus before returning. If Docker Desktop is unavailable, it starts the core Aegis services without the toolbox or observability containers. Runtime logs are written to `logs/`.
 
 Stop the stack without deleting data:
 
@@ -333,13 +336,12 @@ Backend settings can be supplied through the process environment or `backend/.en
 | `AEGIS_ATTACHMENT_DIRECTORY` | `./attachments` | Device attachment storage directory. |
 | `AEGIS_PROMETHEUS_TOKEN` | unset | Direct bearer token for `/metrics`. |
 | `AEGIS_PROMETHEUS_TOKEN_FILE` | unset | File containing the Prometheus bearer token. |
-| `AEGIS_SNMP_COMMUNITY` | unset | Default read-only SNMP community. Device settings may reference another environment-variable name. |
+| `AEGIS_SNMP_COMMUNITY` | unset | Read-only SNMP community used by every configured device. The value is never stored in SQLite. |
 | `AEGIS_SMTP_PASSWORD` | unset | SMTP password for email delivery. |
 | `AEGIS_TEAMS_WEBHOOK_URL` | unset | Microsoft Teams workflow webhook. |
 | `AEGIS_TWILIO_ACCOUNT_SID` | unset | Twilio account identifier. |
 | `AEGIS_TWILIO_AUTH_TOKEN` | unset | Twilio authentication secret. |
-| `AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY` | `false` | Allows discovery only on the bounded `/24` of the active physical adapter when its address is not private. |
-| `AEGIS_AUTHORIZED_LAB_MODE` | `false` | Permits bounded defensive actions against explicitly registered devices outside normal private-address classification. |
+| `AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY` | `false` | Allows discovery on the bounded `/24` of the active physical adapter when its address is not private. |
 | `AEGIS_DISCOVERY_ARP_PACKETS_PER_SECOND` | `20` | Rate limit for the retry-free ARP discovery pass. |
 | `AEGIS_FOUNDRY_LOCAL_URL` | unset | Optional loopback or private Foundry Local-compatible endpoint for health-summary wording. |
 | `AEGIS_FOUNDRY_LOCAL_MODEL` | unset | Model identifier used with the optional local summary endpoint. |

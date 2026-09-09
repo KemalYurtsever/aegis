@@ -1,6 +1,3 @@
-from types import SimpleNamespace
-
-from app.services.discovery_service import LocalNetwork
 from app.services.port_scan_service import COMMON_TCP_PORTS, OpenPort
 from app.services.service_check_service import ServiceProbeResult
 
@@ -11,10 +8,11 @@ DEVICE = {
 }
 
 
-def test_service_check_crud_run_and_history(client, monkeypatch):
-    device = client.post("/api/devices", json=DEVICE).json()
+def test_service_check_crud_run_and_history(client, admin_headers, monkeypatch):
+    device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     created = client.post(
         f"/api/devices/{device['id']}/service-checks",
+        headers=admin_headers,
         json={"name": "Web API", "check_type": "HTTP", "port": 8080, "path": "/health", "is_active": True},
     )
     assert created.status_code == 201
@@ -25,45 +23,47 @@ def test_service_check_crud_run_and_history(client, monkeypatch):
         "app.services.service_check_service.probe_service",
         lambda _check: ServiceProbeResult("UP", 12.5, 200),
     )
-    result = client.post(f"/api/service-checks/{check['id']}/run")
+    result = client.post(f"/api/service-checks/{check['id']}/run", headers=admin_headers)
     assert result.status_code == 201
     assert result.json()["status"] == "UP"
     assert result.json()["http_status_code"] == 200
 
-    listed = client.get(f"/api/devices/{device['id']}/service-checks").json()
+    listed = client.get(f"/api/devices/{device['id']}/service-checks", headers=admin_headers).json()
     assert listed[0]["current_status"] == "UP"
     assert listed[0]["last_response_time_ms"] == 12.5
-    assert len(client.get(f"/api/service-checks/{check['id']}/history").json()) == 1
+    assert len(client.get(f"/api/service-checks/{check['id']}/history", headers=admin_headers).json()) == 1
 
     updated = client.put(
         f"/api/service-checks/{check['id']}",
+        headers=admin_headers,
         json={"name": "HTTPS API", "check_type": "HTTPS", "port": 443, "path": "/", "is_active": False},
     )
     assert updated.status_code == 200
     assert updated.json()["port"] == 443
     assert updated.json()["is_active"] is False
 
-    assert client.delete(f"/api/service-checks/{check['id']}").status_code == 204
-    assert client.get(f"/api/service-checks/{check['id']}/history").status_code == 404
+    assert client.delete(f"/api/service-checks/{check['id']}", headers=admin_headers).status_code == 204
+    assert client.get(f"/api/service-checks/{check['id']}/history", headers=admin_headers).status_code == 404
 
 
-def test_service_check_validation(client):
-    device = client.post("/api/devices", json=DEVICE).json()
+def test_service_check_validation(client, admin_headers):
+    device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     response = client.post(
         f"/api/devices/{device['id']}/service-checks",
+        headers=admin_headers,
         json={"name": "Bad", "check_type": "HTTP", "port": 70000, "path": "//external", "is_active": True},
     )
     assert response.status_code == 422
 
 
-def test_common_port_scan_is_bounded_and_returns_open_ports(client, monkeypatch):
-    device = client.post("/api/devices", json=DEVICE).json()
+def test_common_port_scan_is_bounded_and_returns_open_ports(client, admin_headers, monkeypatch):
+    device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     monkeypatch.setattr(
         "app.routers.services.scan_common_tcp_ports",
         lambda target: [OpenPort(port=22, service="SSH", response_time_ms=1.25)],
     )
 
-    response = client.post(f"/api/devices/{device['id']}/scan-ports")
+    response = client.post(f"/api/devices/{device['id']}/scan-ports", headers=admin_headers)
 
     assert response.status_code == 200
     assert response.json()["target_ip"] == DEVICE["ip_address"]
@@ -71,59 +71,78 @@ def test_common_port_scan_is_bounded_and_returns_open_ports(client, monkeypatch)
     assert response.json()["open_ports"] == [{"port": 22, "service": "SSH", "response_time_ms": 1.25}]
 
 
-def test_common_port_scan_allows_registered_target_on_authorized_public_lan(client, monkeypatch):
+def test_common_port_scan_allows_any_registered_lab_target(client, admin_headers, monkeypatch):
     public_device = client.post(
         "/api/devices",
-        json={**DEVICE, "name": "Building host", "ip_address": "172.2.4.14"},
+        headers=admin_headers, json={**DEVICE, "name": "Building host", "ip_address": "172.2.4.14"},
     ).json()
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_settings",
-        lambda: SimpleNamespace(allow_public_lan_discovery=True, authorized_lab_mode=False),
-    )
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_primary_private_network",
-        lambda: LocalNetwork("Wi-Fi", "172.2.4.35", "172.2.4.0/24", "172.2.4.1"),
-    )
     monkeypatch.setattr("app.routers.services.scan_common_tcp_ports", lambda _target: [])
 
-    response = client.post(f"/api/devices/{public_device['id']}/scan-ports")
+    response = client.post(f"/api/devices/{public_device['id']}/scan-ports", headers=admin_headers)
 
     assert response.status_code == 200
     assert response.json()["target_ip"] == "172.2.4.14"
 
 
-def test_common_port_scan_rejects_public_target_outside_authorized_lan(client, monkeypatch):
+def test_common_port_scan_requires_admin(client, admin_headers):
     public_device = client.post(
         "/api/devices",
-        json={**DEVICE, "name": "Unrelated public host", "ip_address": "8.8.8.8"},
+        headers=admin_headers, json={**DEVICE, "name": "Unrelated public host", "ip_address": "8.8.8.8"},
     ).json()
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_settings",
-        lambda: SimpleNamespace(allow_public_lan_discovery=True, authorized_lab_mode=False),
-    )
-    monkeypatch.setattr(
-        "app.services.scan_policy.get_primary_private_network",
-        lambda: LocalNetwork("Wi-Fi", "172.2.4.35", "172.2.4.0/24", "172.2.4.1"),
-    )
-
     response = client.post(f"/api/devices/{public_device['id']}/scan-ports")
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Scanning is restricted to the connected authorized LAN"
+    assert response.status_code == 401
 
 
-def test_service_statistics_calculate_availability_and_response_time(client, monkeypatch):
-    device = client.post("/api/devices", json=DEVICE).json()
+def test_operator_cannot_configure_or_run_network_service_probes(client, admin_headers):
+    device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     check = client.post(
         f"/api/devices/{device['id']}/service-checks",
+        headers=admin_headers,
+        json={"name": "SSH", "check_type": "TCP", "port": 22, "path": "/", "is_active": True},
+    ).json()
+    created = client.post(
+        "/api/auth/users",
+        headers=admin_headers,
+        json={"username": "probe-operator", "password": "operator-password-is-long", "role": "OPERATOR"},
+    )
+    assert created.status_code == 201
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "probe-operator", "password": "operator-password-is-long"},
+    )
+    operator_headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+    create_response = client.post(
+        f"/api/devices/{device['id']}/service-checks",
+        headers=operator_headers,
+        json={"name": "HTTP", "check_type": "TCP", "port": 80, "path": "/", "is_active": True},
+    )
+    update_response = client.put(
+        f"/api/service-checks/{check['id']}",
+        headers=operator_headers,
+        json={"name": "HTTP", "check_type": "TCP", "port": 80, "path": "/", "is_active": True},
+    )
+    run_response = client.post(f"/api/service-checks/{check['id']}/run", headers=operator_headers)
+
+    assert create_response.status_code == 403
+    assert update_response.status_code == 403
+    assert run_response.status_code == 403
+
+
+def test_service_statistics_calculate_availability_and_response_time(client, admin_headers, monkeypatch):
+    device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
+    check = client.post(
+        f"/api/devices/{device['id']}/service-checks",
+        headers=admin_headers,
         json={"name": "SSH", "check_type": "TCP", "port": 22, "path": "/", "is_active": True},
     ).json()
     results = iter([ServiceProbeResult("UP", 10.0), ServiceProbeResult("DOWN", None, diagnostic_reason="timeout"), ServiceProbeResult("UP", 20.0)])
     monkeypatch.setattr("app.services.service_check_service.probe_service", lambda _check: next(results))
     for _ in range(3):
-        client.post(f"/api/service-checks/{check['id']}/run")
+        client.post(f"/api/service-checks/{check['id']}/run", headers=admin_headers)
 
-    response = client.get(f"/api/service-checks/{check['id']}/statistics")
+    response = client.get(f"/api/service-checks/{check['id']}/statistics", headers=admin_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -136,14 +155,15 @@ def test_service_statistics_calculate_availability_and_response_time(client, mon
     assert body["last_checked_at"] is not None
 
 
-def test_empty_service_statistics_are_unknown(client):
-    device = client.post("/api/devices", json=DEVICE).json()
+def test_empty_service_statistics_are_unknown(client, admin_headers):
+    device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     check = client.post(
         f"/api/devices/{device['id']}/service-checks",
+        headers=admin_headers,
         json={"name": "SSH", "check_type": "TCP", "port": 22, "path": "/", "is_active": True},
     ).json()
 
-    response = client.get(f"/api/service-checks/{check['id']}/statistics")
+    response = client.get(f"/api/service-checks/{check['id']}/statistics", headers=admin_headers)
 
     assert response.status_code == 200
     assert response.json() == {
@@ -153,22 +173,26 @@ def test_empty_service_statistics_are_unknown(client):
     }
 
 
-def test_service_overview_prioritizes_failures_and_counts_active_checks(client, monkeypatch):
-    first = client.post("/api/devices", json=DEVICE).json()
+def test_service_overview_prioritizes_failures_and_counts_active_checks(client, admin_headers, monkeypatch):
+    first = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     second = client.post(
         "/api/devices",
+        headers=admin_headers,
         json={**DEVICE, "name": "Database Host", "ip_address": "192.168.56.61"},
     ).json()
     up_check = client.post(
         f"/api/devices/{first['id']}/service-checks",
+        headers=admin_headers,
         json={"name": "Web API", "check_type": "HTTP", "port": 8080, "path": "/health", "is_active": True},
     ).json()
     down_check = client.post(
         f"/api/devices/{second['id']}/service-checks",
+        headers=admin_headers,
         json={"name": "Database", "check_type": "TCP", "port": 5432, "path": "/", "is_active": True},
     ).json()
     client.post(
         f"/api/devices/{second['id']}/service-checks",
+        headers=admin_headers,
         json={"name": "Paused", "check_type": "TCP", "port": 9000, "path": "/", "is_active": False},
     )
     results = iter([
@@ -176,10 +200,10 @@ def test_service_overview_prioritizes_failures_and_counts_active_checks(client, 
         ServiceProbeResult("DOWN", None, diagnostic_reason="connection refused"),
     ])
     monkeypatch.setattr("app.services.service_check_service.probe_service", lambda _check: next(results))
-    client.post(f"/api/service-checks/{up_check['id']}/run")
-    client.post(f"/api/service-checks/{down_check['id']}/run")
+    client.post(f"/api/service-checks/{up_check['id']}/run", headers=admin_headers)
+    client.post(f"/api/service-checks/{down_check['id']}/run", headers=admin_headers)
 
-    response = client.get("/api/service-checks/overview")
+    response = client.get("/api/service-checks/overview", headers=admin_headers)
 
     assert response.status_code == 200
     overview = response.json()
