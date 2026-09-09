@@ -81,6 +81,15 @@ class DeviceUpdate(DeviceFields):
     pass
 
 
+class ClearDevicesRequest(BaseModel):
+    confirmation: str
+
+
+class ClearDevicesResponse(BaseModel):
+    deleted_devices: int
+    deleted_attachments: int
+
+
 class DeviceRead(DeviceFields):
     id: int
     mac_address: str | None = None
@@ -819,7 +828,7 @@ class NotificationDeliveryRead(BaseModel):
 class SnmpConfigUpdate(BaseModel):
     enabled: bool = False
     port: int = Field(default=161, ge=1, le=65535)
-    community_env: str = Field(default="AEGIS_SNMP_COMMUNITY", pattern=r"^[A-Z][A-Z0-9_]{2,99}$")
+    community_env: Literal["AEGIS_SNMP_COMMUNITY"] = "AEGIS_SNMP_COMMUNITY"
 
 
 class SnmpConfigRead(SnmpConfigUpdate):
@@ -938,6 +947,62 @@ class DnsQueryRead(BaseModel):
     canonical_name: str | None
     addresses: list[str]
     reverse_name: str | None
+
+
+class LabCommandRead(BaseModel):
+    tool: Literal["nmap", "arp-scan", "ip-neigh", "curl", "dig"]
+    target: str | None = None
+    exit_code: int
+    output: str
+    duration_ms: float
+    truncated: bool = False
+
+
+class LabCommandFilter(BaseModel):
+    grep: str | None = Field(default=None, max_length=120)
+
+
+class NmapTcpScanRequest(LabCommandFilter):
+    device_id: int = Field(gt=0)
+    ports: list[int] = Field(default_factory=lambda: [22, 80, 443, 445, 3389], min_length=1, max_length=1024)
+    service_detection: bool = False
+
+    @field_validator("ports")
+    @classmethod
+    def normalize_ports(cls, values: list[int]) -> list[int]:
+        if any(port < 1 or port > 65535 for port in values):
+            raise ValueError("Ports must be between 1 and 65535")
+        return list(dict.fromkeys(values))
+
+
+class ArpScanRequest(LabCommandFilter):
+    interface_name: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.: -]{0,63}$")
+
+
+class NeighborTableRequest(LabCommandFilter):
+    pass
+
+
+class CurlRequest(LabCommandFilter):
+    url: str = Field(min_length=8, max_length=2048)
+    method: Literal["GET", "HEAD"] = "GET"
+    insecure: bool = False
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        from urllib.parse import urlsplit
+
+        cleaned = value.strip()
+        parsed = urlsplit(cleaned)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("Enter an HTTP or HTTPS URL without embedded credentials")
+        return cleaned
+
+
+class DigRequest(LabCommandFilter):
+    query: str = Field(min_length=1, max_length=253, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,252}$")
+    record_type: Literal["A", "AAAA", "CNAME", "MX", "NS", "PTR", "SOA", "TXT", "ANY"] = "A"
 
 
 class WirelessAdapterRead(BaseModel):

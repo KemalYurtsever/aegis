@@ -7,9 +7,9 @@ DEVICE = {
 }
 
 
-def create_device(client, **overrides):
+def create_device(client, headers=None, **overrides):
     payload = DEVICE | overrides
-    return client.post("/api/devices", json=payload)
+    return client.post("/api/devices", headers=headers, json=payload)
 
 
 def test_device_crud(client):
@@ -37,6 +37,83 @@ def test_device_crud(client):
     deleted = client.delete(f"/api/devices/{device_id}")
     assert deleted.status_code == 204
     assert client.get(f"/api/devices/{device_id}").status_code == 404
+
+
+def test_admin_can_clear_all_devices_and_attachment_files(client, admin_headers, tmp_path, monkeypatch):
+    import base64
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.routers.devices.get_settings",
+        lambda: SimpleNamespace(attachment_directory=str(tmp_path / "attachments")),
+    )
+    first = create_device(client, ip_address="198.18.56.20", name="First", headers=admin_headers)
+    second = create_device(client, ip_address="198.18.56.21", name="Second", headers=admin_headers)
+    assert first.status_code == 201
+    assert second.status_code == 201
+    first_id = first.json()["id"]
+    assert client.post(
+        f"/api/devices/{first_id}/notes",
+        headers=admin_headers,
+        json={"body": "Disposable lab note"},
+    ).status_code == 201
+    attachment = client.post(
+        f"/api/devices/{first_id}/attachments",
+        headers=admin_headers,
+        json={
+            "original_name": "lab.txt",
+            "media_type": "text/plain",
+            "content_base64": base64.b64encode(b"temporary evidence").decode(),
+        },
+    )
+    assert attachment.status_code == 201
+    stored_file = next((tmp_path / "attachments").iterdir())
+
+    rejected = client.post(
+        "/api/devices/actions/clear-all",
+        headers=admin_headers,
+        json={"confirmation": "clear"},
+    )
+    assert rejected.status_code == 400
+    assert len(client.get("/api/devices", headers=admin_headers).json()) == 2
+
+    cleared = client.post(
+        "/api/devices/actions/clear-all",
+        headers=admin_headers,
+        json={"confirmation": "CLEAR ALL DEVICES"},
+    )
+
+    assert cleared.status_code == 200
+    assert cleared.json() == {"deleted_devices": 2, "deleted_attachments": 1}
+    assert client.get("/api/devices", headers=admin_headers).json() == []
+    assert not stored_file.exists()
+
+
+def test_clear_all_devices_requires_admin(client, admin_headers):
+    created = client.post(
+        "/api/auth/users",
+        headers=admin_headers,
+        json={
+            "username": "operator",
+            "password": "operator-correct-horse-battery-staple",
+            "role": "OPERATOR",
+        },
+    )
+    assert created.status_code == 201
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "operator", "password": "operator-correct-horse-battery-staple"},
+    )
+    operator_headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+    response = client.post(
+        "/api/devices/actions/clear-all",
+        headers=operator_headers,
+        json={"confirmation": "CLEAR ALL DEVICES"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Administrator role required"
 
 
 def test_rejects_invalid_ip(client):
@@ -131,6 +208,27 @@ def test_device_attachments_are_validated_stored_and_listed(client, tmp_path, mo
     )
     assert deleted.status_code == 204
     assert not stored[0].exists()
+
+
+def test_attachment_route_accepts_documented_size_above_global_body_limit(client, tmp_path, monkeypatch):
+    import base64
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.routers.devices.get_settings",
+        lambda: SimpleNamespace(attachment_directory=str(tmp_path / "attachments")),
+    )
+    device = create_device(client).json()
+    content = b"a" * 1_100_000
+
+    response = client.post(f"/api/devices/{device['id']}/attachments", json={
+        "original_name": "large-lab-note.txt",
+        "media_type": "text/plain",
+        "content_base64": base64.b64encode(content).decode(),
+    })
+
+    assert response.status_code == 201
+    assert response.json()["size_bytes"] == len(content)
 
 
 def test_asset_metadata_is_normalized_and_validated(client):

@@ -1,5 +1,5 @@
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+  import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "http://127.0.0.1:8000" : "");
 const TOKEN_KEY = "aegis_session_token";
 
 export function setAuthToken(token) {
@@ -219,6 +219,22 @@ export function getHostNetworkPolicy() {
   return request("/api/security/toolbox/host-network-policy");
 }
 
+export function runNmapScan(payload) {
+  return jsonRequest("/api/security/toolbox/nmap", "POST", payload);
+}
+export function runArpScan(payload = {}) {
+  return jsonRequest("/api/security/toolbox/arp-scan", "POST", payload);
+}
+export function getNeighborTable(payload = {}) {
+  return jsonRequest("/api/security/toolbox/neighbors", "POST", payload);
+}
+export function runCurlRequest(payload) {
+  return jsonRequest("/api/security/toolbox/curl", "POST", payload);
+}
+export function runDigQuery(payload) {
+  return jsonRequest("/api/security/toolbox/dig", "POST", payload);
+}
+
 export function pauseScheduler() {
   return request("/api/scheduler/pause", { method: "POST" });
 }
@@ -274,6 +290,10 @@ export function updateDevice(deviceId, payload) {
 
 export function deleteDevice(deviceId) {
   return request(`/api/devices/${deviceId}`, { method: "DELETE" });
+}
+
+export function clearAllDevices(confirmation) {
+  return jsonRequest("/api/devices/actions/clear-all", "POST", { confirmation });
 }
 
 export function getDeviceNotes(deviceId) {

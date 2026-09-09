@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Device, ServiceCheck, ServiceResult
 from app.routers.devices import get_device_or_404
+from app.routers.auth import require_admin
 from app.schemas import DeviceFingerprintRead, FingerprintBatchResponse, PortScanResponse, ServiceCheckCreate, ServiceCheckRead, ServiceOverview, ServiceOverviewItem, ServiceResultRead, ServiceStatistics
 from app.services.fingerprint_service import FingerprintEvidence, fingerprint_target
 from app.services.port_scan_service import COMMON_TCP_PORTS, scan_common_tcp_ports
@@ -116,7 +117,7 @@ def list_service_checks(device_id: int, db: Session = Depends(get_db)):
     return [serialize_check(check, db) for check in checks]
 
 
-@router.post("/devices/{device_id}/service-checks", response_model=ServiceCheckRead, status_code=201)
+@router.post("/devices/{device_id}/service-checks", response_model=ServiceCheckRead, status_code=201, dependencies=[Depends(require_admin)])
 def create_service_check(device_id: int, payload: ServiceCheckCreate, db: Session = Depends(get_db)):
     get_device_or_404(device_id, db)
     check = ServiceCheck(device_id=device_id, **payload.model_dump())
@@ -124,7 +125,7 @@ def create_service_check(device_id: int, payload: ServiceCheckCreate, db: Sessio
     return serialize_check(check, db)
 
 
-@router.post("/devices/{device_id}/scan-ports", response_model=PortScanResponse)
+@router.post("/devices/{device_id}/scan-ports", response_model=PortScanResponse, dependencies=[Depends(require_admin)])
 def scan_device_ports(device_id: int, db: Session = Depends(get_db)) -> PortScanResponse:
     device = get_device_or_404(device_id, db)
     # The endpoint already limits targets to registered AEGIS devices. When
@@ -140,7 +141,7 @@ def scan_device_ports(device_id: int, db: Session = Depends(get_db)) -> PortScan
     )
 
 
-@router.post("/devices/{device_id}/fingerprint", response_model=DeviceFingerprintRead)
+@router.post("/devices/{device_id}/fingerprint", response_model=DeviceFingerprintRead, dependencies=[Depends(require_admin)])
 def fingerprint_device(device_id: int, db: Session = Depends(get_db)) -> DeviceFingerprintRead:
     device = get_device_or_404(device_id, db)
     ensure_scan_target_allowed(device.ip_address)
@@ -148,7 +149,7 @@ def fingerprint_device(device_id: int, db: Session = Depends(get_db)) -> DeviceF
     return store_fingerprint(device, evidence, db)
 
 
-@router.post("/devices/fingerprint-all", response_model=FingerprintBatchResponse)
+@router.post("/devices/fingerprint-all", response_model=FingerprintBatchResponse, dependencies=[Depends(require_admin)])
 def fingerprint_all_devices(db: Session = Depends(get_db)) -> FingerprintBatchResponse:
     devices = list(db.scalars(select(Device).where(Device.is_active.is_(True))))
     allowed = []
@@ -179,7 +180,7 @@ def fingerprint_all_devices(db: Session = Depends(get_db)) -> FingerprintBatchRe
     )
 
 
-@router.put("/service-checks/{check_id}", response_model=ServiceCheckRead)
+@router.put("/service-checks/{check_id}", response_model=ServiceCheckRead, dependencies=[Depends(require_admin)])
 def update_service_check(check_id: int, payload: ServiceCheckCreate, db: Session = Depends(get_db)):
     check = get_check_or_404(check_id, db)
     for field, value in payload.model_dump().items(): setattr(check, field, value)
@@ -193,7 +194,7 @@ def delete_service_check(check_id: int, db: Session = Depends(get_db)):
     return Response(status_code=204)
 
 
-@router.post("/service-checks/{check_id}/run", response_model=ServiceResultRead, status_code=201)
+@router.post("/service-checks/{check_id}/run", response_model=ServiceResultRead, status_code=201, dependencies=[Depends(require_admin)])
 def run_service_check(check_id: int, db: Session = Depends(get_db)):
     return run_and_store_service_check(get_check_or_404(check_id, db), db)
 

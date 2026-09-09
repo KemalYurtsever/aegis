@@ -25,10 +25,6 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY",
     )
-    authorized_lab_mode: bool = Field(
-        default=False,
-        validation_alias="AEGIS_AUTHORIZED_LAB_MODE",
-    )
     discovery_arp_packets_per_second: int = Field(
         default=20,
         ge=1,

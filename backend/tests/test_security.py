@@ -25,3 +25,32 @@ def test_oversized_request_is_rejected(client):
         headers={"Content-Length": "1048577", "Content-Type": "application/json"},
     )
     assert response.status_code == 413
+
+
+def test_chunked_oversized_request_is_rejected(client):
+    def body_chunks():
+        for _ in range(17):
+            yield b"x" * 65_536
+
+    response = client.post(
+        "/api/auth/login",
+        content=body_chunks(),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+
+
+def test_oversized_request_keeps_cors_headers(client):
+    response = client.post(
+        "/api/auth/login",
+        content=b"{}",
+        headers={
+            "Content-Length": "1048577",
+            "Content-Type": "application/json",
+            "Origin": "http://127.0.0.1:5173",
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"

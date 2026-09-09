@@ -65,10 +65,10 @@ if ($dockerAvailable) {
     Remove-StaleComposeContainers -WorkingDirectory $projectRoot
     Assert-PortAvailable -Port 9090 -Service "Prometheus"
     Assert-PortAvailable -Port 3000 -Service "Grafana"
-    docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") up -d
-    if ($LASTEXITCODE -ne 0) { throw "Unable to start Prometheus and Grafana." }
+    docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") up -d --build
+    if ($LASTEXITCODE -ne 0) { throw "Unable to start the network toolbox, Prometheus, and Grafana." }
 } else {
-    Write-Warning "Docker Desktop is not running. Starting core AEGIS without Prometheus or Grafana."
+    Write-Warning "Docker Desktop is not running. Starting core AEGIS without the network toolbox, Prometheus, or Grafana."
 }
 
 $backend = Join-Path $projectRoot "backend"
@@ -79,12 +79,15 @@ if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) { throw "npm.cmd w
 $backendPort = 8001
 $agentPort = 8002
 $env:AEGIS_PROMETHEUS_TOKEN_FILE = $tokenFile
-# Explicitly permit discovery on the directly connected physical LAN even when
-# the DHCP address is outside RFC 1918. Discovery remains capped to its local /24.
+$networkToolbox = "aegis-network-tools"
+if ($dockerAvailable) {
+    $env:AEGIS_NETWORK_TOOLBOX_CONTAINER = $networkToolbox
+} else {
+    Remove-Item Env:AEGIS_NETWORK_TOOLBOX_CONTAINER -ErrorAction SilentlyContinue
+}
+# Permit discovery on the directly connected physical /24 when DHCP uses an
+# address outside the private ranges.
 $env:AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY = "true"
-# Explicit lab mode permits defensive scan actions against any device already
-# registered in AEGIS. Authentication, rate limits, and bounded scan sets stay on.
-$env:AEGIS_AUTHORIZED_LAB_MODE = "true"
 $env:VITE_API_BASE_URL = "http://127.0.0.1:$backendPort"
 
 if (-not (Get-NetTCPConnection -LocalPort $backendPort -State Listen -ErrorAction SilentlyContinue)) {
@@ -101,6 +104,8 @@ Wait-HttpEndpoint -Name "AEGIS frontend" -Url "http://127.0.0.1:5173/"
 Wait-HttpEndpoint -Name "AEGIS API" -Url "http://127.0.0.1:$backendPort/api/health"
 Wait-HttpEndpoint -Name "AEGIS agent ingress" -Url "http://127.0.0.1:$agentPort/api/agent/health"
 if ($dockerAvailable) {
+    $toolboxRunning = docker inspect -f "{{.State.Running}}" $networkToolbox 2>$null
+    if ($LASTEXITCODE -ne 0 -or $toolboxRunning -ne "true") { throw "The AEGIS network toolbox container is not running." }
     Wait-HttpEndpoint -Name "Grafana" -Url "http://127.0.0.1:3000/api/health"
     Wait-HttpEndpoint -Name "Prometheus" -Url "http://127.0.0.1:9090/-/ready"
 }
@@ -110,9 +115,11 @@ Write-Host "  AEGIS:      http://127.0.0.1:5173"
 Write-Host "  API:        http://127.0.0.1:$backendPort/docs"
 Write-Host "  Agents:     http://<this-PC-LAN-IP>:$agentPort/api/agent/health"
 if ($dockerAvailable) {
+    Write-Host "  Net tools:  Docker container $networkToolbox"
     Write-Host "  Grafana:    http://127.0.0.1:3000"
     Write-Host "  Prometheus: http://127.0.0.1:9090"
 } else {
+    Write-Host "  Net tools:  local Windows fallbacks only"
     Write-Host "  Grafana:    skipped (Docker Desktop is not running)"
     Write-Host "  Prometheus: skipped (Docker Desktop is not running)"
 }

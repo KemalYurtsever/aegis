@@ -1,6 +1,21 @@
 name: aegis
 
 services:
+  network-toolbox:
+    build:
+      context: ./deploy/network-toolbox
+    container_name: aegis-network-tools
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+
   prometheus:
     image: prom/prometheus:v3.7.3
     restart: unless-stopped

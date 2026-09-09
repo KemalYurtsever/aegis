@@ -12,9 +12,15 @@ from app.schemas import (
     TraceRouteRead,
     TraceRouteRequest,
     WirelessAdapterRead,
+    LabCommandRead,
+    NmapTcpScanRequest,
+    ArpScanRequest,
+    NeighborTableRequest,
+    CurlRequest,
+    DigRequest,
 )
 from app.services.attack_path_service import build_attack_paths
-from app.services.security_toolbox_service import host_network_policy, query_dns, trace_registered_device, wireless_adapters
+from app.services.security_toolbox_service import arp_scan, curl_request, dig_query, host_network_policy, neighbor_table, nmap_tcp_scan, query_dns, trace_registered_device, wireless_adapters
 
 
 router = APIRouter(
@@ -58,5 +64,46 @@ def wireless() -> list[WirelessAdapterRead]:
 def inspect_host_network_policy() -> HostNetworkPolicyRead:
     try:
         return host_network_policy()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/nmap", response_model=LabCommandRead)
+def nmap_scan(payload: NmapTcpScanRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    try:
+        return nmap_tcp_scan(device.ip_address, payload.ports, payload.service_detection, payload.grep)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/arp-scan", response_model=LabCommandRead)
+def run_arp_scan(payload: ArpScanRequest) -> LabCommandRead:
+    try:
+        return arp_scan(payload.interface_name, payload.grep)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/neighbors", response_model=LabCommandRead)
+def show_neighbors(payload: NeighborTableRequest) -> LabCommandRead:
+    try:
+        return neighbor_table(payload.grep)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/curl", response_model=LabCommandRead)
+def run_curl(payload: CurlRequest) -> LabCommandRead:
+    try:
+        return curl_request(payload.url, payload.method, payload.insecure, payload.grep)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/dig", response_model=LabCommandRead)
+def run_dig(payload: DigRequest) -> LabCommandRead:
+    try:
+        return dig_query(payload.query, payload.record_type, payload.grep)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

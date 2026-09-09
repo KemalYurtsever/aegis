@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from app.database import Base, engine, migrate_agent_monitoring_columns, migrate_device_inventory_columns, migrate_notification_tables
 from app.routers.agents import ingest_router
 from app.routers.diagnostics import ingest_router as diagnostic_ingest_router
-from app.security import InMemoryRateLimiter, RateLimit, request_identity
+from app.security import InMemoryRateLimiter, RateLimit, RequestBodyLimitMiddleware, request_identity
 
 
 @asynccontextmanager
@@ -27,6 +27,7 @@ app = FastAPI(
     openapi_url=None,
 )
 app.state.rate_limiter = InMemoryRateLimiter()
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=65_536)
 
 
 @app.middleware("http")
@@ -39,13 +40,6 @@ async def protect_agent_ingress(request: Request, call_next):
     )
     if not allowed:
         return JSONResponse(status_code=404, content={"detail": "Not found"})
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > 65_536:
-                return JSONResponse(status_code=413, content={"detail": "Request body is too large"})
-        except ValueError:
-            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header"})
     retry_after = request.app.state.rate_limiter.check(
         "agent-ingress", request_identity(request), RateLimit(120, 60)
     )
