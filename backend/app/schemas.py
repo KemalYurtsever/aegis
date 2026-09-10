@@ -1041,6 +1041,17 @@ class SecurityPlaybookRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SecurityPlaybookRunIndexRead(BaseModel):
+    id: int
+    device_id: int
+    target_name: str
+    target_ip: str
+    profile: Literal["FAST", "DETAILED", "AGGRESSIVE"]
+    status: Literal["QUEUED", "RUNNING", "COMPLETED", "PARTIAL", "FAILED", "CANCELLED"]
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ArpScanRequest(LabCommandFilter):
     interface_name: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.: -]{0,63}$")
 

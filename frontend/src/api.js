@@ -250,6 +250,10 @@ export function listSecurityPlaybookRuns(deviceId, limit = 10) {
   return request(`/api/security/playbooks/runs?${query.toString()}`);
 }
 
+export function listSecurityPlaybookRunIndex(limit = 50) {
+  return request(`/api/security/playbooks/run-index?limit=${encodeURIComponent(limit)}`);
+}
+
 export function getSecurityPlaybookRun(runId) {
   return request(`/api/security/playbooks/runs/${runId}`);
 }
