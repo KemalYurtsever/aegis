@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from app.models import AutomationEvent, VulnerabilityScan
 from app.services.cve_service import CveLookupResult, CveMatch
+from app.services.nse_verification_service import NseObservation, NseVerificationResult
 from app.services.port_scan_service import DetectedService, OpenPort, PortScanResult
 from app.services.vulnerability_service import TlsPosture
 
@@ -25,6 +26,10 @@ def isolate_service_detection(monkeypatch):
         lambda *_args: [],
     )
     monkeypatch.setattr(
+        "app.services.vulnerability_service.run_nse_verification",
+        lambda *_args: NseVerificationResult((), (), 0.0),
+    )
+    monkeypatch.setattr(
         "app.services.vulnerability_service.lookup_cves",
         lambda *_args, **_kwargs: CveLookupResult(
             matches=(),
@@ -34,6 +39,44 @@ def isolate_service_detection(monkeypatch):
             cached=True,
         ),
     )
+
+
+def test_attack_surface_records_curated_nse_configuration_evidence(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post("/api/devices", json=DEVICE, headers=headers).json()
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.scan_nmap_top_tcp_ports",
+        lambda _ip: scan_result(OpenPort(445, "SMB", 1.0)),
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.run_nse_verification",
+        lambda *_args: NseVerificationResult(
+            requested_scripts=("smb-protocols", "smb2-security-mode"),
+            observations=(
+                NseObservation("smb-protocols", 445, "NT LM 0.12 (SMBv1) [dangerous]"),
+                NseObservation(
+                    "smb2-security-mode",
+                    445,
+                    "Message signing enabled but not required",
+                ),
+            ),
+            duration_ms=12.0,
+        ),
+    )
+
+    response = client.post(
+        f"/api/devices/{device['id']}/vulnerability-scans", headers=headers
+    )
+
+    assert response.status_code == 201
+    findings = response.json()["findings"]
+    assert any(item["category"] == "NSE_CHECK" for item in findings)
+    validated = [item for item in findings if item["category"] == "NSE_VALIDATION"]
+    assert {item["title"] for item in validated} == {
+        "SMBv1 protocol enabled",
+        "SMB message signing is not required",
+    }
+    assert all(item["match_confidence"] == "HIGH" for item in validated)
 
 
 def admin_headers(client):
