@@ -1,4 +1,4 @@
-from app.services.port_scan_service import OpenPort
+from app.services.port_scan_service import OpenPort, PortScanResult
 
 
 def admin_headers(client):
@@ -46,8 +46,17 @@ def test_attack_paths_correlate_entry_exposure_with_critical_asset(client, monke
         client, headers, "Domain controller", "198.18.77.20", criticality="CRITICAL"
     )
     monkeypatch.setattr(
-        "app.services.vulnerability_service.scan_common_tcp_ports",
-        lambda _ip: [OpenPort(3389, "RDP", 1.0)],
+        "app.services.vulnerability_service.scan_nmap_top_tcp_ports",
+        lambda _ip: PortScanResult(
+            scanned_ports=list(range(1, 1001)),
+            open_ports=[OpenPort(3389, "RDP", 1.0)],
+            scanner="test top ports",
+            duration_ms=1.0,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.scan_nmap_service_versions",
+        lambda *_args: [],
     )
 
     scan = client.post(

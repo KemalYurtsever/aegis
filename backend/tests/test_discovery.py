@@ -1,8 +1,10 @@
 import ipaddress
+import socket
 import threading
+from types import SimpleNamespace
 import pytest
 
-from app.services.discovery_service import LocalNetwork, arp_scan_options, discovery_address_allowed, discover_responsive_hosts, select_windows_lan_candidate
+from app.services.discovery_service import LocalNetwork, discovery_address_allowed, discover_responsive_hosts, select_windows_lan_candidate, select_windows_route_network
 from app.services.ping_service import PingResult
 
 
@@ -22,8 +24,14 @@ def test_discovery_imports_new_devices_and_skips_existing(client, admin_headers,
         "app.services.discovery_service.discover_responsive_hosts",
         lambda _network: [("198.18.1.1", "AA:BB:CC:DD:EE:01"), ("198.18.1.50", "AA:BB:CC:DD:EE:50")],
     )
-    monkeypatch.setattr("app.services.discovery_service.resolve_hostnames", lambda _addresses: {"198.18.1.50": "printer.office"})
-    monkeypatch.setattr("app.services.mdns_service.discover_mdns", lambda _network: {})
+    resolved_addresses = []
+
+    def resolve_new_hosts(addresses):
+        resolved_addresses.extend(addresses)
+        return {"198.18.1.50": "printer.office"}
+
+    monkeypatch.setattr("app.services.discovery_service.resolve_hostnames", resolve_new_hosts)
+    monkeypatch.setattr("app.services.mdns_service.discover_mdns", lambda *_args: {})
 
     response = client.post("/api/discovery/import", headers=admin_headers)
 
@@ -37,6 +45,7 @@ def test_discovery_imports_new_devices_and_skips_existing(client, admin_headers,
     assert body["added_devices"][0]["name"] == "printer.office"
     assert body["added_devices"][0]["mac_address"] == "AA:BB:CC:DD:EE:50"
     assert "MAC address: AA:BB:CC:DD:EE:50" in body["added_devices"][0]["description"]
+    assert resolved_addresses == ["198.18.1.50"]
 
 
 def test_discovery_network_errors_are_safe(client, monkeypatch):
@@ -75,15 +84,33 @@ def test_public_lan_discovery_requires_explicit_opt_in():
     assert discovery_address_allowed(ipaddress.ip_address("198.18.1.20"), allow_public_lan=False) is True
 
 
+def test_route_table_selects_fast_physical_windows_network():
+    route_output = """
+              0.0.0.0          0.0.0.0       198.19.0.1       198.19.0.2      5
+              0.0.0.0          0.0.0.0    198.18.1.1   198.18.1.20     35
+    """
+    addresses = {
+        "WireGuard VPN": [SimpleNamespace(family=socket.AF_INET, address="198.19.0.2", netmask="255.255.255.255")],
+        "WiFi": [SimpleNamespace(family=socket.AF_INET, address="198.18.1.20", netmask="255.255.255.0")],
+    }
+    stats = {
+        "WireGuard VPN": SimpleNamespace(isup=True),
+        "WiFi": SimpleNamespace(isup=True),
+    }
+
+    network = select_windows_route_network(route_output, addresses, stats, False)
+
+    assert network == LocalNetwork("WiFi", "198.18.1.20", "198.18.1.0/24", "198.18.1.1")
+
+
 def test_discovery_merges_arp_hosts_that_block_ping(monkeypatch):
     monkeypatch.setattr(
         "app.services.discovery_service.check_ip",
         lambda address, **_kwargs: PingResult("ONLINE", 1.0) if address == "198.18.1.20" else PingResult("OFFLINE", None),
     )
-    monkeypatch.setattr("app.services.discovery_service.read_windows_arp_table", lambda: {})
     monkeypatch.setattr(
-        "app.services.discovery_service.active_arp_discovery",
-        lambda _network: {"198.18.1.50": "AA:BB:CC:DD:EE:50"},
+        "app.services.discovery_service.read_windows_arp_table",
+        lambda: {"198.18.1.50": "AA:BB:CC:DD:EE:50"},
     )
 
     hosts = discover_responsive_hosts(NETWORK)
@@ -92,30 +119,25 @@ def test_discovery_merges_arp_hosts_that_block_ping(monkeypatch):
     assert ("198.18.1.50", "AA:BB:CC:DD:EE:50") in hosts
 
 
-def test_arp_discovery_is_rate_limited():
-    options = arp_scan_options(10)
-    assert options["inter"] == 0.1
-    assert options["retry"] == 0
-    assert options["timeout"] == 2
-
-
-def test_ping_and_arp_discovery_run_concurrently(monkeypatch):
+def test_discovery_reads_neighbor_cache_after_ping_sweep(monkeypatch):
     network = LocalNetwork("Wi-Fi", "198.18.1.1", "198.18.1.0/30", "198.18.1.1")
-    ping_started = threading.Event()
-    arp_started = threading.Event()
+    probes_complete = threading.Event()
+    lock = threading.Lock()
+    completed = 0
 
     def fake_check_ip(_address, **_kwargs):
-        ping_started.set()
-        assert arp_started.wait(1.0)
+        nonlocal completed
+        with lock:
+            completed += 1
+            if completed == 2:
+                probes_complete.set()
         return PingResult("OFFLINE", None)
 
-    def fake_arp(_network):
-        arp_started.set()
-        assert ping_started.wait(1.0)
+    def fake_neighbors():
+        assert probes_complete.is_set()
         return {}
 
     monkeypatch.setattr("app.services.discovery_service.check_ip", fake_check_ip)
-    monkeypatch.setattr("app.services.discovery_service.active_arp_discovery", fake_arp)
-    monkeypatch.setattr("app.services.discovery_service.read_windows_arp_table", lambda: {})
+    monkeypatch.setattr("app.services.discovery_service.read_windows_arp_table", fake_neighbors)
 
     assert discover_responsive_hosts(network) == []

@@ -21,7 +21,20 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 @router.get("", response_model=DashboardResponse)
 def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
-    devices = list(db.scalars(select(Device).order_by(Device.name, Device.id)))
+    latest_result_id = (
+        select(MonitorResult.id)
+        .where(MonitorResult.device_id == Device.id)
+        .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
+        .limit(1)
+        .correlate(Device)
+        .scalar_subquery()
+    )
+    device_result_rows = db.execute(
+        select(Device, MonitorResult)
+        .outerjoin(MonitorResult, MonitorResult.id == latest_result_id)
+        .order_by(Device.name, Device.id)
+    ).all()
+    devices = [row[0] for row in device_result_rows]
     device_ids = [device.id for device in devices]
     if device_ids:
         totals = {
@@ -36,19 +49,10 @@ def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
                 .group_by(MonitorResult.device_id)
             )
         }
-        ranked_results = select(
-            MonitorResult.device_id.label("device_id"),
-            MonitorResult.status.label("status"),
-            MonitorResult.latency_ms.label("latency_ms"),
-            MonitorResult.timestamp.label("timestamp"),
-            func.row_number().over(
-                partition_by=MonitorResult.device_id,
-                order_by=(MonitorResult.timestamp.desc(), MonitorResult.id.desc()),
-            ).label("rank"),
-        ).where(MonitorResult.device_id.in_(device_ids)).subquery()
         latest_by_device = {
-            row.device_id: row
-            for row in db.execute(select(ranked_results).where(ranked_results.c.rank == 1))
+            device.id: result
+            for device, result in device_result_rows
+            if result is not None
         }
         transitions = select(
             MonitorResult.device_id.label("device_id"),

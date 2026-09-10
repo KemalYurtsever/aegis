@@ -1,7 +1,37 @@
-from app.services.port_scan_service import OpenPort
+import pytest
+
+from app.services.cve_service import CveLookupResult, CveMatch
+from app.services.port_scan_service import DetectedService, OpenPort, PortScanResult
 from app.services.vulnerability_service import TlsPosture
 
 DEVICE = {"name": "Lab server", "ip_address": "198.18.1.50", "device_type": "Server", "is_active": True}
+
+
+def scan_result(*open_ports):
+    return PortScanResult(
+        scanned_ports=list(range(1, 1001)),
+        open_ports=list(open_ports),
+        scanner="test top ports",
+        duration_ms=1.0,
+    )
+
+
+@pytest.fixture(autouse=True)
+def isolate_service_detection(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.scan_nmap_service_versions",
+        lambda *_args: [],
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.lookup_cves",
+        lambda *_args, **_kwargs: CveLookupResult(
+            matches=(),
+            total_results=0,
+            query="test",
+            confidence="MEDIUM",
+            cached=True,
+        ),
+    )
 
 
 def admin_headers(client):
@@ -17,7 +47,7 @@ def admin_headers(client):
 def test_defensive_scan_records_service_and_header_findings(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json=DEVICE, headers=headers).json()
-    monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [OpenPort(445, "SMB", 1.0), OpenPort(80, "HTTP", 1.2)])
+    monkeypatch.setattr("app.services.vulnerability_service.scan_nmap_top_tcp_ports", lambda _ip: scan_result(OpenPort(445, "SMB", 1.0), OpenPort(80, "HTTP", 1.2)))
     monkeypatch.setattr("app.services.vulnerability_service._http_headers", lambda *_args: {"server": "test"})
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
     assert response.status_code == 201
@@ -31,7 +61,7 @@ def test_defensive_scan_records_service_and_header_findings(client, monkeypatch)
 def test_scan_with_no_common_ports_records_positive_information(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json=DEVICE, headers=headers).json()
-    monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [])
+    monkeypatch.setattr("app.services.vulnerability_service.scan_nmap_top_tcp_ports", lambda _ip: scan_result())
     body = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers).json()
     assert body["findings"][0]["severity"] == "INFO"
 
@@ -39,7 +69,7 @@ def test_scan_with_no_common_ports_records_positive_information(client, monkeypa
 def test_scan_allows_registered_target_on_public_lan(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json={**DEVICE, "ip_address": "198.19.4.14"}, headers=headers).json()
-    monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [])
+    monkeypatch.setattr("app.services.vulnerability_service.scan_nmap_top_tcp_ports", lambda _ip: scan_result())
 
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
 
@@ -50,7 +80,7 @@ def test_scan_allows_registered_target_on_public_lan(client, monkeypatch):
 def test_scan_allows_registered_public_target_outside_connected_lan(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json={**DEVICE, "ip_address": "8.8.8.8"}, headers=headers).json()
-    monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [])
+    monkeypatch.setattr("app.services.vulnerability_service.scan_nmap_top_tcp_ports", lambda _ip: scan_result())
 
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
 
@@ -60,7 +90,7 @@ def test_scan_allows_registered_public_target_outside_connected_lan(client, monk
 def test_scan_allows_registered_documentation_target(client, monkeypatch):
     headers = admin_headers(client)
     device = client.post("/api/devices", json={**DEVICE, "ip_address": "203.0.113.25"}, headers=headers).json()
-    monkeypatch.setattr("app.services.vulnerability_service.scan_common_tcp_ports", lambda _ip: [])
+    monkeypatch.setattr("app.services.vulnerability_service.scan_nmap_top_tcp_ports", lambda _ip: scan_result())
 
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
 
@@ -71,8 +101,8 @@ def test_attack_surface_scan_records_banner_version_and_tls_posture(client, monk
     headers = admin_headers(client)
     device = client.post("/api/devices", json=DEVICE, headers=headers).json()
     monkeypatch.setattr(
-        "app.services.vulnerability_service.scan_common_tcp_ports",
-        lambda _ip: [OpenPort(22, "SSH", 1.0), OpenPort(443, "HTTPS", 1.2)],
+        "app.services.vulnerability_service.scan_nmap_top_tcp_ports",
+        lambda _ip: scan_result(OpenPort(22, "SSH", 1.0), OpenPort(443, "HTTPS", 1.2)),
     )
     monkeypatch.setattr(
         "app.services.vulnerability_service._service_banner",
@@ -113,6 +143,61 @@ def test_attack_surface_scan_records_banner_version_and_tls_posture(client, monk
     } <= categories
 
 
+def test_attack_surface_correlates_detected_cpe_with_nvd_cve(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post("/api/devices", json=DEVICE, headers=headers).json()
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.scan_nmap_top_tcp_ports",
+        lambda _ip: scan_result(OpenPort(80, "http", 1.0)),
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.scan_nmap_service_versions",
+        lambda *_args: [DetectedService(
+            port=80,
+            name="http",
+            product="Apache httpd",
+            version="2.4.58",
+            extra_info=None,
+            cpes=("cpe:/a:apache:http_server:2.4.58",),
+        )],
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.lookup_cves",
+        lambda *_args, **_kwargs: CveLookupResult(
+            matches=(CveMatch(
+                cve_id="CVE-2024-TEST",
+                description="Test vulnerability record.",
+                cvss_score=8.1,
+                severity="HIGH",
+                published="2024-01-01T00:00:00.000",
+                url="https://nvd.nist.gov/vuln/detail/CVE-2024-TEST",
+            ),),
+            total_results=1,
+            query="cpe:2.3:a:apache:http_server:2.4.58:*:*:*:*:*:*:*",
+            confidence="HIGH",
+            cached=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service._http_headers",
+        lambda *_args: {
+            "server": "Apache/2.4.58",
+            "x-content-type-options": "nosniff",
+            "x-frame-options": "DENY",
+            "content-security-policy": "default-src 'none'",
+        },
+    )
+
+    response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
+
+    assert response.status_code == 201
+    finding = next(item for item in response.json()["findings"] if item["cve_id"] == "CVE-2024-TEST")
+    assert finding["port"] == 80
+    assert finding["cvss_score"] == 8.1
+    assert finding["match_confidence"] == "HIGH"
+    assert finding["service_cpe"] == "cpe:/a:apache:http_server:2.4.58"
+
+
 def test_attack_surface_scan_is_admin_only(client):
     headers = admin_headers(client)
     device = client.post("/api/devices", json=DEVICE, headers=headers).json()
@@ -149,8 +234,8 @@ def test_attack_surface_comparison_tracks_new_and_resolved_findings(client, monk
     device = client.post("/api/devices", json=DEVICE, headers=headers).json()
     results = iter([[OpenPort(23, "Telnet", 1.0)], []])
     monkeypatch.setattr(
-        "app.services.vulnerability_service.scan_common_tcp_ports",
-        lambda _ip: next(results),
+        "app.services.vulnerability_service.scan_nmap_top_tcp_ports",
+        lambda _ip: scan_result(*next(results)),
     )
     monkeypatch.setattr(
         "app.services.vulnerability_service._service_banner",

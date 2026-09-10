@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from app.schemas import LabCommandRead, TraceRouteHop, TraceRouteRead
 from app.services.discovery_service import LocalNetwork
+from app.services.port_scan_service import OpenPort, PortScanResult
 from app.services.security_toolbox_service import (
     _filter_output,
     _run_lab_tool,
@@ -13,6 +14,7 @@ from app.services.security_toolbox_service import (
     nmap_tcp_scan,
     parse_traceroute,
     query_dns,
+    test_connection_ports as run_test_connection_ports,
     wireless_adapters,
 )
 
@@ -92,10 +94,86 @@ def test_nmap_scan_uses_argument_list_and_normalized_options(monkeypatch):
     assert result.exit_code == 0
     assert captured["tool"] == "nmap"
     assert captured["command"] == [
-        "nmap", "-Pn", "-sT", "--max-retries", "2", "--host-timeout", "60s",
-        "-p", "443,22", "-sV", "--version-light", "198.18.5.1",
+        "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", "0",
+        "--min-rate", "500",
+        "--initial-rtt-timeout", "100ms", "--max-rtt-timeout", "500ms",
+        "--host-timeout", "10s", "-p", "443,22", "-sV",
+        "--version-intensity", "0", "198.18.5.1",
     ]
-    assert captured["kwargs"] == {"target": "198.18.5.1", "grep": "open", "timeout": 70}
+    assert captured["kwargs"] == {
+        "target": "198.18.5.1",
+        "grep": "open",
+        "timeout": 20,
+        "scanned_port_count": 2,
+    }
+
+
+def test_nmap_detailed_and_aggressive_profiles_select_version_depth(monkeypatch):
+    commands = []
+
+    def fake_run(_tool, command, **kwargs):
+        commands.append((command, kwargs))
+        return LabCommandRead(tool="nmap", target="198.18.5.1", exit_code=0, output="", duration_ms=1.0)
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    nmap_tcp_scan("198.18.5.1", [80], False, scan_mode="CUSTOM", profile="DETAILED")
+    nmap_tcp_scan("198.18.5.1", [80], False, scan_mode="CUSTOM", profile="AGGRESSIVE")
+
+    detailed, aggressive = commands
+    assert detailed[0][-3:-1] == ["-sV", "--version-light"]
+    assert detailed[1]["timeout"] == 100
+    assert aggressive[0][-3:-1] == ["-sV", "--version-all"]
+    assert aggressive[1]["timeout"] == 200
+
+
+def test_test_connection_uses_validated_environment_values(monkeypatch):
+    captured = {}
+
+    def fake_run(tool, command, **kwargs):
+        captured.update(tool=tool, command=command, kwargs=kwargs)
+        return LabCommandRead(
+            tool="test-connection", target="198.18.5.1", exit_code=0,
+            output="80 True", duration_ms=1.0, scanned_port_count=2,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service.shutil.which", lambda name: "C:/Tools/pwsh.exe" if name == "pwsh" else None)
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    result = run_test_connection_ports("198.18.5.1", [443, 80, 443], 2, "True")
+
+    assert result.scanned_port_count == 2
+    assert captured["tool"] == "test-connection"
+    assert captured["command"][:4] == ["C:/Tools/pwsh.exe", "-NoProfile", "-NonInteractive", "-Command"]
+    assert captured["kwargs"]["environment"] == {
+        "AEGIS_TCP_TEST_TARGET": "198.18.5.1",
+        "AEGIS_TCP_TEST_PORTS": "443,80",
+        "AEGIS_TCP_TEST_TIMEOUT": "2",
+    }
+
+
+def test_top_1000_scan_uses_ranked_socket_fallback_without_nmap(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.nmap_command_prefix",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.scan_nmap_top_tcp_ports",
+        lambda _address: PortScanResult(
+            scanned_ports=list(range(1, 1001)),
+            open_ports=[OpenPort(port=80, service="HTTP", response_time_ms=1.0)],
+            scanner="Nmap-ranked socket scan",
+            duration_ms=24.5,
+        ),
+    )
+
+    result = nmap_tcp_scan(
+        "198.18.5.1", [22], False, scan_mode="TOP_1000"
+    )
+
+    assert result.scanned_port_count == 1000
+    assert "Scanned ports: 1000" in result.output
+    assert "80/tcp  open  HTTP" in result.output
 
 
 def test_nmap_scan_enables_ipv6(monkeypatch):
@@ -121,12 +199,11 @@ def test_windows_arp_scan_uses_bounded_native_fallback(monkeypatch):
         lambda: LocalNetwork("Wi-Fi", "198.18.5.20", "198.18.5.0/24", "198.18.5.1"),
     )
     monkeypatch.setattr(
-        "app.services.security_toolbox_service.active_arp_discovery",
-        lambda _network: {"198.18.5.10": "AA:BB:CC:DD:EE:10"},
-    )
-    monkeypatch.setattr(
-        "app.services.security_toolbox_service.read_windows_arp_table",
-        lambda: {"198.18.5.1": "AA:BB:CC:DD:EE:01", "198.19.0.1": "AA:BB:CC:DD:EE:99"},
+        "app.services.security_toolbox_service.discover_responsive_hosts",
+        lambda _network: [
+            ("198.18.5.1", "AA:BB:CC:DD:EE:01"),
+            ("198.18.5.10", "AA:BB:CC:DD:EE:10"),
+        ],
     )
 
     result = arp_scan(grep="198.18.5")
@@ -310,8 +387,8 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
     ).json()
     captured = {}
 
-    def fake_scan(address, ports, service_detection, grep):
-        captured.update(address=address, ports=ports, service_detection=service_detection, grep=grep)
+    def fake_scan(address, ports, service_detection, grep, scan_mode, profile):
+        captured.update(address=address, ports=ports, service_detection=service_detection, grep=grep, scan_mode=scan_mode, profile=profile)
         return LabCommandRead(tool="nmap", target=address, exit_code=0, output="22/tcp open ssh", duration_ms=3.5)
 
     monkeypatch.setattr("app.routers.security.nmap_tcp_scan", fake_scan)
@@ -325,5 +402,38 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["output"] == "22/tcp open ssh"
     assert captured == {
-        "address": "198.18.5.20", "ports": [22, 443], "service_detection": True, "grep": "open",
+        "address": "198.18.5.20", "ports": [22, 443], "service_detection": True,
+        "grep": "open", "scan_mode": "CUSTOM", "profile": "FAST",
+    }
+
+
+def test_test_connection_endpoint_uses_registered_device(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post(
+        "/api/devices",
+        headers=headers,
+        json={"name": "TCP target", "ip_address": "198.18.5.21", "device_type": "Server", "is_active": True},
+    ).json()
+    captured = {}
+
+    def fake_test(address, ports, timeout_seconds, grep):
+        captured.update(address=address, ports=ports, timeout_seconds=timeout_seconds, grep=grep)
+        return LabCommandRead(
+            tool="test-connection", target=address, exit_code=0,
+            output="443 True", duration_ms=2.0, scanned_port_count=len(ports),
+        )
+
+    monkeypatch.setattr("app.routers.security.test_connection_ports", fake_test)
+
+    response = client.post(
+        "/api/security/toolbox/test-connection",
+        headers=headers,
+        json={"device_id": device["id"], "ports": [443, 80, 443], "timeout_seconds": 3, "grep": "True"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scanned_port_count"] == 2
+    assert captured == {
+        "address": "198.18.5.21", "ports": [443, 80],
+        "timeout_seconds": 3, "grep": "True",
     }

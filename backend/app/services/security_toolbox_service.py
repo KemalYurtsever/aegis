@@ -23,7 +23,8 @@ from app.schemas import (
     WirelessAdapterRead,
     LabCommandRead,
 )
-from app.services.discovery_service import active_arp_discovery, get_primary_private_network, read_windows_arp_table
+from app.services.discovery_service import discover_responsive_hosts, get_primary_private_network
+from app.services.port_scan_service import nmap_command_prefix, scan_nmap_top_tcp_ports
 
 
 _WIRELESS_NAME = re.compile(r"wi[ -]?fi|wlan|wireless|802\.11", re.I)
@@ -45,7 +46,16 @@ def _filter_output(output: str, grep: str | None) -> str:
     return "\n".join(line for line in output.splitlines() if needle in line.casefold())
 
 
-def _run_lab_tool(tool: str, command: list[str], *, target: str | None = None, grep: str | None = None, timeout: int = 60) -> LabCommandRead:
+def _run_lab_tool(
+    tool: str,
+    command: list[str],
+    *,
+    target: str | None = None,
+    grep: str | None = None,
+    timeout: int = 60,
+    scanned_port_count: int | None = None,
+    environment: dict[str, str] | None = None,
+) -> LabCommandRead:
     executable = shutil.which(command[0])
     if executable is None:
         container = os.getenv("AEGIS_NETWORK_TOOLBOX_CONTAINER", "").strip()
@@ -61,6 +71,7 @@ def _run_lab_tool(tool: str, command: list[str], *, target: str | None = None, g
             completed = subprocess.run(
                 [executable, *command[1:]], stdout=output_file, stderr=subprocess.STDOUT,
                 timeout=timeout, shell=False, check=False,
+                env={**os.environ, **(environment or {})},
             )
             exit_code = completed.returncode
         except subprocess.TimeoutExpired:
@@ -78,17 +89,144 @@ def _run_lab_tool(tool: str, command: list[str], *, target: str | None = None, g
     return LabCommandRead(
         tool=tool, target=target, exit_code=exit_code, output=output,
         duration_ms=round((time.monotonic() - started) * 1000, 2), truncated=truncated,
+        scanned_port_count=scanned_port_count if exit_code == 0 else None,
     )
 
 
-def nmap_tcp_scan(address: str, ports: list[int], service_detection: bool, grep: str | None = None) -> LabCommandRead:
-    command = ["nmap", "-Pn", "-sT", "--max-retries", "2", "--host-timeout", "60s", "-p", ",".join(map(str, ports))]
+def nmap_tcp_scan(
+    address: str,
+    ports: list[int],
+    service_detection: bool,
+    grep: str | None = None,
+    scan_mode: str = "CUSTOM",
+    profile: str = "FAST",
+) -> LabCommandRead:
+    profiles = {"FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"}
+    if profile not in profiles:
+        raise ValueError("Unknown Nmap scan profile")
+    if service_detection and profile == "FAST":
+        profile = "FAST_VERSION"
+    top_1000 = scan_mode == "TOP_1000"
+    if top_1000 and nmap_command_prefix() is None:
+        result = scan_nmap_top_tcp_ports(address)
+        lines = [
+            "Nmap-ranked TCP connect scan",
+            f"Scanned ports: {len(result.scanned_ports)}",
+            "PORT     STATE SERVICE",
+        ]
+        lines.extend(
+            f"{port.port}/tcp  open  {port.service}"
+            for port in result.open_ports
+        )
+        if not result.open_ports:
+            lines.append("No open TCP ports found.")
+        if profile != "FAST":
+            lines.append("Service-version detection requires the Nmap executable; socket results show known service names only.")
+        return LabCommandRead(
+            tool="nmap",
+            target=address,
+            exit_code=0,
+            output=_filter_output("\n".join(lines), grep),
+            duration_ms=result.duration_ms,
+            scanned_port_count=len(result.scanned_ports),
+        )
+
+    if profile in {"FAST", "FAST_VERSION"}:
+        command = [
+            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", "0",
+            "--min-rate", "500", "--initial-rtt-timeout", "100ms",
+            "--max-rtt-timeout", "500ms", "--host-timeout", "10s",
+        ]
+        timeout = 20
+    elif profile == "DETAILED":
+        command = [
+            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", "1",
+            "--host-timeout", "90s",
+        ]
+        timeout = 100
+    else:
+        command = [
+            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", "2",
+            "--host-timeout", "180s",
+        ]
+        timeout = 200
+
+    if top_1000:
+        command.extend(["--top-ports", "1000", "--open"])
+        scanned_port_count = 1000
+    else:
+        command.extend(["-p", ",".join(map(str, ports))])
+        scanned_port_count = len(ports)
     if ipaddress.ip_address(address).version == 6:
         command.append("-6")
-    if service_detection:
+    if profile == "FAST_VERSION":
+        command.extend(["-sV", "--version-intensity", "0"])
+    elif profile == "DETAILED":
         command.extend(["-sV", "--version-light"])
+    elif profile == "AGGRESSIVE":
+        command.extend(["-sV", "--version-all"])
     command.append(address)
-    return _run_lab_tool("nmap", command, target=address, grep=grep, timeout=70)
+    return _run_lab_tool(
+        "nmap", command, target=address, grep=grep, timeout=timeout,
+        scanned_port_count=scanned_port_count,
+    )
+
+
+def test_connection_ports(
+    address: str,
+    ports: list[int],
+    timeout_seconds: int = 2,
+    grep: str | None = None,
+) -> LabCommandRead:
+    target = str(ipaddress.ip_address(address))
+    normalized_ports = list(dict.fromkeys(ports))
+    if not normalized_ports or len(normalized_ports) > 128:
+        raise ValueError("Test-Connection accepts between 1 and 128 ports")
+    if any(port < 1 or port > 65535 for port in normalized_ports):
+        raise ValueError("Ports must be between 1 and 65535")
+    if timeout_seconds < 1 or timeout_seconds > 10:
+        raise ValueError("Timeout must be between 1 and 10 seconds")
+
+    pwsh = shutil.which("pwsh")
+    if pwsh:
+        script = (
+            "$targetAddress=$env:AEGIS_TCP_TEST_TARGET;"
+            "$timeout=[int]$env:AEGIS_TCP_TEST_TIMEOUT;"
+            "$rows=($env:AEGIS_TCP_TEST_PORTS -split ',') | ForEach-Object -Parallel {"
+            "$port=[int]$_;"
+            "$result=Test-Connection -TargetName $using:targetAddress -TcpPort $port -Count 1 -TimeoutSeconds $using:timeout -Detailed -ErrorAction SilentlyContinue;"
+            "[pscustomobject]@{Target=$using:targetAddress;Port=$port;Open=[bool]$result.Connected;LatencyMs=$result.Latency;Status=if($result){$result.Status}else{'Timeout'}}} -ThrottleLimit 32;"
+            "$rows | Sort-Object Port | Format-Table -AutoSize"
+        )
+        command = [pwsh, "-NoProfile", "-NonInteractive", "-Command", script]
+        process_timeout = min(60, ((len(normalized_ports) + 31) // 32) * timeout_seconds + 15)
+    else:
+        powershell = shutil.which("powershell.exe")
+        if not powershell:
+            raise RuntimeError("PowerShell Test-Connection is not available on the AEGIS host")
+        script = (
+            "$targetAddress=$env:AEGIS_TCP_TEST_TARGET;"
+            "$rows=foreach($port in ($env:AEGIS_TCP_TEST_PORTS -split ',')){"
+            "$result=Test-NetConnection -ComputerName $targetAddress -Port ([int]$port) -InformationLevel Detailed -WarningAction SilentlyContinue;"
+            "[pscustomobject]@{Target=$targetAddress;Port=[int]$port;Open=[bool]$result.TcpTestSucceeded;LatencyMs=$null;Status=if($result.TcpTestSucceeded){'Success'}else{'Failed'}}};"
+            "$rows | Format-Table -AutoSize"
+        )
+        command = [powershell, "-NoProfile", "-NonInteractive", "-Command", script]
+        process_timeout = min(180, len(normalized_ports) * timeout_seconds + 15)
+
+    return _run_lab_tool(
+        "test-connection",
+        command,
+        target=target,
+        grep=grep,
+        timeout=process_timeout,
+        scanned_port_count=len(normalized_ports),
+        environment={
+            "AEGIS_TCP_TEST_TARGET": target,
+            "AEGIS_TCP_TEST_PORTS": ",".join(map(str, normalized_ports)),
+            "AEGIS_TCP_TEST_TIMEOUT": str(timeout_seconds),
+        },
+    )
 
 
 def arp_scan(interface_name: str | None = None, grep: str | None = None) -> LabCommandRead:
@@ -97,13 +235,8 @@ def arp_scan(interface_name: str | None = None, grep: str | None = None) -> LabC
         network = get_primary_private_network()
         if interface_name and interface_name.casefold() != network.interface_name.casefold():
             raise RuntimeError(f"The active physical interface is {network.interface_name}")
-        discovered = active_arp_discovery(network)
-        subnet = ipaddress.ip_network(network.network)
-        cached = {
-            address: mac for address, mac in read_windows_arp_table().items()
-            if ipaddress.ip_address(address) in subnet
-        }
-        cached.update(discovered)
+        responsive = discover_responsive_hosts(network)
+        cached = {address: mac for address, mac in responsive if mac}
         lines = [f"Interface: {network.interface_name}\tNetwork: {network.network}"]
         lines.extend(f"{address}\t{mac}" for address, mac in sorted(cached.items(), key=lambda item: ipaddress.ip_address(item[0])))
         output = _filter_output("\n".join(lines), grep)

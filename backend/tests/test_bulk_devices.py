@@ -64,8 +64,14 @@ def test_bulk_updates_are_atomic_and_validate_unique_ids(client):
 def test_bulk_check_records_results_for_selected_devices(client, monkeypatch):
     devices = create_devices(client)
     selected = [devices[0]["id"], devices[1]["id"]]
-    results = iter([PingResult("ONLINE", 4.0), PingResult("OFFLINE", None, "no_reply")])
-    monkeypatch.setattr("app.services.monitoring_service.check_ip", lambda *_args, **_kwargs: next(results))
+    results = {
+        devices[0]["ip_address"]: PingResult("ONLINE", 4.0),
+        devices[1]["ip_address"]: PingResult("OFFLINE", None, "no_reply"),
+    }
+    monkeypatch.setattr(
+        "app.services.monitoring_service.check_ip",
+        lambda address, *_args, **_kwargs: results[address],
+    )
 
     response = client.post("/api/devices/bulk/check", json={"device_ids": selected})
     assert response.status_code == 201

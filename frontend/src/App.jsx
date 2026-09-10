@@ -115,6 +115,27 @@ const EMPTY_INVENTORY_HEALTH = {
 };
 const LAST_DISCOVERY_NETWORK_KEY = "aegis_last_discovery_network";
 const CLEAR_DEVICES_CONFIRMATION = "CLEAR ALL DEVICES";
+
+function ipv4AddressInCidr(address, cidr) {
+  const [networkAddress, prefixText] = String(cidr || "").split("/");
+  const prefix = Number(prefixText);
+  const toNumber = (value) => {
+    const parts = String(value).split(".").map(Number);
+    if (
+      parts.length !== 4 ||
+      parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+    )
+      return null;
+    return parts.reduce((total, part) => ((total << 8) | part) >>> 0, 0);
+  };
+  const ip = toNumber(address);
+  const network = toNumber(networkAddress);
+  if (ip === null || network === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32)
+    return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (ip & mask) === (network & mask);
+}
+
 const EMPTY_TOPOLOGY = { interface_name: null, local_ip: null, groups: [], links: [] };
 const EMPTY_AGENT_OVERVIEW = {
   total_agents: 0,
@@ -1841,7 +1862,7 @@ function ServiceChecksPanel({ deviceId, checks, onChanged }) {
   async function scanPorts() {
     if (
       !window.confirm(
-        "Scan this registered device for the seven common TCP ports shown in the result? Only continue for a device you own or are authorized to test.",
+        "Run an Nmap scan of the 1,000 most common TCP ports on this registered device? Only continue for a device you own or are authorized to test.",
       )
     )
       return;
@@ -1921,7 +1942,7 @@ function ServiceChecksPanel({ deviceId, checks, onChanged }) {
             onClick={scanPorts}
             disabled={scanning}
           >
-            {scanning ? "Scanning…" : "Scan common ports"}
+            {scanning ? "Scanning 1,000 ports…" : "Scan top 1,000 TCP ports"}
           </button>
           <button
             className="button button--secondary"
@@ -1937,15 +1958,15 @@ function ServiceChecksPanel({ deviceId, checks, onChanged }) {
           <div>
             <strong>
               {scanResult.open_ports.length} open of{" "}
-              {scanResult.scanned_ports.length} scanned
+              {scanResult.scanned_port_count} scanned
             </strong>
             <span>
-              {scanResult.target_ip} · ports{" "}
-              {scanResult.scanned_ports.join(", ")}
+              {scanResult.target_ip} · {scanResult.scanner} ·{" "}
+              {(scanResult.duration_ms / 1000).toFixed(1)} seconds
             </span>
           </div>
           {scanResult.open_ports.length === 0 ? (
-            <p>No open common TCP ports were found.</p>
+            <p>No open TCP ports were found in this scan.</p>
           ) : (
             <ul>
               {scanResult.open_ports.map((port) => {
@@ -1956,7 +1977,11 @@ function ServiceChecksPanel({ deviceId, checks, onChanged }) {
                   <li key={port.port}>
                     <strong>{port.port}</strong>
                     <span>{port.service}</span>
-                    <small>{port.response_time_ms} ms</small>
+                    <small>
+                      {port.response_time_ms == null
+                        ? "Nmap detected"
+                        : `${port.response_time_ms} ms`}
+                    </small>
                     <button
                       className="button button--check"
                       disabled={monitored || addingPort !== null}
@@ -2495,8 +2520,8 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
 
   async function scan() {
     const confirmed = window.confirm(
-      `Run a bounded attack-surface assessment against registered device ${device.ip_address}? ` +
-        "This identifies exposure but does not exploit services.",
+      `Scan the top 1,000 TCP ports on registered device ${device.ip_address}, identify open-service versions, and compare supported fingerprints with NVD? ` +
+        "This assessment does not exploit services.",
     );
     if (!confirmed) return;
     setBusy(true);
@@ -2524,12 +2549,12 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
             onClick={scan}
             disabled={busy}
           >
-            {busy ? "Assessing…" : "Run assessment"}
+            {busy ? "Scanning services & CVEs…" : "Run assessment"}
           </button>
         )}
       </div>
       {error && <div className="form-error">{error}</div>}
-      <p className="panel-help">This is a bounded, non-exploitative comparison of exposed services and stored fingerprints. Findings are evidence to review, not proof that a device has been compromised.</p>
+      <p className="panel-help">The fast assessment scans the top 1,000 TCP ports first, then gives low-intensity version detection six seconds only when ports are open. It searches NVD when product and version evidence is available. Fast detection may miss quiet services; CVE matches still require verification.</p>
       {!latest ? (
         <div className="empty-state empty-state--compact">
           No assessments recorded. The bounded assessment checks registered
@@ -2539,6 +2564,9 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
         <div>
           <div className="scan-summary">
             <strong>{latest.findings.length} findings</strong>
+            <span>
+              {latest.findings.filter((finding) => finding.cve_id).length} CVE candidates
+            </span>
             <span>Risk {comparison?.risk_score ?? 0}/100</span>
             <span>
               {comparison?.previous_scan_id
@@ -2562,6 +2590,24 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
                     {finding.port ? ` · TCP ${finding.port}` : ""}
                   </strong>
                   <p>{finding.description}</p>
+                  {finding.cve_id && (
+                    <div className="cve-finding-meta">
+                      {finding.cvss_score != null && <span>CVSS {finding.cvss_score}</span>}
+                      {finding.match_confidence && <span>{finding.match_confidence} confidence</span>}
+                      {finding.service_product && (
+                        <span>
+                          {finding.service_product}
+                          {finding.service_version ? ` ${finding.service_version}` : ""}
+                        </span>
+                      )}
+                      {finding.cve_url && (
+                        <a href={finding.cve_url} target="_blank" rel="noreferrer">
+                          Open NVD record
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  {finding.service_cpe && <code className="cve-finding-cpe">{finding.service_cpe}</code>}
                   <small>{finding.recommendation}</small>
                 </div>
               </article>
@@ -4587,7 +4633,7 @@ function NetworkActionDialog({
           {action.kind === "reset"
             ? "Use this when you want to discard the current lab inventory and start again."
             : action.requiresReset
-              ? `The last scan used ${action.previousNetwork}. AEGIS detected a different subnet and can clear the old inventory before scanning it.`
+              ? action.resetReason
               : "Confirm the active adapter and subnet before AEGIS searches for devices."}
         </p>
         {action.network && (
@@ -6400,16 +6446,24 @@ export default function App() {
     setError("");
     try {
       const network = await getDiscoveryNetwork();
+      const containsOtherDiscoveredNetworks = data.devices.some(
+        (device) =>
+          device.inventory_source === "DISCOVERY" &&
+          !ipv4AddressInCidr(device.ip_address, network.network),
+      );
+      const networkChanged = Boolean(
+        lastDiscoveryNetwork && lastDiscoveryNetwork !== network.network,
+      );
       setNetworkActionConfirmation("");
       setNetworkAction({
         kind: "discover",
         network,
         previousNetwork: lastDiscoveryNetwork,
-        requiresReset: Boolean(
-          lastDiscoveryNetwork &&
-          lastDiscoveryNetwork !== network.network &&
-          data.total_devices > 0,
-        ),
+        requiresReset: data.total_devices > 0 &&
+          (networkChanged || containsOtherDiscoveredNetworks),
+        resetReason: networkChanged
+          ? `The last scan used ${lastDiscoveryNetwork}. AEGIS detected ${network.network} and can clear the old inventory before scanning it.`
+          : `The inventory contains discovered devices outside ${network.network}. Clear the saved networks before scanning so old devices do not inflate the dashboard totals.`,
         deviceCount: data.total_devices,
         error: "",
       });

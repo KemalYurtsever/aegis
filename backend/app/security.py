@@ -136,6 +136,7 @@ def rate_limit_for(request: Request) -> tuple[str, RateLimit]:
         or path == "/api/automation/reports/generate"
         or path == "/api/automation/baselines/refresh"
         or path.startswith("/api/security/toolbox/")
+        or path == "/api/security/playbooks/runs"
         or (path.endswith("/check") and method == "POST")
     )
     if expensive and method == "POST":

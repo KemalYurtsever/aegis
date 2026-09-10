@@ -1,4 +1,4 @@
-from app.services.port_scan_service import COMMON_TCP_PORTS, OpenPort
+from app.services.port_scan_service import OpenPort, PortScanResult
 from app.services.service_check_service import ServiceProbeResult
 
 
@@ -56,19 +56,26 @@ def test_service_check_validation(client, admin_headers):
     assert response.status_code == 422
 
 
-def test_common_port_scan_is_bounded_and_returns_open_ports(client, admin_headers, monkeypatch):
+def test_nmap_top_port_scan_returns_open_ports(client, admin_headers, monkeypatch):
     device = client.post("/api/devices", json=DEVICE, headers=admin_headers).json()
     monkeypatch.setattr(
-        "app.routers.services.scan_common_tcp_ports",
-        lambda target: [OpenPort(port=22, service="SSH", response_time_ms=1.25)],
+        "app.routers.services.scan_nmap_top_tcp_ports",
+        lambda target: PortScanResult(
+            scanned_ports=list(range(1, 1001)),
+            open_ports=[OpenPort(port=22, service="ssh", response_time_ms=None)],
+            scanner="Nmap top ports",
+            duration_ms=1250.0,
+        ),
     )
 
     response = client.post(f"/api/devices/{device['id']}/scan-ports", headers=admin_headers)
 
     assert response.status_code == 200
     assert response.json()["target_ip"] == DEVICE["ip_address"]
-    assert response.json()["scanned_ports"] == list(COMMON_TCP_PORTS)
-    assert response.json()["open_ports"] == [{"port": 22, "service": "SSH", "response_time_ms": 1.25}]
+    assert response.json()["scanned_port_count"] == 1000
+    assert response.json()["scanner"] == "Nmap top ports"
+    assert response.json()["duration_ms"] == 1250.0
+    assert response.json()["open_ports"] == [{"port": 22, "service": "ssh", "response_time_ms": None}]
 
 
 def test_common_port_scan_allows_any_registered_lab_target(client, admin_headers, monkeypatch):
@@ -76,7 +83,10 @@ def test_common_port_scan_allows_any_registered_lab_target(client, admin_headers
         "/api/devices",
         headers=admin_headers, json={**DEVICE, "name": "Building host", "ip_address": "198.19.4.14"},
     ).json()
-    monkeypatch.setattr("app.routers.services.scan_common_tcp_ports", lambda _target: [])
+    monkeypatch.setattr(
+        "app.routers.services.scan_nmap_top_tcp_ports",
+        lambda _target: PortScanResult([], [], "Socket fallback", 1.0),
+    )
 
     response = client.post(f"/api/devices/{public_device['id']}/scan-ports", headers=admin_headers)
 

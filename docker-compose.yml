@@ -15,6 +15,7 @@ services:
       AEGIS_TWILIO_ACCOUNT_SID: ${AEGIS_TWILIO_ACCOUNT_SID:-}
       AEGIS_TWILIO_AUTH_TOKEN: ${AEGIS_TWILIO_AUTH_TOKEN:-}
       AEGIS_SNMP_COMMUNITY: ${AEGIS_SNMP_COMMUNITY:-}
+      NVD_API_KEY: ${NVD_API_KEY:-}
     secrets:
       - prometheus_token
     volumes:

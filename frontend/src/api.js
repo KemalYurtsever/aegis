@@ -222,6 +222,9 @@ export function getHostNetworkPolicy() {
 export function runNmapScan(payload) {
   return jsonRequest("/api/security/toolbox/nmap", "POST", payload);
 }
+export function runTestConnectionPorts(payload) {
+  return jsonRequest("/api/security/toolbox/test-connection", "POST", payload);
+}
 export function runArpScan(payload = {}) {
   return jsonRequest("/api/security/toolbox/arp-scan", "POST", payload);
 }
@@ -233,6 +236,26 @@ export function runCurlRequest(payload) {
 }
 export function runDigQuery(payload) {
   return jsonRequest("/api/security/toolbox/dig", "POST", payload);
+}
+
+export function createSecurityPlaybookRun(payload) {
+  return jsonRequest("/api/security/playbooks/runs", "POST", payload);
+}
+
+export function listSecurityPlaybookRuns(deviceId, limit = 10) {
+  const query = new URLSearchParams({
+    device_id: String(deviceId),
+    limit: String(limit),
+  });
+  return request(`/api/security/playbooks/runs?${query.toString()}`);
+}
+
+export function getSecurityPlaybookRun(runId) {
+  return request(`/api/security/playbooks/runs/${runId}`);
+}
+
+export function cancelSecurityPlaybookRun(runId) {
+  return request(`/api/security/playbooks/runs/${runId}/cancel`, { method: "POST" });
 }
 
 export function pauseScheduler() {

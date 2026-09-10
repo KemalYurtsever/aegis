@@ -1,5 +1,7 @@
 from collections import defaultdict
 from ipaddress import ip_address, ip_network
+import threading
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import IntegrityError
@@ -7,12 +9,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Device, TopologyLink
+from app.models import Device, MonitorResult, TopologyLink
 from app.schemas import TopologyDevice, TopologyLinkCreate, TopologyLinkRead, TopologyNetwork, TopologyResponse
 from app.services.discovery_service import LocalNetwork, get_primary_private_network
-from app.services.statistics_service import calculate_device_statistics
 
 router = APIRouter(prefix="/api/topology", tags=["topology"])
+
+_NETWORK_CACHE_TTL_SECONDS = 60.0
+_network_cache_lock = threading.Lock()
+_network_cache_value: LocalNetwork | None = None
+_network_cache_time = 0.0
+_network_cache_source = None
+_network_refresh_thread: threading.Thread | None = None
 
 
 def serialize_link(link: TopologyLink, devices: dict[int, Device]) -> TopologyLinkRead:
@@ -67,17 +75,82 @@ def device_subnet(address: str) -> str:
 
 
 def connected_network() -> LocalNetwork | None:
+    global _network_cache_value, _network_cache_time, _network_cache_source
+    now = time.monotonic()
+    with _network_cache_lock:
+        if (
+            _network_cache_source is get_primary_private_network
+            and now - _network_cache_time < _NETWORK_CACHE_TTL_SECONDS
+        ):
+            return _network_cache_value
     try:
-        return get_primary_private_network()
+        value = get_primary_private_network()
     except (RuntimeError, OSError, ValueError):
-        return None
+        value = None
+    with _network_cache_lock:
+        _network_cache_value = value
+        _network_cache_time = time.monotonic()
+        _network_cache_source = get_primary_private_network
+    return value
 
 
-@router.get("", response_model=TopologyResponse)
-def get_topology(db: Session = Depends(get_db)) -> TopologyResponse:
-    active_network = connected_network()
+def _refresh_connected_network() -> None:
+    global _network_refresh_thread
+    try:
+        connected_network()
+    finally:
+        with _network_cache_lock:
+            _network_refresh_thread = None
+
+
+def cached_connected_network() -> LocalNetwork | None:
+    """Return immediately and refresh slow Windows adapter data in the background."""
+    global _network_refresh_thread
+    now = time.monotonic()
+    with _network_cache_lock:
+        if (
+            _network_cache_source is get_primary_private_network
+            and now - _network_cache_time < _NETWORK_CACHE_TTL_SECONDS
+        ):
+            return _network_cache_value
+        stale_value = (
+            _network_cache_value
+            if _network_cache_source is get_primary_private_network
+            else None
+        )
+        if _network_refresh_thread is None:
+            _network_refresh_thread = threading.Thread(
+                target=_refresh_connected_network,
+                name="aegis-network-context",
+                daemon=True,
+            )
+            _network_refresh_thread.start()
+        return stale_value
+
+
+def build_topology(db: Session, active_network: LocalNetwork | None) -> TopologyResponse:
+    latest_result_id = (
+        select(MonitorResult.id)
+        .where(MonitorResult.device_id == Device.id)
+        .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
+        .limit(1)
+        .correlate(Device)
+        .scalar_subquery()
+    )
+    device_rows = db.execute(
+        select(Device, MonitorResult.status)
+        .outerjoin(MonitorResult, MonitorResult.id == latest_result_id)
+        .order_by(Device.name, Device.id)
+    ).all()
+    devices = [row[0] for row in device_rows]
+    status_by_device = {
+        device.id: status
+        for device, status in device_rows
+        if status is not None
+    }
+
     grouped: dict[tuple[str | None, str], list[Device]] = defaultdict(list)
-    for device in db.scalars(select(Device).order_by(Device.name, Device.id)):
+    for device in devices:
         grouped[(device.vlan, device_subnet(device.ip_address))].append(device)
 
     groups: list[TopologyNetwork] = []
@@ -108,7 +181,7 @@ def get_topology(db: Session = Depends(get_db)) -> TopologyResponse:
                 name=device.name,
                 ip_address=device.ip_address,
                 device_type=device.device_type,
-                status=calculate_device_statistics(device.id, db).current_status,
+                status=status_by_device.get(device.id, "UNKNOWN"),
                 role=role,
             ))
         rows.sort(key=lambda row: ({"GATEWAY": 0, "INFRASTRUCTURE": 1, "ENDPOINT": 2}[row.role], row.name.lower()))
@@ -139,3 +212,12 @@ def get_topology(db: Session = Depends(get_db)) -> TopologyResponse:
         groups=groups,
         links=links,
     )
+
+
+@router.get("", response_model=TopologyResponse)
+def get_topology(db: Session = Depends(get_db)) -> TopologyResponse:
+    return build_topology(db, connected_network())
+
+
+def get_cached_topology(db: Session) -> TopologyResponse:
+    return build_topology(db, cached_connected_network())

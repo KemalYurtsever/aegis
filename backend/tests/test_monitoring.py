@@ -1,3 +1,7 @@
+import threading
+from types import SimpleNamespace
+
+from app.services.monitoring_service import apply_neighbor_evidence
 from app.services.ping_service import PingResult
 
 
@@ -74,3 +78,40 @@ def test_check_all_with_no_active_devices_returns_empty_summary(client):
         "offline_devices": 0,
         "results": [],
     }
+
+
+def test_check_all_probes_devices_concurrently(client, monkeypatch):
+    devices = []
+    for index in range(3):
+        response = client.post("/api/devices", json={
+            **DEVICE,
+            "name": f"Concurrent host {index}",
+            "ip_address": f"192.168.56.{30 + index}",
+        })
+        devices.append(response.json())
+
+    started = threading.Barrier(len(devices))
+
+    def concurrent_probe(_address, *_args, **_kwargs):
+        started.wait(timeout=1.0)
+        return PingResult("ONLINE", 1.0)
+
+    monkeypatch.setattr("app.services.monitoring_service.check_ip", concurrent_probe)
+    response = client.post("/api/devices/check-all")
+
+    assert response.status_code == 201
+    assert response.json()["checked_devices"] == len(devices)
+
+
+def test_matching_neighbor_evidence_marks_ping_blocking_device_online(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.discovery_service.read_windows_arp_table",
+        lambda: {"198.18.56.44": "AA:BB:CC:DD:EE:44"},
+    )
+
+    results = apply_neighbor_evidence(
+        [SimpleNamespace(ip_address="198.18.56.44", mac_address="AA:BB:CC:DD:EE:44")],
+        [PingResult("OFFLINE", None, "no_reply")],
+    )
+
+    assert results == [PingResult("ONLINE", None, "neighbor_cache")]

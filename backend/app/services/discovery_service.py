@@ -7,6 +7,7 @@ import socket
 import subprocess
 from dataclasses import dataclass
 
+import psutil
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -53,6 +54,11 @@ _VIRTUAL_INTERFACE_PATTERN = re.compile(
     re.I,
 )
 
+_WINDOWS_DEFAULT_ROUTE_PATTERN = re.compile(
+    r"^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(\d{1,3}(?:\.\d{1,3}){3})\s+"
+    r"(\d{1,3}(?:\.\d{1,3}){3})\s+(\d+)\s*$"
+)
+
 
 def select_windows_lan_candidate(payload: object) -> dict:
     candidates = payload if isinstance(payload, list) else [payload]
@@ -78,9 +84,69 @@ def discovery_address_allowed(address: ipaddress.IPv4Address, allow_public_lan: 
     return address.is_private or allow_public_lan
 
 
+def select_windows_route_network(
+    route_output: str,
+    addresses_by_name: dict,
+    stats_by_name: dict,
+    allow_public_lan: bool,
+) -> LocalNetwork:
+    routes = []
+    for line in route_output.splitlines():
+        match = _WINDOWS_DEFAULT_ROUTE_PATTERN.match(line)
+        if match:
+            routes.append((int(match.group(3)), match.group(1), match.group(2)))
+    for _metric, gateway, local_ip in sorted(routes):
+        address = ipaddress.ip_address(local_ip)
+        if not discovery_address_allowed(address, allow_public_lan):
+            continue
+        for interface_name, interface_addresses in addresses_by_name.items():
+            stat = stats_by_name.get(interface_name)
+            if _VIRTUAL_INTERFACE_PATTERN.search(interface_name) or (stat and not stat.isup):
+                continue
+            match = next(
+                (
+                    item
+                    for item in interface_addresses
+                    if item.family == socket.AF_INET and item.address == local_ip and item.netmask
+                ),
+                None,
+            )
+            if match is None:
+                continue
+            prefix_length = ipaddress.ip_network(f"0.0.0.0/{match.netmask}").prefixlen
+            original = ipaddress.ip_network(f"{address}/{prefix_length}", strict=False)
+            network = (
+                original
+                if original.prefixlen >= 24
+                else ipaddress.ip_network(f"{address}/24", strict=False)
+            )
+            return LocalNetwork(interface_name, local_ip, str(network), gateway)
+    raise RuntimeError("No suitable physical LAN default route was found")
+
+
 def get_primary_private_network() -> LocalNetwork:
     if platform.system() != "Windows":
         raise RuntimeError("Automatic discovery currently supports Windows only")
+    settings = get_settings()
+    try:
+        route_result = subprocess.run(
+            ["route.exe", "PRINT", "-4", "0.0.0.0"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+            shell=False,
+            check=False,
+        )
+        if route_result.returncode == 0:
+            return select_windows_route_network(
+                route_result.stdout,
+                psutil.net_if_addrs(),
+                psutil.net_if_stats(),
+                settings.allow_public_lan_discovery,
+            )
+    except (subprocess.TimeoutExpired, OSError, RuntimeError, ValueError):
+        pass
     try:
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _WINDOWS_NETWORK_SCRIPT],
@@ -97,7 +163,7 @@ def get_primary_private_network() -> LocalNetwork:
         raise RuntimeError("Unable to identify the active Windows network adapter")
     payload = select_windows_lan_candidate(json.loads(completed.stdout))
     address = ipaddress.ip_address(payload["IPAddress"])
-    if not discovery_address_allowed(address, get_settings().allow_public_lan_discovery):
+    if not discovery_address_allowed(address, settings.allow_public_lan_discovery):
         raise RuntimeError("Discovery is allowed only on private IPv4 networks")
 
     original = ipaddress.ip_network(f"{address}/{payload['PrefixLength']}", strict=False)
@@ -127,44 +193,6 @@ def read_windows_arp_table() -> dict[str, str]:
     return entries
 
 
-def arp_scan_options(packets_per_second: int) -> dict[str, float | int | bool]:
-    """Return bounded Scapy options without requiring packet-driver setup."""
-    return {
-        "timeout": 2,
-        "retry": 0,
-        "inter": 1 / packets_per_second,
-        "verbose": False,
-    }
-
-
-def active_arp_discovery(network: LocalNetwork, packets_per_second: int | None = None) -> dict[str, str]:
-    """Discover layer-2 neighbors without requiring them to answer ICMP."""
-    rate = packets_per_second or get_settings().discovery_arp_packets_per_second
-    try:
-        from scapy.all import ARP, Ether, srp
-
-        answered, _ = srp(
-            Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=network.network),
-            iface=network.interface_name,
-            # Rate-limit broadcast traffic to avoid a burst across the LAN.
-            **arp_scan_options(rate),
-        )
-    except Exception:
-        # Npcap, permissions, or a driver may be unavailable. ICMP and the
-        # operating-system neighbor cache remain safe fallbacks.
-        return {}
-    discovered: dict[str, str] = {}
-    subnet = ipaddress.ip_network(network.network, strict=True)
-    for _, reply in answered:
-        try:
-            address = ipaddress.ip_address(reply.psrc)
-        except ValueError:
-            continue
-        if address in subnet:
-            discovered[str(address)] = str(reply.hwsrc).upper()
-    return discovered
-
-
 def resolve_hostnames(addresses: list[str]) -> dict[str, str]:
     def resolve(address: str) -> tuple[str, str | None]:
         try:
@@ -188,23 +216,28 @@ def is_generic_ptr_hostname(address: str, hostname: str) -> bool:
 def discover_responsive_hosts(network: LocalNetwork) -> list[tuple[str, str | None]]:
     subnet = ipaddress.ip_network(network.network, strict=True)
     addresses = [str(address) for address in subnet.hosts()]
+    settings = get_settings()
 
     def probe(address: str) -> str | None:
-        return address if check_ip(address, timeout_seconds=0.75).status == "ONLINE" else None
+        return (
+            address
+            if check_ip(address, timeout_seconds=settings.discovery_ping_timeout_seconds).status == "ONLINE"
+            else None
+        )
 
     def ping_sweep() -> list[str]:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=48) as executor:
+        worker_count = min(settings.discovery_ping_workers, len(addresses))
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="aegis-discovery",
+        ) as executor:
             return [address for address in executor.map(probe, addresses) if address is not None]
 
-    # ICMP and the quiet ARP sweep are independent. Running them together keeps
-    # the ARP rate limit intact while avoiding the sum of both scan durations.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        ping_future = executor.submit(ping_sweep)
-        arp_future = executor.submit(active_arp_discovery, network)
-        responsive = ping_future.result()
-        active_arp_entries = arp_future.result()
+    # Probing every local address also refreshes the OS neighbor cache. Reading
+    # that cache captures devices that answer ARP while rejecting ICMP, without
+    # allowing a packet-driver stall to hold the discovery request indefinitely.
+    responsive = ping_sweep()
     arp_entries = read_windows_arp_table()
-    arp_entries.update(active_arp_entries)
     discovered = set(responsive)
     discovered.update(address for address in arp_entries if ipaddress.ip_address(address) in subnet)
     return [(address, arp_entries.get(address)) for address in sorted(discovered, key=ipaddress.ip_address)]
@@ -221,7 +254,11 @@ def discover_and_import_devices(db: Session) -> DiscoveryResult:
     # sweep instead of adding its full timeout to every discovery request.
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         responsive_future = executor.submit(discover_responsive_hosts, network)
-        mdns_future = executor.submit(discover_mdns, network)
+        mdns_future = executor.submit(
+            discover_mdns,
+            network,
+            get_settings().discovery_mdns_timeout_seconds,
+        )
         responsive_by_ip = dict(responsive_future.result())
         mdns = mdns_future.result()
     subnet = ipaddress.ip_network(network.network)
@@ -230,7 +267,14 @@ def discover_and_import_devices(db: Session) -> DiscoveryResult:
             responsive_by_ip.setdefault(address, None)
     responsive = sorted(responsive_by_ip.items(), key=lambda item: ipaddress.ip_address(item[0]))
     existing = {device.ip_address: device for device in db.scalars(select(Device))}
-    hostnames = resolve_hostnames([address for address, _ in responsive])
+    hostname_candidates = [
+        address
+        for address, _ in responsive
+        if address not in existing
+        or existing[address].name == f"Discovered {address}"
+        or is_generic_ptr_hostname(address, existing[address].name)
+    ]
+    hostnames = resolve_hostnames(hostname_candidates)
     for address, details in mdns.items():
         if details.get("hostname"):
             hostnames[address] = details["hostname"]

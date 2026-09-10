@@ -2,11 +2,13 @@ import http.client
 import socket
 import ssl
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from app.models import ServiceCheck, ServiceResult
+from app.config import get_settings
 
 
 @dataclass(frozen=True)
@@ -51,15 +53,31 @@ def probe_service(check: ServiceCheck, timeout_seconds: float = 3.0) -> ServiceP
 
 
 def run_and_store_service_check(check: ServiceCheck, db: Session) -> ServiceResult:
-    probe = probe_service(check)
-    result = ServiceResult(
-        service_check_id=check.id,
-        status=probe.status,
-        response_time_ms=probe.response_time_ms,
-        http_status_code=probe.http_status_code,
-        diagnostic_reason=probe.diagnostic_reason,
-    )
-    db.add(result)
+    return run_and_store_service_checks([check], db)[0]
+
+
+def run_and_store_service_checks(
+    checks: list[ServiceCheck],
+    db: Session,
+) -> list[ServiceResult]:
+    if not checks:
+        return []
+    # Resolve ORM relationships before worker threads perform network I/O.
+    for check in checks:
+        _ = check.device.ip_address
+    worker_count = min(get_settings().monitor_check_workers, len(checks))
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="aegis-service") as executor:
+        probes = list(executor.map(probe_service, checks))
+    results = [
+        ServiceResult(
+            service_check_id=check.id,
+            status=probe.status,
+            response_time_ms=probe.response_time_ms,
+            http_status_code=probe.http_status_code,
+            diagnostic_reason=probe.diagnostic_reason,
+        )
+        for check, probe in zip(checks, probes)
+    ]
+    db.add_all(results)
     db.commit()
-    db.refresh(result)
-    return result
+    return results
