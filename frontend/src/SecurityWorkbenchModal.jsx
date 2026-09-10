@@ -39,9 +39,9 @@ const TOOLS = [
 ];
 
 const PLAYBOOK_PROFILES = [
-  ["FAST", "Fast", "Quick reachability and exposure checks with short time limits."],
-  ["DETAILED", "Detailed", "Broader service detection and supporting network evidence."],
-  ["AGGRESSIVE", "Aggressive", "The fullest bounded assessment with intensive service fingerprinting."],
+  ["FAST", "Fast", "Tests 8 common TCP ports, discovers Nmap's top 1,000 ports, then uses lightweight service detection."],
+  ["DETAILED", "Detailed", "Tests 24 common TCP ports, discovers the top 1,000, then runs -sV --version-light on open ports."],
+  ["AGGRESSIVE", "Aggressive", "Tests 64 common TCP ports, discovers the top 1,000, then runs -sV --version-all on open ports."],
 ];
 const ACTIVE_PLAYBOOK_STATUSES = new Set(["QUEUED", "RUNNING"]);
 const FINISHED_STEP_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
@@ -54,6 +54,21 @@ function upsertPlaybookRun(current, next) {
 
 function playbookStatusLabel(status) {
   return status ? status.replaceAll("_", " ") : "UNKNOWN";
+}
+
+function playbookRunHeading(run, steps) {
+  if (!run) return "Host assessment";
+  const currentStep = steps.find((step) => step.step_key === run.current_step);
+  if (currentStep) return currentStep.name;
+  if (run.current_step) return run.current_step;
+  return {
+    QUEUED: "Waiting for assessment worker",
+    RUNNING: "Preparing next assessment step",
+    COMPLETED: "Assessment complete",
+    PARTIAL: "Assessment completed with step errors",
+    FAILED: "Assessment failed",
+    CANCELLED: "Assessment cancelled",
+  }[run.status] || "Host assessment";
 }
 
 function textToBytes(value) {
@@ -1329,7 +1344,7 @@ function PlaybookTool({ devices }) {
       timerId = window.setTimeout(poll, 2500);
     }
 
-    timerId = window.setTimeout(poll, 2500);
+    void poll();
     return () => {
       disposed = true;
       window.clearTimeout(timerId);
@@ -1373,9 +1388,7 @@ function PlaybookTool({ devices }) {
   const finishedSteps = steps.filter((step) => FINISHED_STEP_STATUSES.has(step.status)).length;
   const progress = steps.length ? Math.round((finishedSteps / steps.length) * 100) : 0;
   const selectedProfile = PLAYBOOK_PROFILES.find(([value]) => value === profile);
-  const currentStepName = steps.find((step) => step.step_key === selectedRun?.current_step)?.name
-    || selectedRun?.current_step
-    || "Host assessment";
+  const runHeading = playbookRunHeading(selectedRun, steps);
   const summary = selectedRun?.summary || {};
   const hasSummary = Object.keys(summary).length > 0;
 
@@ -1476,7 +1489,7 @@ function PlaybookTool({ devices }) {
               <div className="playbook-run__heading">
                 <div>
                   <span>RUN #{selectedRun.id} · {selectedRun.profile} · {selectedRun.target_ip}</span>
-                  <h4 id={`playbook-run-${selectedRun.id}-title`}>{currentStepName}</h4>
+                  <h4 id={`playbook-run-${selectedRun.id}-title`}>{runHeading}</h4>
                   <small>
                     Requested by {selectedRun.requested_by} · {formatDate(selectedRun.started_at || selectedRun.created_at)}
                   </small>

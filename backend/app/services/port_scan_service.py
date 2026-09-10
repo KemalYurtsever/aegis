@@ -32,6 +32,13 @@ COMMON_TCP_PORTS = {
     9200: "Elasticsearch",
 }
 
+NMAP_VERSION_ARGUMENTS = {
+    "FAST": ("--version-intensity", "0"),
+    "FAST_VERSION": ("--version-intensity", "0"),
+    "DETAILED": ("--version-light",),
+    "AGGRESSIVE": ("--version-all",),
+}
+
 
 @dataclass(frozen=True)
 class OpenPort:
@@ -225,19 +232,16 @@ def scan_nmap_service_versions(
         "FAST": {
             "retry": "0",
             "host_timeout": "5s",
-            "version": ["--version-intensity", "0"],
             "process_timeout": 6,
         },
         "DETAILED": {
             "retry": "1",
             "host_timeout": "90s",
-            "version": ["--version-light"],
             "process_timeout": 100,
         },
         "AGGRESSIVE": {
             "retry": "2",
             "host_timeout": "180s",
-            "version": ["--version-all"],
             "process_timeout": 200,
         },
     }
@@ -246,7 +250,8 @@ def scan_nmap_service_versions(
         raise ValueError("Unknown service-detection profile")
     command = [
         *prefix, "-Pn", "-sT", "-n", "-T4", "--max-retries", selected["retry"],
-        "--host-timeout", selected["host_timeout"], "-sV", *selected["version"], "--open",
+        "--host-timeout", selected["host_timeout"], "-sV",
+        *NMAP_VERSION_ARGUMENTS[normalized_profile], "--open",
         "-p", ",".join(map(str, normalized_ports)), "-oX", "-",
     ]
     if ipaddress.ip_address(target).version == 6:

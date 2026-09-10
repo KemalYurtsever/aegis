@@ -24,7 +24,11 @@ from app.schemas import (
     LabCommandRead,
 )
 from app.services.discovery_service import discover_responsive_hosts, get_primary_private_network
-from app.services.port_scan_service import nmap_command_prefix, scan_nmap_top_tcp_ports
+from app.services.port_scan_service import (
+    NMAP_VERSION_ARGUMENTS,
+    nmap_command_prefix,
+    scan_nmap_top_tcp_ports,
+)
 
 
 _WIRELESS_NAME = re.compile(r"wi[ -]?fi|wlan|wireless|802\.11", re.I)
@@ -159,12 +163,8 @@ def nmap_tcp_scan(
         scanned_port_count = len(ports)
     if ipaddress.ip_address(address).version == 6:
         command.append("-6")
-    if profile == "FAST_VERSION":
-        command.extend(["-sV", "--version-intensity", "0"])
-    elif profile == "DETAILED":
-        command.extend(["-sV", "--version-light"])
-    elif profile == "AGGRESSIVE":
-        command.extend(["-sV", "--version-all"])
+    if profile in NMAP_VERSION_ARGUMENTS:
+        command.extend(["-sV", *NMAP_VERSION_ARGUMENTS[profile]])
     command.append(address)
     return _run_lab_tool(
         "nmap", command, target=address, grep=grep, timeout=timeout,

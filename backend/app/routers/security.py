@@ -27,7 +27,6 @@ from app.schemas import (
 )
 from app.services.attack_path_service import build_attack_paths
 from app.services.security_playbook_service import (
-    ACTIVE_RUN_STATUSES,
     TERMINAL_RUN_STATUSES,
     build_playbook_run,
     load_playbook_run,
@@ -57,14 +56,6 @@ def create_playbook_run(
     db: Session = Depends(get_db),
 ) -> SecurityPlaybookRun:
     device = get_device_or_404(payload.device_id, db)
-    active_run = db.scalar(
-        select(SecurityPlaybookRun.id).where(
-            SecurityPlaybookRun.device_id == device.id,
-            SecurityPlaybookRun.status.in_(ACTIVE_RUN_STATUSES),
-        ).limit(1)
-    )
-    if active_run is not None:
-        raise HTTPException(status_code=409, detail="This target already has an active security playbook")
     user = getattr(request.state, "user", None)
     run = build_playbook_run(device, payload.profile, getattr(user, "username", "administrator"))
     db.add(run)
