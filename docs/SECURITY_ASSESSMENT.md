@@ -13,7 +13,7 @@ Scope: repository-wide static review of the Aegis application and its local, hyb
 | Medium | SMTP STARTTLS relied on an implicit TLS context. | Fixed. STARTTLS now receives a default certificate-verifying SSL context explicitly. |
 | Low | Common-port scanning and fingerprinting were writable operator actions. | Fixed. Discovery import, service-probe creation and execution, common-port scans, fingerprinting, SNMP, vulnerability assessment, packet capture, remote diagnostics, and the Security Workbench are administrator-only. |
 | Medium | An operator could rotate an agent enrollment token and use the agent diagnostic channel to read returned diagnostic evidence. | Accepted for this single-user deployment. Do not create operator accounts. If roles are introduced later, split enrollment management from diagnostic-result access before adding users. |
-| Medium | Hybrid agents can send bearer credentials over plain HTTP on the LAN. | Accepted for the isolated learning LAN. Add HTTPS or a private overlay before placing agents on a shared or untrusted network. |
+| Medium | Hybrid agent ingress was reachable over the LAN and sent bearer credentials over plain HTTP. | Fixed for the single-user deployment. Agent ingress now binds to loopback, the launcher rejects non-loopback Aegis listeners, and the LAN firewall setup helper was removed. |
 | Medium | A privileged scheduled-task update can inherit files from a pre-existing writable agent installation tree. | Accepted for a machine controlled by one administrator. A future multi-user installer should create and verify an administrator-owned directory before registering the SYSTEM task. |
 
 The automated source scan had partial coverage, so this is evidence from the reviewed paths rather than a claim that every possible vulnerability is absent.
@@ -37,7 +37,7 @@ The backend container installs `nmap`, `arp-scan`, `curl`, `dnsutils`, `iproute2
 ## Infrastructure observations
 
 - Docker publishes the API, UI, Prometheus, and Grafana only on loopback. Nginx proxies `/api/` to the backend, and production frontend builds use that same-origin route.
-- Hybrid agent ingress listens on the LAN by design. The supplied firewall helper is therefore part of the trust boundary and should continue to restrict the port to the active physical subnet.
+- Hybrid mode binds the interface, API, agent ingress, Grafana, and Prometheus to loopback. The launcher verifies each listener and fails if an Aegis service is reachable through a non-loopback address.
 - SQLite and the in-process schedulers fit the single-instance learning-lab deployment. Multiple backend replicas would require shared storage and scheduler coordination.
 - Nmap can assess any valid IP already registered in inventory. The scan policy no longer rejects public, documentation, loopback, or non-RFC1918 addresses solely by address class; the administrator remains responsible for selecting systems they control.
 - Device inventory is keyed by IP address. To avoid mixing unrelated devices that reuse common private addresses, discovery remembers the last scanned subnet and offers an administrator-only full device reset when the subnet changes. The reset requires the exact phrase `CLEAR ALL DEVICES` and cascades through monitoring history, alerts, scans, notes, agent enrollments, topology links, and attachment records; stored attachment blobs are also removed.

@@ -140,6 +140,8 @@ def _error_text(exc: Exception) -> str:
 
 
 def _result_error(value: object) -> str | None:
+    if isinstance(value, LabCommandRead) and value.exit_code == 124:
+        return "Command exceeded its time limit"
     if isinstance(value, LabCommandRead) and value.exit_code != 0:
         return f"Command exited with status {value.exit_code}"
     if isinstance(value, TraceRouteRead) and not value.completed:
@@ -480,6 +482,11 @@ class SecurityPlaybookRunner:
                         "cve_id": item.cve_id,
                         "cvss_score": item.cvss_score,
                         "match_confidence": item.match_confidence,
+                        "known_exploited": item.known_exploited,
+                        "epss_score": item.epss_score,
+                        "validation_tool": item.validation_tool,
+                        "validation_check_id": item.validation_check_id,
+                        "validation_target": item.validation_target,
                     }
                     for item in scan.findings[:50]
                 ],

@@ -9,6 +9,11 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    environment:
+      HOME: /
+      XDG_CONFIG_HOME: /tmp/xdg/config
+      XDG_STATE_HOME: /tmp/xdg/state
+      XDG_CACHE_HOME: /tmp/xdg/cache
     cap_drop:
       - ALL
     cap_add:

@@ -5,6 +5,7 @@ from app.models import AutomationEvent, VulnerabilityScan
 from app.services.cve_service import CveLookupResult, CveMatch
 from app.services.exploit_intelligence_service import ExploitIntelligence, ExploitIntelligenceResult
 from app.services.nse_verification_service import NseObservation, NseVerificationResult
+from app.services.nuclei_validation_service import NucleiObservation, NucleiValidationResult
 from app.services.port_scan_service import DetectedService, OpenPort, PortScanResult
 from app.services.vulnerability_service import TlsPosture
 
@@ -44,6 +45,10 @@ def isolate_service_detection(monkeypatch):
         "app.services.vulnerability_service.lookup_exploit_intelligence",
         lambda *_args, **_kwargs: ExploitIntelligenceResult({}, ()),
     )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.run_nuclei_validation",
+        lambda *_args: NucleiValidationResult((), (), 0.0, True),
+    )
 
 
 def test_attack_surface_records_curated_nse_configuration_evidence(client, monkeypatch):
@@ -82,6 +87,54 @@ def test_attack_surface_records_curated_nse_configuration_evidence(client, monke
         "SMB message signing is not required",
     }
     assert all(item["match_confidence"] == "HIGH" for item in validated)
+
+
+def test_attack_surface_records_bounded_nuclei_template_evidence(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post("/api/devices", json=DEVICE, headers=headers).json()
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.scan_nmap_top_tcp_ports",
+        lambda _ip: scan_result(OpenPort(8080, "http", 1.0)),
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service._http_headers",
+        lambda *_args: {},
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.run_nuclei_validation",
+        lambda *_args: NucleiValidationResult(
+            targets=("http://198.18.1.50:8080",),
+            observations=(NucleiObservation(
+                template_id="exposed-environment-file",
+                name="Exposed environment file",
+                severity="HIGH",
+                description="A public environment file was detected.",
+                remediation="Remove public access to the environment file.",
+                matched_at="http://198.18.1.50:8080/.env",
+                matcher_name="dotenv",
+                reference="https://example.test/security/exposed-files",
+                cve_id=None,
+                port=8080,
+            ),),
+            duration_ms=15.0,
+            completed=True,
+        ),
+    )
+
+    response = client.post(
+        f"/api/devices/{device['id']}/vulnerability-scans", headers=headers
+    )
+
+    assert response.status_code == 201
+    findings = response.json()["findings"]
+    assert any(item["category"] == "NUCLEI_CHECK" for item in findings)
+    finding = next(item for item in findings if item["category"] == "NUCLEI_VALIDATION")
+    assert finding["severity"] == "HIGH"
+    assert finding["validation_tool"] == "Nuclei"
+    assert finding["validation_check_id"] == "exposed-environment-file"
+    assert finding["validation_target"] == "http://198.18.1.50:8080/.env"
+    assert finding["validation_reference"] == "https://example.test/security/exposed-files"
+    assert finding["match_confidence"] == "HIGH"
 
 
 def admin_headers(client):
