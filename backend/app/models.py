@@ -282,6 +282,11 @@ class VulnerabilityFinding(Base):
     cvss_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     cve_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
     match_confidence: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    known_exploited: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    kev_date_added: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    kev_required_action: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    epss_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    epss_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
     service_product: Mapped[str | None] = mapped_column(String(200), nullable=True)
     service_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     service_cpe: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -290,6 +295,13 @@ class VulnerabilityFinding(Base):
 class CveLookupCache(Base):
     __tablename__ = "cve_lookup_cache"
     query_key: Mapped[str] = mapped_column(String(500), primary_key=True)
+    response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
+class ThreatIntelligenceCache(Base):
+    __tablename__ = "threat_intelligence_cache"
+    cache_key: Mapped[str] = mapped_column(String(100), primary_key=True)
     response_json: Mapped[str] = mapped_column(Text, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
 

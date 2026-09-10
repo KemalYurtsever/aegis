@@ -2554,7 +2554,7 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
         )}
       </div>
       {error && <div className="form-error">{error}</div>}
-      <p className="panel-help">The fast assessment scans the top 1,000 TCP ports first, then gives low-intensity version detection six seconds only when ports are open. It searches NVD when product and version evidence is available. Fast detection may miss quiet services; CVE matches still require verification.</p>
+      <p className="panel-help">The fast assessment scans the top 1,000 TCP ports first, then gives low-intensity version detection six seconds only when ports are open. It searches NVD when product and version evidence is available, then adds CISA Known Exploited Vulnerabilities and FIRST EPSS priority data. Fast detection may miss quiet services; CVE matches still require verification.</p>
       {!latest ? (
         <div className="empty-state empty-state--compact">
           No assessments recorded. The bounded assessment checks registered
@@ -2593,6 +2593,19 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
                   {finding.cve_id && (
                     <div className="cve-finding-meta">
                       {finding.cvss_score != null && <span>CVSS {finding.cvss_score}</span>}
+                      {finding.known_exploited && (
+                        <span className="cve-priority-badge cve-priority-badge--kev">
+                          CISA KEV{finding.kev_date_added ? ` · ${finding.kev_date_added}` : ""}
+                        </span>
+                      )}
+                      {finding.epss_score != null && (
+                        <span
+                          className={finding.epss_score >= 0.1 ? "cve-priority-badge cve-priority-badge--epss-high" : ""}
+                          title={finding.epss_percentile != null ? `EPSS percentile ${(finding.epss_percentile * 100).toFixed(1)}%` : undefined}
+                        >
+                          EPSS {(finding.epss_score * 100).toFixed(1)}%
+                        </span>
+                      )}
                       {finding.match_confidence && <span>{finding.match_confidence} confidence</span>}
                       {finding.service_product && (
                         <span>
@@ -2608,6 +2621,9 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
                     </div>
                   )}
                   {finding.service_cpe && <code className="cve-finding-cpe">{finding.service_cpe}</code>}
+                  {finding.known_exploited && finding.kev_required_action && (
+                    <small className="kev-required-action">CISA action: {finding.kev_required_action}</small>
+                  )}
                   <small>{finding.recommendation}</small>
                 </div>
               </article>
