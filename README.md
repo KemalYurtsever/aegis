@@ -54,7 +54,7 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 | Service checks | Monitors TCP ports and HTTP or HTTPS endpoints on registered devices. HTTP checks use a validated path and record response time and status code. |
 | Service history | Shows recent results, uptime, successful and failed totals, average response time, and a dependency-free response-time chart. |
 | TCP port scan | Scans Nmap's 1,000 most common TCP ports on a registered device, using Nmap when available and a bounded host-side socket scanner otherwise, then can turn an open port into a scheduled service check. |
-| Attack-surface CVE correlation | Runs a fast top-1,000 TCP pass, then performs Fast, Detailed, or Aggressive service detection only on open ports. It searches the full NVD CVE corpus for supported fingerprints, enriches matches with CISA KEV and FIRST EPSS priority data, caches external results for 24 hours, and marks matches for applicability review. |
+| Attack-surface CVE correlation | Runs a fast top-1,000 TCP pass, then performs Fast, Detailed, or Aggressive service detection only on open ports. It runs signed, bounded Nuclei exposure checks against discovered web endpoints, searches the full NVD CVE corpus for supported fingerprints, enriches matches with CISA KEV and FIRST EPSS priority data, caches external results for 24 hours, and marks matches for applicability review. |
 | Device fingerprinting | Uses bounded network evidence such as open services, manufacturer information, and mDNS data to suggest a device classification. |
 | Alert rules | Creates per-device rules for consecutive failures and high latency. Alerts persist, can be acknowledged, and resolve automatically after recovery. |
 | Alert history | Provides a searchable operational record of active, acknowledged, and resolved alert events. |
@@ -79,7 +79,7 @@ Anomaly results are operational indicators, not diagnoses. Aegis performs this a
 | Local network discovery | Detects the active physical Windows adapter, presents its network for confirmation, and probes at most one local `/24`. Existing addresses are skipped and available MAC addresses are imported. |
 | Network change reset | Remembers the last discovered subnet in the browser. When the connected subnet changes, the administrator is offered an exact-phrase reset before discovery so identical private IP ranges from different labs are not mixed. The same reset is available under **More actions**. |
 | Network topology | Infers logical placement from VLAN and subnet data and supports confirmed `UPLINK`, `CONNECTS TO`, `ROUTES TO`, and `MANAGES` relationships. |
-| Attack-surface assessment | Checks the ranked top 1,000 TCP ports, identifies exposed management, cleartext, database, and infrastructure services, runs time-bounded version detection, inspects HTTP security headers and TLS posture, correlates supported fingerprints with NVD CVEs, and prioritizes candidates with CISA KEV and FIRST EPSS evidence. |
+| Attack-surface assessment | Checks the ranked top 1,000 TCP ports, identifies exposed management, cleartext, database, and infrastructure services, runs time-bounded version detection, inspects HTTP security headers and TLS posture, runs signed Nuclei exposure, misconfiguration, and TLS templates, correlates supported fingerprints with NVD CVEs, and prioritizes candidates with CISA KEV and FIRST EPSS evidence. |
 | Assessment comparison | Compares the two latest assessments, calculates a capped 0–100 exposure score, and separates new, persistent, and resolved findings. Informational evidence does not increase the score. |
 | Passive attack paths | Correlates stored assessment results with groups, subnets, criticality, and remote-access services to prioritize possible paths between registered assets. It sends no additional traffic. |
 | Controlled packet capture | Captures packet metadata for 1–30 seconds and 1–1000 packets. It stores timestamps, addresses, protocol, ports, and length—never packet payloads or PCAP files. |
@@ -104,7 +104,7 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
 | DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
 | Network CLI | Runs administrator-only Nmap TCP scans against registered devices with Fast, Fast version, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) profiles. It also provides local ARP discovery, the host neighbor table, HTTP(S) `curl`, and DNS queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, and capped output without invoking a shell. |
-| PowerShell TCP test | Tests up to 128 TCP ports on one registered device with PowerShell 7 `Test-Connection -TcpPort`; Windows PowerShell falls back to `Test-NetConnection -Port`. Targets and ports are passed as validated data rather than command text. |
+| PowerShell TCP test | Tests up to 128 TCP ports concurrently on one registered device. PowerShell 7 uses `Test-Connection -TcpPort`; Windows PowerShell uses bounded .NET TCP socket probes. Targets and ports are passed as validated data rather than command text. |
 | Assessment playbooks | Queues a persistent four-step assessment for one registered target: PowerShell TCP reachability, traceroute, Nmap top-1,000 attack-surface and CVE correlation, then DNS identity. Fast, Detailed, and Aggressive profiles control probe depth. The workbench shows durable per-step progress and output, and cancellation takes effect after the active command finishes. |
 
 Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, payload capture, exploit execution, brute force, or arbitrary remote command execution.
@@ -273,30 +273,24 @@ Do not add `-v` unless you intentionally want to remove Aegis, Prometheus, and G
 |---|---|---|
 | Aegis interface | `http://127.0.0.1:5173` | `http://127.0.0.1:5173` |
 | API documentation | `http://127.0.0.1:8001/docs` | `http://127.0.0.1:8000/docs` |
-| Agent ingress | `http://<host-LAN-IP>:8002` | Not included in the standard single-process development command |
+| Agent ingress | `http://127.0.0.1:8002` | Not included in the standard single-process development command |
 | Grafana | `http://127.0.0.1:3000` | `http://127.0.0.1:3000` with Docker |
 | Prometheus | `http://127.0.0.1:9090` | `http://127.0.0.1:9090` with Docker |
 
 On first sign-in, follow the setup screen to create the initial administrator.
 
-## Remote agent deployment
+## Local agent deployment
 
-Enroll a remote device from its Aegis device page and copy the one-time token. In hybrid mode, run the firewall helper once as Administrator on the Aegis host; it limits inbound agent access to the active physical subnet:
-
-```powershell
-.\configure-agent-access.ps1
-```
-
-On a remote Windows host, copy the `agent` directory and run:
+Hybrid mode binds the interface, API, agent ingress, Grafana, and Prometheus to loopback. Other devices on the Wi-Fi or LAN cannot connect to them. Enroll the local device from its Aegis device page, copy the one-time token, then run the installer on the same Windows host:
 
 ```powershell
-.\install-windows.ps1 -ServerUrl "http://AEGIS-LAN-IP:8002"
+.\install-windows.ps1 -ServerUrl "http://127.0.0.1:8002"
 ```
 
 The installer prompts securely for the token when it is omitted, stores private configuration under `%ProgramData%\AEGIS Agent`, submits a verification sample, and registers an auto-restarting startup task. Enable the fixed diagnostic job set only when it is required:
 
 ```powershell
-.\install-windows.ps1 -ServerUrl "http://AEGIS-LAN-IP:8002" -EnableDiagnostics
+.\install-windows.ps1 -ServerUrl "http://127.0.0.1:8002" -EnableDiagnostics
 ```
 
 Test connectivity and enrollment from the remote host:
@@ -312,13 +306,13 @@ For manual Windows or Linux execution:
 cd agent
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-$env:AEGIS_SERVER_URL = "http://AEGIS-LAN-IP:8002"
+$env:AEGIS_SERVER_URL = "http://127.0.0.1:8002"
 $env:AEGIS_AGENT_TOKEN = "PASTE_ONE_TIME_TOKEN"
 $env:AEGIS_AGENT_DIAGNOSTICS_ENABLED = "false"
 .\.venv\Scripts\python.exe aegis_agent.py
 ```
 
-Do not expose agent ingress directly to the public Internet. Use authenticated HTTPS and network-layer access controls for production or routed deployments. See [Remote diagnostics](docs/REMOTE_DIAGNOSTICS.md) for job types and operating boundaries.
+Remote agent connections are intentionally unavailable in this single-user deployment. If an older checkout created the `AEGIS Agent Ingress` Windows Firewall rule, open PowerShell as Administrator and run `.\remove-agent-access.ps1` once. See [local diagnostics](docs/REMOTE_DIAGNOSTICS.md) for job types and operating boundaries.
 
 ## Configuration
 

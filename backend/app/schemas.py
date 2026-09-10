@@ -873,6 +873,10 @@ class VulnerabilityFindingRead(BaseModel):
     kev_required_action: str | None
     epss_score: float | None
     epss_percentile: float | None
+    validation_tool: str | None
+    validation_check_id: str | None
+    validation_target: str | None
+    validation_reference: str | None
     service_product: str | None
     service_version: str | None
     service_cpe: str | None

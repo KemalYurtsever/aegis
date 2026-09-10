@@ -558,7 +558,7 @@ def test_runner_marks_unsuccessful_commands_failed_and_keeps_their_output(
         tcp_step, trace_step = stored.steps[:2]
         assert tcp_step.status == "FAILED"
         assert "timed out" in tcp_step.output
-        assert tcp_step.error == "Command exited with status 124"
+        assert tcp_step.error == "Command exceeded its time limit"
         assert trace_step.status == "FAILED"
         assert "Completed: no" in trace_step.output
         assert "did not complete" in trace_step.error.lower()

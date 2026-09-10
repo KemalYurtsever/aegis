@@ -154,6 +154,32 @@ def test_test_connection_uses_validated_environment_values(monkeypatch):
     }
 
 
+def test_windows_powershell_tcp_fallback_is_parallel_and_deadline_bounded(monkeypatch):
+    captured = {}
+
+    def fake_which(name):
+        return "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" if name == "powershell.exe" else None
+
+    def fake_run(tool, command, **kwargs):
+        captured.update(tool=tool, command=command, kwargs=kwargs)
+        return LabCommandRead(
+            tool="test-connection", target="192.168.5.1", exit_code=0,
+            output="80 False", duration_ms=1.0, scanned_port_count=3,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service.shutil.which", fake_which)
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    run_test_connection_ports("192.168.5.1", [22, 80, 443], 1)
+
+    script = captured["command"][4]
+    assert "BeginConnect" in script
+    assert "Test-NetConnection" not in script
+    assert "$deadline=" in script
+    assert captured["kwargs"]["timeout"] == 13
+    assert captured["kwargs"]["scanned_port_count"] == 3
+
+
 def test_top_1000_scan_uses_ranked_socket_fallback_without_nmap(monkeypatch):
     monkeypatch.setattr(
         "app.services.security_toolbox_service.nmap_command_prefix",

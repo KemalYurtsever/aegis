@@ -2554,7 +2554,7 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
         )}
       </div>
       {error && <div className="form-error">{error}</div>}
-      <p className="panel-help">The fast assessment scans the top 1,000 TCP ports first, then gives low-intensity version detection six seconds only when ports are open. It searches NVD when product and version evidence is available, then adds CISA Known Exploited Vulnerabilities and FIRST EPSS priority data. Fast detection may miss quiet services; CVE matches still require verification.</p>
+      <p className="panel-help">The fast assessment scans the top 1,000 TCP ports first, then gives low-intensity version detection six seconds only when ports are open. It runs signed, bounded Nuclei exposure checks on discovered web endpoints, searches NVD when product and version evidence is available, then adds CISA KEV and FIRST EPSS priority data. Fast detection may miss quiet services; every match still requires review.</p>
       {!latest ? (
         <div className="empty-state empty-state--compact">
           No assessments recorded. The bounded assessment checks registered
@@ -2566,6 +2566,9 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
             <strong>{latest.findings.length} findings</strong>
             <span>
               {latest.findings.filter((finding) => finding.cve_id).length} CVE candidates
+            </span>
+            <span>
+              {latest.findings.filter((finding) => finding.category === "NUCLEI_VALIDATION").length} template matches
             </span>
             <span>Risk {comparison?.risk_score ?? 0}/100</span>
             <span>
@@ -2616,6 +2619,22 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
                       {finding.cve_url && (
                         <a href={finding.cve_url} target="_blank" rel="noreferrer">
                           Open NVD record
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  {finding.validation_tool && (
+                    <div className="validation-finding-meta">
+                      <span>{finding.validation_tool}</span>
+                      {finding.validation_check_id && <code>{finding.validation_check_id}</code>}
+                      {finding.validation_target && (
+                        <a href={finding.validation_target} target="_blank" rel="noreferrer">
+                          Matched endpoint
+                        </a>
+                      )}
+                      {finding.validation_reference && (
+                        <a href={finding.validation_reference} target="_blank" rel="noreferrer">
+                          Template reference
                         </a>
                       )}
                     </div>

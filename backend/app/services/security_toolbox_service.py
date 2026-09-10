@@ -211,13 +211,29 @@ def test_connection_ports(
             raise RuntimeError("PowerShell Test-Connection is not available on the AEGIS host")
         script = (
             "$targetAddress=$env:AEGIS_TCP_TEST_TARGET;"
-            "$rows=foreach($port in ($env:AEGIS_TCP_TEST_PORTS -split ',')){"
-            "$result=Test-NetConnection -ComputerName $targetAddress -Port ([int]$port) -InformationLevel Detailed -WarningAction SilentlyContinue;"
-            "[pscustomobject]@{Target=$targetAddress;Port=[int]$port;Open=[bool]$result.TcpTestSucceeded;LatencyMs=$null;Status=if($result.TcpTestSucceeded){'Success'}else{'Failed'}}};"
-            "$rows | Format-Table -AutoSize"
+            "$timeoutMs=1000*[int]$env:AEGIS_TCP_TEST_TIMEOUT;"
+            "$probes=foreach($portText in ($env:AEGIS_TCP_TEST_PORTS -split ',')){"
+            "$port=[int]$portText;"
+            "$client=New-Object System.Net.Sockets.TcpClient;"
+            "$timer=[Diagnostics.Stopwatch]::StartNew();"
+            "try{$async=$client.BeginConnect($targetAddress,$port,$null,$null);"
+            "[pscustomobject]@{Port=$port;Client=$client;Async=$async;Timer=$timer;StartError=$null}}"
+            "catch{[pscustomobject]@{Port=$port;Client=$client;Async=$null;Timer=$timer;StartError=$_.Exception.Message}}};"
+            "$deadline=[DateTime]::UtcNow.AddMilliseconds($timeoutMs);"
+            "$rows=foreach($probe in $probes){"
+            "$open=$false;$status='Timeout';"
+            "try{if($probe.StartError){$status='Failed'}else{"
+            "$remaining=[Math]::Max(0,[int]($deadline-[DateTime]::UtcNow).TotalMilliseconds);"
+            "if($probe.Async.AsyncWaitHandle.WaitOne($remaining)){"
+            "$probe.Client.EndConnect($probe.Async);$open=$probe.Client.Connected;"
+            "$status=if($open){'Success'}else{'Failed'}}}}"
+            "catch{$status='Failed'}"
+            "finally{if($probe.Async){$probe.Async.AsyncWaitHandle.Close()};$probe.Client.Close()};"
+            "[pscustomobject]@{Target=$targetAddress;Port=$probe.Port;Open=$open;LatencyMs=[Math]::Round($probe.Timer.Elapsed.TotalMilliseconds,2);Status=$status}};"
+            "$rows | Sort-Object Port | Format-Table -AutoSize"
         )
         command = [powershell, "-NoProfile", "-NonInteractive", "-Command", script]
-        process_timeout = min(180, len(normalized_ports) * timeout_seconds + 15)
+        process_timeout = timeout_seconds + 12
 
     return _run_lab_tool(
         "test-connection",

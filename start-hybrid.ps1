@@ -51,6 +51,18 @@ function Assert-PortAvailable {
     throw "$Service cannot start because 127.0.0.1:$Port is already in use by $owner. Stop that workload or change its published port, then run start-hybrid.ps1 again."
 }
 
+function Assert-LoopbackListener {
+    param([int]$Port, [string]$Service)
+
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) { throw "$Service is not listening on port $Port." }
+    $nonLoopback = @($listeners | Where-Object { $_.LocalAddress -notin "127.0.0.1", "::1" })
+    if ($nonLoopback.Count -gt 0) {
+        $addresses = $nonLoopback | Select-Object -ExpandProperty LocalAddress -Unique
+        throw "$Service is exposed on non-loopback address(es): $($addresses -join ', '). Stop it before using Aegis on an untrusted network."
+    }
+}
+
 $dockerAvailable = $false
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     $previousErrorPreference = $ErrorActionPreference
@@ -94,7 +106,7 @@ if (-not (Get-NetTCPConnection -LocalPort $backendPort -State Listen -ErrorActio
     Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "$backendPort") -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory "backend.out.log") -RedirectStandardError (Join-Path $logDirectory "backend.err.log")
 }
 if (-not (Get-NetTCPConnection -LocalPort $agentPort -State Listen -ErrorAction SilentlyContinue)) {
-    Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "app.agent_main:app", "--host", "0.0.0.0", "--port", "$agentPort") -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory "agent-ingress.out.log") -RedirectStandardError (Join-Path $logDirectory "agent-ingress.err.log")
+    Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "app.agent_main:app", "--host", "127.0.0.1", "--port", "$agentPort") -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory "agent-ingress.out.log") -RedirectStandardError (Join-Path $logDirectory "agent-ingress.err.log")
 }
 if (-not (Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue)) {
     Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1") -WorkingDirectory $frontend -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logDirectory "frontend.out.log") -RedirectStandardError (Join-Path $logDirectory "frontend.err.log")
@@ -103,17 +115,22 @@ if (-not (Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction Silent
 Wait-HttpEndpoint -Name "AEGIS frontend" -Url "http://127.0.0.1:5173/"
 Wait-HttpEndpoint -Name "AEGIS API" -Url "http://127.0.0.1:$backendPort/api/health"
 Wait-HttpEndpoint -Name "AEGIS agent ingress" -Url "http://127.0.0.1:$agentPort/api/agent/health"
+Assert-LoopbackListener -Port 5173 -Service "AEGIS frontend"
+Assert-LoopbackListener -Port $backendPort -Service "AEGIS API"
+Assert-LoopbackListener -Port $agentPort -Service "AEGIS agent ingress"
 if ($dockerAvailable) {
     $toolboxRunning = docker inspect -f "{{.State.Running}}" $networkToolbox 2>$null
     if ($LASTEXITCODE -ne 0 -or $toolboxRunning -ne "true") { throw "The AEGIS network toolbox container is not running." }
     Wait-HttpEndpoint -Name "Grafana" -Url "http://127.0.0.1:3000/api/health"
     Wait-HttpEndpoint -Name "Prometheus" -Url "http://127.0.0.1:9090/-/ready"
+    Assert-LoopbackListener -Port 3000 -Service "Grafana"
+    Assert-LoopbackListener -Port 9090 -Service "Prometheus"
 }
 
 Write-Host "Hybrid AEGIS started:"
 Write-Host "  AEGIS:      http://127.0.0.1:5173"
 Write-Host "  API:        http://127.0.0.1:$backendPort/docs"
-Write-Host "  Agents:     http://<this-PC-LAN-IP>:$agentPort/api/agent/health"
+Write-Host "  Agents:     http://127.0.0.1:$agentPort/api/agent/health"
 if ($dockerAvailable) {
     Write-Host "  Net tools:  Docker container $networkToolbox"
     Write-Host "  Grafana:    http://127.0.0.1:3000"
@@ -125,6 +142,3 @@ if ($dockerAvailable) {
 }
 Write-Host "  Logs:       $logDirectory"
 Write-Host "All AEGIS services passed readiness checks."
-if (-not (Get-NetFirewallRule -DisplayName "AEGIS Agent Ingress" -ErrorAction SilentlyContinue)) {
-    Write-Warning "Agent firewall access is not configured. Run .\configure-agent-access.ps1 once as Administrator."
-}

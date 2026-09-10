@@ -1204,8 +1204,8 @@ function TestConnectionPortTool({ devices }) {
     <section className="workbench-tool lab-cli-tool">
       <header>
         <p className="eyebrow">PowerShell connectivity</p>
-        <h3>Test-Connection TCP port scan</h3>
-        <span>Test selected TCP ports on one registered device with PowerShell Test-Connection. Windows PowerShell hosts fall back to Test-NetConnection.</span>
+        <h3>PowerShell TCP port scan</h3>
+        <span>Test selected TCP ports concurrently. PowerShell 7 uses Test-Connection; Windows PowerShell uses bounded .NET TCP probes.</span>
       </header>
       <form className="lab-cli-form" onSubmit={run}>
         <label>Registered target
@@ -1226,7 +1226,7 @@ function TestConnectionPortTool({ devices }) {
           <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="True, False, 443..." />
         </label>
         <button className="button button--primary" disabled={busy || !deviceId}>
-          {busy ? "Testing ports…" : "Run Test-Connection"}
+          {busy ? "Testing ports…" : "Run TCP test"}
         </button>
       </form>
       {error && <div className="form-error">{error}</div>}
