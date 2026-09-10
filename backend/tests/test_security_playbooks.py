@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 
+import pytest
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
+
+from app.database import create_database_engine, migrate_security_playbook_columns
 from app.models import Device, SecurityPlaybookRun, VulnerabilityScan, utc_now
+from app.schemas import DnsQueryRead, LabCommandRead, TraceRouteRead
 from app.services.security_playbook_service import (
     SecurityPlaybookRunner,
     build_playbook_run,
@@ -483,3 +490,224 @@ def test_runner_recovers_interrupted_runs_without_starting_background_work(
             "failed_steps": 1,
             "cancelled_steps": 2,
         }
+
+
+def test_runner_marks_unsuccessful_commands_failed_and_keeps_their_output(
+    client, admin_headers, monkeypatch
+):
+    device_data = create_device(client, admin_headers)
+    session_factory = client.app.state.session_factory
+    with session_factory() as db:
+        device = db.get(Device, device_data["id"])
+        run = build_playbook_run(device, "FAST", "test-admin")
+        db.add(run)
+        db.commit()
+        run_id = run.id
+
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.test_connection_ports",
+        lambda *_args: LabCommandRead(
+            tool="test-connection",
+            target=device_data["ip_address"],
+            exit_code=124,
+            output="PowerShell command timed out",
+            duration_ms=1000,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.trace_registered_device",
+        lambda _device: TraceRouteRead(
+            device_id=device_data["id"],
+            device_name=device_data["name"],
+            target=device_data["ip_address"],
+            completed=False,
+            hops=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.query_dns",
+        lambda query: DnsQueryRead(
+            query=query,
+            canonical_name=None,
+            addresses=[query],
+            reverse_name=None,
+        ),
+    )
+    runner = SecurityPlaybookRunner(session_factory)
+    monkeypatch.setattr(
+        runner,
+        "_run_attack_surface",
+        lambda _target: {"scan_id": 7, "finding_count": 0, "cve_candidates": 0},
+    )
+    try:
+        runner._execute_run(run_id)
+    finally:
+        runner.shutdown()
+
+    with session_factory() as db:
+        stored = load_playbook_run(run_id, db)
+        assert stored is not None
+        assert stored.status == "PARTIAL"
+        tcp_step, trace_step = stored.steps[:2]
+        assert tcp_step.status == "FAILED"
+        assert "timed out" in tcp_step.output
+        assert tcp_step.error == "Command exited with status 124"
+        assert trace_step.status == "FAILED"
+        assert '"completed": false' in trace_step.output
+        assert "did not complete" in trace_step.error.lower()
+
+
+def test_only_one_active_playbook_can_exist_per_device(client, admin_headers):
+    device_data = create_device(client, admin_headers)
+    session_factory = client.app.state.session_factory
+    with session_factory() as db:
+        device = db.get(Device, device_data["id"])
+        db.add(build_playbook_run(device, "FAST", "test-admin"))
+        db.commit()
+        db.add(build_playbook_run(device, "DETAILED", "test-admin"))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+
+class DeferredExecutor:
+    def __init__(self):
+        self.jobs = []
+        self.submitted_ids = []
+
+    def submit(self, function, run_id):
+        future = Future()
+        self.jobs.append((future, function, run_id))
+        self.submitted_ids.append(run_id)
+        return future
+
+    def run_next(self):
+        future, function, run_id = self.jobs.pop(0)
+        assert future.set_running_or_notify_cancel()
+        try:
+            result = function(run_id)
+        except Exception as exc:
+            future.set_exception(exc)
+        else:
+            future.set_result(result)
+
+    def shutdown(self, *, wait=True, cancel_futures=False):
+        if cancel_futures:
+            for future, _function, _run_id in self.jobs:
+                future.cancel()
+
+
+def test_queue_pump_starts_the_next_persisted_run_when_capacity_frees(
+    client, admin_headers, monkeypatch
+):
+    first = create_device(client, admin_headers)
+    second = create_device(
+        client,
+        admin_headers,
+        name="Second playbook target",
+        ip_address="198.18.77.26",
+    )
+    session_factory = client.app.state.session_factory
+    with session_factory() as db:
+        runs = [
+            build_playbook_run(db.get(Device, item["id"]), "FAST", "test-admin")
+            for item in (first, second)
+        ]
+        db.add_all(runs)
+        db.commit()
+        run_ids = [run.id for run in runs]
+
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.test_connection_ports",
+        lambda target, *_args: LabCommandRead(
+            tool="test-connection", target=target, exit_code=0, output="ok", duration_ms=1
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.trace_registered_device",
+        lambda device: TraceRouteRead(
+            device_id=device.id,
+            device_name=device.name,
+            target=device.ip_address,
+            completed=True,
+            hops=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.query_dns",
+        lambda query: DnsQueryRead(
+            query=query, canonical_name=None, addresses=[query], reverse_name=None
+        ),
+    )
+    runner = SecurityPlaybookRunner(session_factory, max_pending=1)
+    runner._executor.shutdown(wait=True, cancel_futures=True)
+    deferred = DeferredExecutor()
+    runner._executor = deferred
+    monkeypatch.setattr(
+        runner,
+        "_run_attack_surface",
+        lambda _target: {"scan_id": 8, "finding_count": 0, "cve_candidates": 0},
+    )
+    try:
+        runner.start()
+        assert deferred.submitted_ids == [run_ids[0]]
+        deferred.run_next()
+        assert deferred.submitted_ids == run_ids
+        deferred.run_next()
+    finally:
+        runner.shutdown()
+
+    with session_factory() as db:
+        assert [load_playbook_run(run_id, db).status for run_id in run_ids] == [
+            "COMPLETED",
+            "COMPLETED",
+        ]
+
+
+def test_pre_release_playbook_table_migrates_active_queue_slot(tmp_path):
+    engine = create_database_engine(f"sqlite:///{tmp_path / 'old-playbooks.db'}")
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE security_playbook_runs (
+                id INTEGER PRIMARY KEY,
+                device_id INTEGER NOT NULL,
+                status VARCHAR(10) NOT NULL,
+                completed_at DATETIME,
+                error VARCHAR(1000)
+            )
+        """))
+        connection.execute(text("""
+            CREATE TABLE security_playbook_steps (
+                id INTEGER PRIMARY KEY,
+                run_id INTEGER NOT NULL,
+                status VARCHAR(10) NOT NULL,
+                completed_at DATETIME
+            )
+        """))
+        connection.execute(text(
+            "INSERT INTO security_playbook_runs (id, device_id, status) "
+            "VALUES (1, 9, 'QUEUED'), (2, 9, 'RUNNING'), (3, 10, 'COMPLETED')"
+        ))
+        connection.execute(text(
+            "INSERT INTO security_playbook_steps (id, run_id, status) "
+            "VALUES (1, 1, 'PENDING'), (2, 2, 'RUNNING')"
+        ))
+
+    migrate_security_playbook_columns(engine)
+
+    with engine.begin() as connection:
+        assert "active_slot" in {
+            column["name"] for column in inspect(connection).get_columns("security_playbook_runs")
+        }
+        rows = connection.execute(text(
+            "SELECT id, status, active_slot FROM security_playbook_runs ORDER BY id"
+        )).all()
+        assert rows == [
+            (1, "QUEUED", 1),
+            (2, "FAILED", None),
+            (3, "COMPLETED", None),
+        ]
+        assert connection.execute(text(
+            "SELECT status FROM security_playbook_steps WHERE run_id = 2"
+        )).scalar_one() == "CANCELLED"
+    engine.dispose()

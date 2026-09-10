@@ -1,5 +1,7 @@
 import pytest
+from sqlalchemy import select
 
+from app.models import AutomationEvent, VulnerabilityScan
 from app.services.cve_service import CveLookupResult, CveMatch
 from app.services.port_scan_service import DetectedService, OpenPort, PortScanResult
 from app.services.vulnerability_service import TlsPosture
@@ -64,6 +66,38 @@ def test_scan_with_no_common_ports_records_positive_information(client, monkeypa
     monkeypatch.setattr("app.services.vulnerability_service.scan_nmap_top_tcp_ports", lambda _ip: scan_result())
     body = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers).json()
     assert body["findings"][0]["severity"] == "INFO"
+
+
+def test_scan_releases_sqlite_write_lock_before_network_probe(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post("/api/devices", json=DEVICE, headers=headers).json()
+    session_factory = client.app.state.session_factory
+
+    def probe_without_holding_a_write_transaction(_ip):
+        with session_factory() as observer:
+            running = observer.scalar(
+                select(VulnerabilityScan).where(VulnerabilityScan.status == "RUNNING")
+            )
+            assert running is not None
+            observer.add(AutomationEvent(
+                event_type="CONCURRENT_WRITE_TEST",
+                severity="INFO",
+                message="The scan released its initial write transaction.",
+            ))
+            observer.commit()
+        return scan_result()
+
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.scan_nmap_top_tcp_ports",
+        probe_without_holding_a_write_transaction,
+    )
+    response = client.post(
+        f"/api/devices/{device['id']}/vulnerability-scans",
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "COMPLETED"
 
 
 def test_scan_allows_registered_target_on_public_lan(client, monkeypatch):
