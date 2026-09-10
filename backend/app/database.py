@@ -95,6 +95,16 @@ def migrate_security_playbook_columns(engine) -> None:
         if "security_playbook_runs" not in inspector.get_table_names():
             return
         columns = {column["name"] for column in inspector.get_columns("security_playbook_runs")}
+        unique_name = "uq_security_playbook_active_device"
+        existing_names = {
+            item.get("name")
+            for item in (
+                inspector.get_unique_constraints("security_playbook_runs")
+                + inspector.get_indexes("security_playbook_runs")
+            )
+        }
+        if "active_slot" in columns and unique_name in existing_names:
+            return
         if "active_slot" not in columns:
             connection.execute(text("ALTER TABLE security_playbook_runs ADD COLUMN active_slot INTEGER"))
         # Preserve the oldest active run per target if a pre-index database
@@ -131,14 +141,6 @@ def migrate_security_playbook_columns(engine) -> None:
                 ELSE NULL
             END
         """))
-        unique_name = "uq_security_playbook_active_device"
-        existing_names = {
-            item.get("name")
-            for item in (
-                inspector.get_unique_constraints("security_playbook_runs")
-                + inspector.get_indexes("security_playbook_runs")
-            )
-        }
         if unique_name not in existing_names:
             connection.execute(text(
                 f"CREATE UNIQUE INDEX {unique_name} "

@@ -18,7 +18,7 @@ from app.models import (
     VulnerabilityScan,
     utc_now,
 )
-from app.schemas import LabCommandRead, TraceRouteRead
+from app.schemas import DnsQueryRead, LabCommandRead, TraceRouteRead
 from app.services.nmap_top_ports import NMAP_TOP_1000_TCP_PORTS
 from app.services.security_toolbox_service import (
     query_dns,
@@ -91,6 +91,47 @@ def _bounded_text(value: object, limit: int = _OUTPUT_LIMIT_BYTES) -> str:
         return rendered
     suffix = b"\n[stored output truncated]"
     return encoded[: limit - len(suffix)].decode("utf-8", errors="ignore") + suffix.decode()
+
+
+def _render_step_output(value: object) -> str:
+    if isinstance(value, LabCommandRead):
+        lines = [
+            f"Tool: {value.tool}",
+            f"Target: {value.target or 'local host'}",
+            f"Exit code: {value.exit_code}",
+            f"Duration: {value.duration_ms:.2f} ms",
+        ]
+        if value.scanned_port_count is not None:
+            lines.append(f"Scanned ports: {value.scanned_port_count}")
+        if value.truncated:
+            lines.append("Output was truncated by the command runner.")
+        if value.output:
+            lines.extend(("", value.output))
+        return _bounded_text("\n".join(lines))
+    if isinstance(value, TraceRouteRead):
+        lines = [
+            f"Target: {value.target}",
+            f"Completed: {'yes' if value.completed else 'no'}",
+            "",
+            "HOPS",
+        ]
+        if not value.hops:
+            lines.append("No hops returned.")
+        for hop in value.hops:
+            address = hop.address or "*"
+            latency = "timed out" if hop.timed_out else (
+                f"{hop.latency_ms:.2f} ms" if hop.latency_ms is not None else "latency unavailable"
+            )
+            lines.append(f"{hop.hop:>2}  {address:<39}  {latency}")
+        return _bounded_text("\n".join(lines))
+    if isinstance(value, DnsQueryRead):
+        return _bounded_text("\n".join((
+            f"Query: {value.query}",
+            f"Canonical name: {value.canonical_name or 'not returned'}",
+            f"Addresses: {', '.join(value.addresses) or 'not returned'}",
+            f"Reverse name: {value.reverse_name or 'not returned'}",
+        )))
+    return _bounded_text(value)
 
 
 def _error_text(exc: Exception) -> str:
@@ -369,7 +410,7 @@ class SecurityPlaybookRunner:
                 return
             step.status = "RUNNING"
             step.started_at = utc_now()
-            run.current_step = step.name
+            run.current_step = step.step_key
             db.commit()
 
         started = time.monotonic()
@@ -384,7 +425,7 @@ class SecurityPlaybookRunner:
                 step_key,
                 "FAILED" if failure else "COMPLETED",
                 started,
-                output=_bounded_text(output),
+                output=_render_step_output(output),
                 error=failure,
             )
 
@@ -467,7 +508,7 @@ class SecurityPlaybookRunner:
             step.duration_ms = round((time.monotonic() - started) * 1000, 2)
             step.output = output
             step.error = error
-            if run.current_step == step.name:
+            if run.current_step == step.step_key:
                 run.current_step = None
             db.commit()
 
