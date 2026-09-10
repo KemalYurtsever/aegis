@@ -166,6 +166,13 @@ def test_playbook_history_supports_device_filter_and_get(client, admin_headers, 
     assert filtered.status_code == 200
     assert [item["id"] for item in filtered.json()] == [first_run["id"]]
 
+    run_index = client.get(
+        "/api/security/playbooks/run-index?limit=10", headers=admin_headers
+    )
+    assert run_index.status_code == 200
+    assert [item["id"] for item in run_index.json()] == [second_run["id"], first_run["id"]]
+    assert "steps" not in run_index.json()[0]
+
     found = client.get(
         f"/api/security/playbooks/runs/{second_run['id']}", headers=admin_headers
     )

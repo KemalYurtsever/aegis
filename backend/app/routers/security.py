@@ -23,6 +23,7 @@ from app.schemas import (
     CurlRequest,
     DigRequest,
     SecurityPlaybookRunCreate,
+    SecurityPlaybookRunIndexRead,
     SecurityPlaybookRunRead,
 )
 from app.services.attack_path_service import build_attack_paths
@@ -101,6 +102,18 @@ def list_playbook_runs(
         get_device_or_404(device_id, db)
         statement = statement.where(SecurityPlaybookRun.device_id == device_id)
     return list(db.scalars(statement))
+
+
+@router.get("/playbooks/run-index", response_model=list[SecurityPlaybookRunIndexRead])
+def list_playbook_run_index(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[SecurityPlaybookRun]:
+    return list(db.scalars(
+        select(SecurityPlaybookRun)
+        .order_by(SecurityPlaybookRun.created_at.desc(), SecurityPlaybookRun.id.desc())
+        .limit(limit)
+    ))
 
 
 @router.get("/playbooks/runs/{run_id}", response_model=SecurityPlaybookRunRead)

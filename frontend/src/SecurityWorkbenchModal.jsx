@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   cancelSecurityPlaybookRun,
@@ -8,6 +8,7 @@ import {
   getNeighborTable,
   getSecurityPlaybookRun,
   getWirelessAdapters,
+  listSecurityPlaybookRunIndex,
   listSecurityPlaybookRuns,
   listPacketCaptures,
   runDnsQuery,
@@ -50,6 +51,18 @@ function upsertPlaybookRun(current, next) {
   const existingIndex = current.findIndex((run) => run.id === next.id);
   if (existingIndex < 0) return [next, ...current].slice(0, 10);
   return current.map((run, index) => (index === existingIndex ? next : run));
+}
+
+function mergeGlobalPlaybookRuns(current, incoming) {
+  const byId = new Map(current.map((run) => [run.id, run]));
+  incoming.forEach((run) => {
+    const indexEntry = { ...run };
+    delete indexEntry.steps;
+    byId.set(run.id, indexEntry);
+  });
+  return [...byId.values()]
+    .sort((left, right) => right.id - left.id)
+    .slice(0, 50);
 }
 
 function playbookStatusLabel(status) {
@@ -1250,15 +1263,44 @@ function PlaybookStep({ step }) {
   );
 }
 
+function PlaybookRunLink({ run, selected, onSelect, busy = false, opening = false }) {
+  return (
+    <button
+      type="button"
+      className={selected ? "active" : ""}
+      aria-pressed={selected}
+      aria-busy={opening}
+      disabled={busy}
+      onClick={() => onSelect(run)}
+    >
+      <span>
+        <strong>{run.target_name}</strong>
+        <small>#{run.id} · {run.profile} · {run.target_ip}</small>
+      </span>
+      <span>
+        <span className={`diagnostic-status diagnostic-status--${run.status.toLowerCase()}`}>
+          {playbookStatusLabel(run.status)}
+        </span>
+        <small>{opening ? "Opening…" : formatDate(run.created_at)}</small>
+      </span>
+    </button>
+  );
+}
+
 function PlaybookTool({ devices }) {
   const [deviceId, setDeviceId] = useState(devices[0]?.id ? String(devices[0].id) : "");
   const [profile, setProfile] = useState("FAST");
   const [runs, setRuns] = useState([]);
+  const [allRuns, setAllRuns] = useState([]);
   const [selectedRunId, setSelectedRunId] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingAllRuns, setLoadingAllRuns] = useState(true);
+  const [openingRunId, setOpeningRunId] = useState(null);
   const [action, setAction] = useState("");
   const [error, setError] = useState("");
   const [pollError, setPollError] = useState("");
+  const pendingRunRef = useRef(null);
+  const runPanelRef = useRef(null);
 
   useEffect(() => {
     if (!devices.length) {
@@ -1271,6 +1313,27 @@ function PlaybookTool({ devices }) {
   }, [deviceId, devices]);
 
   useEffect(() => {
+    let disposed = false;
+    setLoadingAllRuns(true);
+    listSecurityPlaybookRunIndex(50)
+      .then((response) => {
+        if (!disposed) {
+          const recentRuns = Array.isArray(response) ? response : [];
+          setAllRuns((current) => mergeGlobalPlaybookRuns(current, recentRuns));
+        }
+      })
+      .catch((requestError) => {
+        if (!disposed) setError(requestError.message);
+      })
+      .finally(() => {
+        if (!disposed) setLoadingAllRuns(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!deviceId) {
       setRuns([]);
       setSelectedRunId(null);
@@ -1278,8 +1341,11 @@ function PlaybookTool({ devices }) {
     }
 
     let disposed = false;
-    setRuns([]);
-    setSelectedRunId(null);
+    const pendingRun = pendingRunRef.current?.device_id === Number(deviceId)
+      ? pendingRunRef.current
+      : null;
+    setRuns(pendingRun ? [pendingRun] : []);
+    setSelectedRunId(pendingRun?.id ?? null);
     setPollError("");
     setLoadingHistory(true);
     setError("");
@@ -1287,14 +1353,21 @@ function PlaybookTool({ devices }) {
       .then((response) => {
         if (disposed) return;
         const recentRuns = Array.isArray(response) ? response : [];
-        setRuns(recentRuns);
-        setSelectedRunId(recentRuns[0]?.id ?? null);
+        const selectedRuns = pendingRun && !recentRuns.some((run) => run.id === pendingRun.id)
+          ? [pendingRun, ...recentRuns].slice(0, 10)
+          : recentRuns;
+        setRuns(selectedRuns);
+        setAllRuns((current) => mergeGlobalPlaybookRuns(current, recentRuns));
+        setSelectedRunId(pendingRun?.id ?? recentRuns[0]?.id ?? null);
       })
       .catch((requestError) => {
         if (!disposed) setError(requestError.message);
       })
       .finally(() => {
-        if (!disposed) setLoadingHistory(false);
+        if (!disposed) {
+          if (pendingRunRef.current?.id === pendingRun?.id) pendingRunRef.current = null;
+          setLoadingHistory(false);
+        }
       });
     return () => {
       disposed = true;
@@ -1306,12 +1379,12 @@ function PlaybookTool({ devices }) {
     [runs, selectedRunId],
   );
   const activeRunKey = useMemo(
-    () => runs
+    () => allRuns
       .filter((run) => ACTIVE_PLAYBOOK_STATUSES.has(run.status))
       .map((run) => run.id)
       .sort((left, right) => left - right)
       .join(","),
-    [runs],
+    [allRuns],
   );
 
   useEffect(() => {
@@ -1329,10 +1402,12 @@ function PlaybookTool({ devices }) {
 
       const refreshedRuns = updates
         .filter((result) => result.status === "fulfilled")
-        .map((result) => result.value)
-        .filter((run) => run.device_id === polledDeviceId);
+        .map((result) => result.value);
       if (refreshedRuns.length) {
-        setRuns((current) => refreshedRuns.reduce(upsertPlaybookRun, current));
+        setAllRuns((current) => mergeGlobalPlaybookRuns(current, refreshedRuns));
+        setRuns((current) => refreshedRuns
+          .filter((run) => run.device_id === polledDeviceId)
+          .reduce(upsertPlaybookRun, current));
       }
       const failed = updates.find((result) => result.status === "rejected");
       const failureMessage = failed
@@ -1363,6 +1438,7 @@ function PlaybookTool({ devices }) {
         profile,
       });
       setRuns((current) => upsertPlaybookRun(current, created));
+      setAllRuns((current) => mergeGlobalPlaybookRuns(current, [created]));
       setSelectedRunId(created.id);
     } catch (requestError) {
       setError(requestError.message);
@@ -1377,10 +1453,38 @@ function PlaybookTool({ devices }) {
     try {
       const cancelled = await cancelSecurityPlaybookRun(runId);
       setRuns((current) => upsertPlaybookRun(current, cancelled));
+      setAllRuns((current) => mergeGlobalPlaybookRuns(current, [cancelled]));
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setAction("");
+    }
+  }
+
+  async function openRun(run) {
+    if (!devices.some((device) => device.id === run.device_id)) {
+      setError("The device for this assessment is no longer registered.");
+      return;
+    }
+    setOpeningRunId(run.id);
+    setError("");
+    try {
+      const detailedRun = Array.isArray(run.steps) ? run : await getSecurityPlaybookRun(run.id);
+      const switchingDevice = String(detailedRun.device_id) !== deviceId;
+      pendingRunRef.current = switchingDevice ? detailedRun : null;
+      setDeviceId(String(detailedRun.device_id));
+      setProfile(detailedRun.profile);
+      setRuns((current) => upsertPlaybookRun(current, detailedRun));
+      setAllRuns((current) => mergeGlobalPlaybookRuns(current, [detailedRun]));
+      setSelectedRunId(detailedRun.id);
+      window.requestAnimationFrame(() => {
+        runPanelRef.current?.focus({ preventScroll: true });
+        runPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setOpeningRunId(null);
     }
   }
 
@@ -1391,6 +1495,12 @@ function PlaybookTool({ devices }) {
   const runHeading = playbookRunHeading(selectedRun, steps);
   const summary = selectedRun?.summary || {};
   const hasSummary = Object.keys(summary).length > 0;
+  const activeRuns = allRuns.filter((run) => ACTIVE_PLAYBOOK_STATUSES.has(run.status));
+  const finishedRuns = allRuns.filter((run) => !ACTIVE_PLAYBOOK_STATUSES.has(run.status));
+  const targetHasActiveRun = activeRuns.some((run) => run.device_id === Number(deviceId))
+    || runs.some((run) => (
+      run.device_id === Number(deviceId) && ACTIVE_PLAYBOOK_STATUSES.has(run.status)
+    ));
 
   return (
     <section className="workbench-tool playbook-tool">
@@ -1403,8 +1513,11 @@ function PlaybookTool({ devices }) {
         <label>Registered target
           <select
             value={deviceId}
-            onChange={(event) => setDeviceId(event.target.value)}
-            disabled={Boolean(action)}
+            onChange={(event) => {
+              pendingRunRef.current = null;
+              setDeviceId(event.target.value);
+            }}
+            disabled={Boolean(action) || openingRunId !== null}
             required
           >
             <option value="">Select a device</option>
@@ -1422,7 +1535,7 @@ function PlaybookTool({ devices }) {
           <select
             value={profile}
             onChange={(event) => setProfile(event.target.value)}
-            disabled={Boolean(action)}
+            disabled={Boolean(action) || openingRunId !== null}
           >
             {PLAYBOOK_PROFILES.map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
@@ -1431,13 +1544,13 @@ function PlaybookTool({ devices }) {
         </label>
         <button
           className="button button--primary"
-          disabled={!deviceId || loadingHistory || Boolean(action) || Boolean(activeRunKey)}
+          disabled={!deviceId || loadingHistory || Boolean(action) || openingRunId !== null || targetHasActiveRun}
         >
           {action === "create"
             ? "Starting…"
             : loadingHistory
               ? "Loading runs…"
-              : activeRunKey
+              : targetHasActiveRun
                 ? "Assessment active"
                 : "Run assessment"}
         </button>
@@ -1448,6 +1561,56 @@ function PlaybookTool({ devices }) {
       </div>
       {error && <div className="form-error playbook-error" role="alert">{error}</div>}
       {pollError && <div className="form-error playbook-error" role="status">{pollError}</div>}
+
+      <nav className="playbook-run-navigator" aria-label="Assessment run switcher">
+        <div className="playbook-run-navigator__heading">
+          <div>
+            <strong>Assessment runs</strong>
+            <span>Choose from the 50 most recent runs to switch targets and open the results.</span>
+          </div>
+          {loadingAllRuns && <span role="status">Loading…</span>}
+        </div>
+        <div className="playbook-run-navigator__groups">
+          <section aria-labelledby="active-playbook-runs-heading">
+            <header>
+              <strong id="active-playbook-runs-heading">Queued &amp; running</strong>
+              <span>{activeRuns.length}</span>
+            </header>
+            <div className="playbook-run-navigator__list">
+              {activeRuns.map((run) => (
+                <PlaybookRunLink
+                  key={run.id}
+                  run={run}
+                  selected={run.id === selectedRunId}
+                  onSelect={openRun}
+                  busy={openingRunId !== null}
+                  opening={run.id === openingRunId}
+                />
+              ))}
+              {!loadingAllRuns && !activeRuns.length && <p>No active assessments.</p>}
+            </div>
+          </section>
+          <section aria-labelledby="finished-playbook-runs-heading">
+            <header>
+              <strong id="finished-playbook-runs-heading">Recent finished runs</strong>
+              <span>{finishedRuns.length}</span>
+            </header>
+            <div className="playbook-run-navigator__list">
+              {finishedRuns.map((run) => (
+                <PlaybookRunLink
+                  key={run.id}
+                  run={run}
+                  selected={run.id === selectedRunId}
+                  onSelect={openRun}
+                  busy={openingRunId !== null}
+                  opening={run.id === openingRunId}
+                />
+              ))}
+              {!loadingAllRuns && !finishedRuns.length && <p>No finished assessments.</p>}
+            </div>
+          </section>
+        </div>
+      </nav>
 
       <div className="playbook-layout">
         <aside className="playbook-history" aria-label="Recent playbook runs">
@@ -1464,7 +1627,8 @@ function PlaybookTool({ devices }) {
               key={run.id}
               className={run.id === selectedRunId ? "active" : ""}
               aria-pressed={run.id === selectedRunId}
-              onClick={() => setSelectedRunId(run.id)}
+              disabled={openingRunId !== null}
+              onClick={() => openRun(run)}
             >
               <span>
                 <strong>{run.profile.charAt(0) + run.profile.slice(1).toLowerCase()}</strong>
@@ -1478,7 +1642,9 @@ function PlaybookTool({ devices }) {
         </aside>
 
         <section
+          ref={runPanelRef}
           className="playbook-run"
+          tabIndex="-1"
           aria-labelledby={selectedRun ? `playbook-run-${selectedRun.id}-title` : undefined}
           aria-busy={ACTIVE_PLAYBOOK_STATUSES.has(selectedRun?.status)}
         >
