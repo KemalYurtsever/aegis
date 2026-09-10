@@ -1047,6 +1047,7 @@ function LabCliTool({ devices }) {
   const [interfaceName, setInterfaceName] = useState("");
   const [grep, setGrep] = useState("");
   const [nmapProfile, setNmapProfile] = useState("FAST");
+  const [showNmapReason, setShowNmapReason] = useState(false);
   const [insecure, setInsecure] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -1067,6 +1068,7 @@ function LabCliTool({ devices }) {
           ports: scanMode === "CUSTOM" ? parsedPorts : [80],
           scan_mode: scanMode,
           profile: nmapProfile,
+          show_reason: showNmapReason,
           ...common,
         });
       } else if (tool === "arp-scan") {
@@ -1126,6 +1128,14 @@ function LabCliTool({ devices }) {
               <option value="DETAILED">Detailed · -sV --version-light</option>
               <option value="AGGRESSIVE">Aggressive · -sV --version-all</option>
             </select>
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={showNmapReason}
+              onChange={(event) => setShowNmapReason(event.target.checked)}
+            />
+            With reason (--reason)
           </label>
         </>}
         {tool === "arp-scan" && <label>Interface (optional)

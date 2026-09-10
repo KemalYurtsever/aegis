@@ -980,6 +980,7 @@ class NmapTcpScanRequest(LabCommandFilter):
     scan_mode: Literal["CUSTOM", "TOP_1000"] = "CUSTOM"
     profile: Literal["FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"] = "FAST"
     service_detection: bool = False
+    show_reason: bool = False
 
     @field_validator("ports")
     @classmethod
