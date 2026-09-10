@@ -86,6 +86,66 @@ def migrate_vulnerability_columns(engine) -> None:
                 connection.execute(text("ALTER TABLE vulnerability_scans ADD COLUMN profile VARCHAR(12) NOT NULL DEFAULT 'FAST'"))
 
 
+def migrate_security_playbook_columns(engine) -> None:
+    """Bring pre-release playbook tables up to the durable queue schema."""
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "security_playbook_runs" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("security_playbook_runs")}
+        if "active_slot" not in columns:
+            connection.execute(text("ALTER TABLE security_playbook_runs ADD COLUMN active_slot INTEGER"))
+        # Preserve the oldest active run per target if a pre-index database
+        # somehow contains duplicates, and close the rest before adding the
+        # unique active queue slot.
+        connection.execute(text("""
+            UPDATE security_playbook_runs
+            SET status = 'FAILED',
+                active_slot = NULL,
+                completed_at = CURRENT_TIMESTAMP,
+                error = 'Superseded while upgrading the security playbook queue'
+            WHERE status IN ('QUEUED', 'RUNNING')
+              AND id NOT IN (
+                  SELECT MIN(id)
+                  FROM security_playbook_runs
+                  WHERE status IN ('QUEUED', 'RUNNING')
+                  GROUP BY device_id
+              )
+        """))
+        if "security_playbook_steps" in inspector.get_table_names():
+            connection.execute(text("""
+                UPDATE security_playbook_steps
+                SET status = 'CANCELLED', completed_at = CURRENT_TIMESTAMP
+                WHERE status IN ('PENDING', 'RUNNING')
+                  AND run_id IN (
+                      SELECT id FROM security_playbook_runs
+                      WHERE error = 'Superseded while upgrading the security playbook queue'
+                  )
+            """))
+        connection.execute(text("""
+            UPDATE security_playbook_runs
+            SET active_slot = CASE
+                WHEN status IN ('QUEUED', 'RUNNING') THEN 1
+                ELSE NULL
+            END
+        """))
+        unique_name = "uq_security_playbook_active_device"
+        existing_names = {
+            item.get("name")
+            for item in (
+                inspector.get_unique_constraints("security_playbook_runs")
+                + inspector.get_indexes("security_playbook_runs")
+            )
+        }
+        if unique_name not in existing_names:
+            connection.execute(text(
+                f"CREATE UNIQUE INDEX {unique_name} "
+                "ON security_playbook_runs (device_id, active_slot)"
+            ))
+
+
 def migrate_device_inventory_columns(engine) -> None:
     if engine.dialect.name != "sqlite":
         return
