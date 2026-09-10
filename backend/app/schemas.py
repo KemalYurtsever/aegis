@@ -868,6 +868,11 @@ class VulnerabilityFindingRead(BaseModel):
     cvss_score: float | None
     cve_url: str | None
     match_confidence: Literal["HIGH", "MEDIUM"] | None
+    known_exploited: bool
+    kev_date_added: str | None
+    kev_required_action: str | None
+    epss_score: float | None
+    epss_percentile: float | None
     service_product: str | None
     service_version: str | None
     service_cpe: str | None

@@ -3829,6 +3829,20 @@ td:first-child span {
 .cve-finding-meta a:hover {
   text-decoration: underline;
 }
+.cve-finding-meta .cve-priority-badge--kev {
+  background: #fdeaea;
+  color: #a63737;
+}
+.cve-finding-meta .cve-priority-badge--epss-high {
+  background: #fff0cc;
+  color: #8a5700;
+}
+.kev-required-action {
+  display: block;
+  margin: 6px 0;
+  color: #a63737 !important;
+  font-weight: 700;
+}
 .cve-finding-cpe {
   display: block;
   width: fit-content;

@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from app.models import AutomationEvent, VulnerabilityScan
 from app.services.cve_service import CveLookupResult, CveMatch
+from app.services.exploit_intelligence_service import ExploitIntelligence, ExploitIntelligenceResult
 from app.services.nse_verification_service import NseObservation, NseVerificationResult
 from app.services.port_scan_service import DetectedService, OpenPort, PortScanResult
 from app.services.vulnerability_service import TlsPosture
@@ -38,6 +39,10 @@ def isolate_service_detection(monkeypatch):
             confidence="MEDIUM",
             cached=True,
         ),
+    )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.lookup_exploit_intelligence",
+        lambda *_args, **_kwargs: ExploitIntelligenceResult({}, ()),
     )
 
 
@@ -264,6 +269,22 @@ def test_attack_surface_correlates_detected_cpe_with_nvd_cve(client, monkeypatch
             "content-security-policy": "default-src 'none'",
         },
     )
+    monkeypatch.setattr(
+        "app.services.vulnerability_service.lookup_exploit_intelligence",
+        lambda *_args, **_kwargs: ExploitIntelligenceResult(
+            records={
+                "CVE-2024-TEST": ExploitIntelligence(
+                    cve_id="CVE-2024-TEST",
+                    known_exploited=True,
+                    kev_date_added="2024-04-01",
+                    kev_required_action="Apply the vendor update.",
+                    epss_score=0.8123,
+                    epss_percentile=0.991,
+                ),
+            },
+            warnings=(),
+        ),
+    )
 
     response = client.post(f"/api/devices/{device['id']}/vulnerability-scans", headers=headers)
 
@@ -273,6 +294,11 @@ def test_attack_surface_correlates_detected_cpe_with_nvd_cve(client, monkeypatch
     assert finding["cvss_score"] == 8.1
     assert finding["match_confidence"] == "HIGH"
     assert finding["service_cpe"] == "cpe:/a:apache:http_server:2.4.58"
+    assert finding["known_exploited"] is True
+    assert finding["kev_date_added"] == "2024-04-01"
+    assert finding["kev_required_action"] == "Apply the vendor update."
+    assert finding["epss_score"] == 0.8123
+    assert finding["epss_percentile"] == 0.991
 
 
 def test_attack_surface_scan_is_admin_only(client):
