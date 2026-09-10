@@ -183,9 +183,10 @@ def nmap_scan(payload: NmapTcpScanRequest, db: Session = Depends(get_db)) -> Lab
             device.ip_address,
             payload.ports,
             payload.service_detection,
-            payload.grep,
-            payload.scan_mode,
-            payload.profile,
+            grep=payload.grep,
+            scan_mode=payload.scan_mode,
+            profile=payload.profile,
+            show_reason=payload.show_reason,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

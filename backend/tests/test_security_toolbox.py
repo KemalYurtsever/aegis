@@ -89,7 +89,9 @@ def test_nmap_scan_uses_argument_list_and_normalized_options(monkeypatch):
 
     monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
 
-    result = nmap_tcp_scan("198.18.5.1", [443, 22], True, "open")
+    result = nmap_tcp_scan(
+        "198.18.5.1", [443, 22], True, "open", show_reason=True
+    )
 
     assert result.exit_code == 0
     assert captured["tool"] == "nmap"
@@ -98,7 +100,7 @@ def test_nmap_scan_uses_argument_list_and_normalized_options(monkeypatch):
         "--min-rate", "500",
         "--initial-rtt-timeout", "100ms", "--max-rtt-timeout", "500ms",
         "--host-timeout", "10s", "-p", "443,22", "-sV",
-        "--version-intensity", "0", "198.18.5.1",
+        "--version-intensity", "0", "--reason", "198.18.5.1",
     ]
     assert captured["kwargs"] == {
         "target": "198.18.5.1",
@@ -168,12 +170,13 @@ def test_top_1000_scan_uses_ranked_socket_fallback_without_nmap(monkeypatch):
     )
 
     result = nmap_tcp_scan(
-        "198.18.5.1", [22], False, scan_mode="TOP_1000"
+        "198.18.5.1", [22], False, scan_mode="TOP_1000", show_reason=True
     )
 
     assert result.scanned_port_count == 1000
     assert "Scanned ports: 1000" in result.output
     assert "80/tcp  open  HTTP" in result.output
+    assert "reasons require the Nmap executable" in result.output
 
 
 def test_nmap_scan_enables_ipv6(monkeypatch):
@@ -387,8 +390,18 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
     ).json()
     captured = {}
 
-    def fake_scan(address, ports, service_detection, grep, scan_mode, profile):
-        captured.update(address=address, ports=ports, service_detection=service_detection, grep=grep, scan_mode=scan_mode, profile=profile)
+    def fake_scan(
+        address, ports, service_detection, *, grep, scan_mode, profile, show_reason
+    ):
+        captured.update(
+            address=address,
+            ports=ports,
+            service_detection=service_detection,
+            grep=grep,
+            scan_mode=scan_mode,
+            profile=profile,
+            show_reason=show_reason,
+        )
         return LabCommandRead(tool="nmap", target=address, exit_code=0, output="22/tcp open ssh", duration_ms=3.5)
 
     monkeypatch.setattr("app.routers.security.nmap_tcp_scan", fake_scan)
@@ -396,7 +409,13 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
     response = client.post(
         "/api/security/toolbox/nmap",
         headers=headers,
-        json={"device_id": device["id"], "ports": [22, 443, 22], "service_detection": True, "grep": "open"},
+        json={
+            "device_id": device["id"],
+            "ports": [22, 443, 22],
+            "service_detection": True,
+            "show_reason": True,
+            "grep": "open",
+        },
     )
 
     assert response.status_code == 200
@@ -404,6 +423,7 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
     assert captured == {
         "address": "198.18.5.20", "ports": [22, 443], "service_detection": True,
         "grep": "open", "scan_mode": "CUSTOM", "profile": "FAST",
+        "show_reason": True,
     }
 
 

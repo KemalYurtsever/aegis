@@ -104,6 +104,7 @@ def nmap_tcp_scan(
     grep: str | None = None,
     scan_mode: str = "CUSTOM",
     profile: str = "FAST",
+    show_reason: bool = False,
 ) -> LabCommandRead:
     profiles = {"FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"}
     if profile not in profiles:
@@ -126,6 +127,8 @@ def nmap_tcp_scan(
             lines.append("No open TCP ports found.")
         if profile != "FAST":
             lines.append("Service-version detection requires the Nmap executable; socket results show known service names only.")
+        if show_reason:
+            lines.append("Port-state reasons require the Nmap executable and are unavailable in the socket fallback.")
         return LabCommandRead(
             tool="nmap",
             target=address,
@@ -165,6 +168,8 @@ def nmap_tcp_scan(
         command.append("-6")
     if profile in NMAP_VERSION_ARGUMENTS:
         command.extend(["-sV", *NMAP_VERSION_ARGUMENTS[profile]])
+    if show_reason:
+        command.append("--reason")
     command.append(address)
     return _run_lab_tool(
         "nmap", command, target=address, grep=grep, timeout=timeout,
