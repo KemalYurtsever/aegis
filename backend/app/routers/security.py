@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
+from app.models import SecurityPlaybookRun, utc_now
 from app.routers.auth import require_admin
 from app.routers.devices import get_device_or_404
 from app.schemas import (
@@ -14,13 +17,22 @@ from app.schemas import (
     WirelessAdapterRead,
     LabCommandRead,
     NmapTcpScanRequest,
+    TestConnectionPortRequest,
     ArpScanRequest,
     NeighborTableRequest,
     CurlRequest,
     DigRequest,
+    SecurityPlaybookRunCreate,
+    SecurityPlaybookRunRead,
 )
 from app.services.attack_path_service import build_attack_paths
-from app.services.security_toolbox_service import arp_scan, curl_request, dig_query, host_network_policy, neighbor_table, nmap_tcp_scan, query_dns, trace_registered_device, wireless_adapters
+from app.services.security_playbook_service import (
+    ACTIVE_RUN_STATUSES,
+    TERMINAL_RUN_STATUSES,
+    build_playbook_run,
+    load_playbook_run,
+)
+from app.services.security_toolbox_service import arp_scan, curl_request, dig_query, host_network_policy, neighbor_table, nmap_tcp_scan, query_dns, test_connection_ports, trace_registered_device, wireless_adapters
 
 
 router = APIRouter(
@@ -36,6 +48,97 @@ def attack_paths(
     db: Session = Depends(get_db),
 ) -> AttackPathOverview:
     return build_attack_paths(db, limit=limit)
+
+
+@router.post("/playbooks/runs", response_model=SecurityPlaybookRunRead, status_code=202)
+def create_playbook_run(
+    payload: SecurityPlaybookRunCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> SecurityPlaybookRun:
+    device = get_device_or_404(payload.device_id, db)
+    active_run = db.scalar(
+        select(SecurityPlaybookRun.id).where(
+            SecurityPlaybookRun.device_id == device.id,
+            SecurityPlaybookRun.status.in_(ACTIVE_RUN_STATUSES),
+        ).limit(1)
+    )
+    if active_run is not None:
+        raise HTTPException(status_code=409, detail="This target already has an active security playbook")
+    user = getattr(request.state, "user", None)
+    run = build_playbook_run(device, payload.profile, getattr(user, "username", "administrator"))
+    db.add(run)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This target already has an active security playbook",
+        ) from exc
+    db.refresh(run)
+    runner = getattr(request.app.state, "playbook_runner", None)
+    if runner is None or not runner.submit(run.id):
+        run.status = "FAILED"
+        run.active_slot = None
+        run.completed_at = utc_now()
+        run.error = "The security playbook queue is unavailable"
+        for step in run.steps:
+            step.status = "CANCELLED"
+            step.completed_at = run.completed_at
+        db.commit()
+        raise HTTPException(status_code=503, detail=run.error)
+    loaded = load_playbook_run(run.id, db)
+    if loaded is None:
+        raise HTTPException(status_code=500, detail="The queued security playbook could not be loaded")
+    return loaded
+
+
+@router.get("/playbooks/runs", response_model=list[SecurityPlaybookRunRead])
+def list_playbook_runs(
+    device_id: int | None = Query(default=None, gt=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[SecurityPlaybookRun]:
+    statement = (
+        select(SecurityPlaybookRun)
+        .options(selectinload(SecurityPlaybookRun.steps))
+        .order_by(SecurityPlaybookRun.created_at.desc(), SecurityPlaybookRun.id.desc())
+        .limit(limit)
+    )
+    if device_id is not None:
+        get_device_or_404(device_id, db)
+        statement = statement.where(SecurityPlaybookRun.device_id == device_id)
+    return list(db.scalars(statement))
+
+
+@router.get("/playbooks/runs/{run_id}", response_model=SecurityPlaybookRunRead)
+def get_playbook_run(run_id: int, db: Session = Depends(get_db)) -> SecurityPlaybookRun:
+    run = load_playbook_run(run_id, db)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Security playbook run not found")
+    return run
+
+
+@router.post("/playbooks/runs/{run_id}/cancel", response_model=SecurityPlaybookRunRead)
+def cancel_playbook_run(
+    run_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> SecurityPlaybookRun:
+    run = load_playbook_run(run_id, db)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Security playbook run not found")
+    if run.status in TERMINAL_RUN_STATUSES:
+        raise HTTPException(status_code=409, detail="This security playbook has already finished")
+    runner = getattr(request.app.state, "playbook_runner", None)
+    if runner is None or not runner.cancel(run_id):
+        raise HTTPException(status_code=409, detail="This security playbook can no longer be cancelled")
+    db.expire_all()
+    updated = load_playbook_run(run_id, db)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Security playbook run not found")
+    return updated
 
 
 @router.post("/toolbox/traceroute", response_model=TraceRouteRead)
@@ -72,7 +175,28 @@ def inspect_host_network_policy() -> HostNetworkPolicyRead:
 def nmap_scan(payload: NmapTcpScanRequest, db: Session = Depends(get_db)) -> LabCommandRead:
     device = get_device_or_404(payload.device_id, db)
     try:
-        return nmap_tcp_scan(device.ip_address, payload.ports, payload.service_detection, payload.grep)
+        return nmap_tcp_scan(
+            device.ip_address,
+            payload.ports,
+            payload.service_detection,
+            payload.grep,
+            payload.scan_mode,
+            payload.profile,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/test-connection", response_model=LabCommandRead)
+def test_connection_scan(payload: TestConnectionPortRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    try:
+        return test_connection_ports(
+            device.ip_address,
+            payload.ports,
+            payload.timeout_seconds,
+            payload.grep,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

@@ -1,6 +1,6 @@
 import concurrent.futures
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -9,7 +9,7 @@ from app.routers.devices import get_device_or_404
 from app.routers.auth import require_admin
 from app.schemas import DeviceFingerprintRead, FingerprintBatchResponse, PortScanResponse, ServiceCheckCreate, ServiceCheckRead, ServiceOverview, ServiceOverviewItem, ServiceResultRead, ServiceStatistics
 from app.services.fingerprint_service import FingerprintEvidence, fingerprint_target
-from app.services.port_scan_service import COMMON_TCP_PORTS, scan_common_tcp_ports
+from app.services.port_scan_service import scan_nmap_top_tcp_ports
 from app.services.scan_policy import scan_target_allowed
 from app.services.service_check_service import run_and_store_service_check
 
@@ -52,6 +52,10 @@ def serialize_check(check: ServiceCheck, db: Session) -> ServiceCheckRead:
         .where(ServiceResult.service_check_id == check.id)
         .order_by(ServiceResult.timestamp.desc(), ServiceResult.id.desc()).limit(1)
     )
+    return serialize_check_result(check, latest)
+
+
+def serialize_check_result(check: ServiceCheck, latest: ServiceResult | None) -> ServiceCheckRead:
     return ServiceCheckRead(
         id=check.id, device_id=check.device_id, name=check.name, check_type=check.check_type,
         port=check.port, path=check.path, is_active=check.is_active, created_at=check.created_at,
@@ -113,8 +117,21 @@ def get_service_overview(db: Session = Depends(get_db)) -> ServiceOverview:
 @router.get("/devices/{device_id}/service-checks", response_model=list[ServiceCheckRead])
 def list_service_checks(device_id: int, db: Session = Depends(get_db)):
     get_device_or_404(device_id, db)
-    checks = db.scalars(select(ServiceCheck).where(ServiceCheck.device_id == device_id).order_by(ServiceCheck.id))
-    return [serialize_check(check, db) for check in checks]
+    latest_result_id = (
+        select(ServiceResult.id)
+        .where(ServiceResult.service_check_id == ServiceCheck.id)
+        .order_by(ServiceResult.timestamp.desc(), ServiceResult.id.desc())
+        .limit(1)
+        .correlate(ServiceCheck)
+        .scalar_subquery()
+    )
+    rows = db.execute(
+        select(ServiceCheck, ServiceResult)
+        .outerjoin(ServiceResult, ServiceResult.id == latest_result_id)
+        .where(ServiceCheck.device_id == device_id)
+        .order_by(ServiceCheck.id)
+    )
+    return [serialize_check_result(check, latest) for check, latest in rows]
 
 
 @router.post("/devices/{device_id}/service-checks", response_model=ServiceCheckRead, status_code=201, dependencies=[Depends(require_admin)])
@@ -132,12 +149,18 @@ def scan_device_ports(device_id: int, db: Session = Depends(get_db)) -> PortScan
     # public-LAN discovery is enabled, also permit addresses inside the bounded
     # network of the active physical adapter (for example, 172.2.4.0/24).
     ensure_scan_target_allowed(device.ip_address)
-    open_ports = scan_common_tcp_ports(device.ip_address)
+    try:
+        result = scan_nmap_top_tcp_ports(device.ip_address)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return PortScanResponse(
         device_id=device.id,
         target_ip=device.ip_address,
-        scanned_ports=list(COMMON_TCP_PORTS),
-        open_ports=[port.__dict__ for port in open_ports],
+        scanned_ports=result.scanned_ports,
+        scanned_port_count=len(result.scanned_ports),
+        scanner=result.scanner,
+        duration_ms=result.duration_ms,
+        open_ports=[port.__dict__ for port in result.open_ports],
     )
 
 
@@ -202,9 +225,15 @@ def run_service_check(check_id: int, db: Session = Depends(get_db)):
 @router.get("/service-checks/{check_id}/statistics", response_model=ServiceStatistics)
 def get_service_statistics(check_id: int, db: Session = Depends(get_db)) -> ServiceStatistics:
     get_check_or_404(check_id, db)
-    total = db.scalar(select(func.count(ServiceResult.id)).where(ServiceResult.service_check_id == check_id)) or 0
-    up = db.scalar(select(func.count(ServiceResult.id)).where(ServiceResult.service_check_id == check_id, ServiceResult.status == "UP")) or 0
-    average = db.scalar(select(func.avg(ServiceResult.response_time_ms)).where(ServiceResult.service_check_id == check_id, ServiceResult.response_time_ms.is_not(None)))
+    total, up, average = db.execute(
+        select(
+            func.count(ServiceResult.id),
+            func.sum(case((ServiceResult.status == "UP", 1), else_=0)),
+            func.avg(ServiceResult.response_time_ms),
+        ).where(ServiceResult.service_check_id == check_id)
+    ).one()
+    total = int(total or 0)
+    up = int(up or 0)
     latest = db.scalar(select(ServiceResult).where(ServiceResult.service_check_id == check_id).order_by(ServiceResult.timestamp.desc(), ServiceResult.id.desc()).limit(1))
     return ServiceStatistics(
         service_check_id=check_id,

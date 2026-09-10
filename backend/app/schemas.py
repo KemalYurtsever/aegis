@@ -605,13 +605,16 @@ class ServiceOverview(BaseModel):
 class OpenPortRead(BaseModel):
     port: int
     service: str
-    response_time_ms: float
+    response_time_ms: float | None
 
 
 class PortScanResponse(BaseModel):
     device_id: int
     target_ip: str
     scanned_ports: list[int]
+    scanned_port_count: int
+    scanner: str
+    duration_ms: float
     open_ports: list[OpenPortRead]
 
 
@@ -861,6 +864,13 @@ class VulnerabilityFindingRead(BaseModel):
     description: str
     recommendation: str
     port: int | None
+    cve_id: str | None
+    cvss_score: float | None
+    cve_url: str | None
+    match_confidence: Literal["HIGH", "MEDIUM"] | None
+    service_product: str | None
+    service_version: str | None
+    service_cpe: str | None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -870,6 +880,7 @@ class VulnerabilityScanRead(BaseModel):
     started_at: datetime
     completed_at: datetime | None
     status: Literal["RUNNING", "COMPLETED", "FAILED"]
+    profile: Literal["FAST", "DETAILED", "AGGRESSIVE"]
     findings: list[VulnerabilityFindingRead]
     model_config = ConfigDict(from_attributes=True)
 
@@ -950,12 +961,13 @@ class DnsQueryRead(BaseModel):
 
 
 class LabCommandRead(BaseModel):
-    tool: Literal["nmap", "arp-scan", "ip-neigh", "curl", "dig"]
+    tool: Literal["nmap", "arp-scan", "ip-neigh", "curl", "dig", "test-connection"]
     target: str | None = None
     exit_code: int
     output: str
     duration_ms: float
     truncated: bool = False
+    scanned_port_count: int | None = None
 
 
 class LabCommandFilter(BaseModel):
@@ -965,6 +977,8 @@ class LabCommandFilter(BaseModel):
 class NmapTcpScanRequest(LabCommandFilter):
     device_id: int = Field(gt=0)
     ports: list[int] = Field(default_factory=lambda: [22, 80, 443, 445, 3389], min_length=1, max_length=1024)
+    scan_mode: Literal["CUSTOM", "TOP_1000"] = "CUSTOM"
+    profile: Literal["FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"] = "FAST"
     service_detection: bool = False
 
     @field_validator("ports")
@@ -973,6 +987,58 @@ class NmapTcpScanRequest(LabCommandFilter):
         if any(port < 1 or port > 65535 for port in values):
             raise ValueError("Ports must be between 1 and 65535")
         return list(dict.fromkeys(values))
+
+
+class TestConnectionPortRequest(LabCommandFilter):
+    device_id: int = Field(gt=0)
+    ports: list[int] = Field(default_factory=lambda: [22, 80, 443, 445, 3389], min_length=1, max_length=128)
+    timeout_seconds: int = Field(default=2, ge=1, le=10)
+
+    @field_validator("ports")
+    @classmethod
+    def normalize_ports(cls, values: list[int]) -> list[int]:
+        if any(port < 1 or port > 65535 for port in values):
+            raise ValueError("Ports must be between 1 and 65535")
+        return list(dict.fromkeys(values))
+
+
+class SecurityPlaybookRunCreate(BaseModel):
+    device_id: int = Field(gt=0)
+    profile: Literal["FAST", "DETAILED", "AGGRESSIVE"] = "FAST"
+
+
+class SecurityPlaybookStepRead(BaseModel):
+    id: int
+    run_id: int
+    position: int
+    step_key: str
+    name: str
+    status: Literal["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"]
+    started_at: datetime | None
+    completed_at: datetime | None
+    duration_ms: float | None
+    output: str | None
+    error: str | None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SecurityPlaybookRunRead(BaseModel):
+    id: int
+    device_id: int
+    target_name: str
+    target_ip: str
+    requested_by: str
+    profile: Literal["FAST", "DETAILED", "AGGRESSIVE"]
+    status: Literal["QUEUED", "RUNNING", "COMPLETED", "PARTIAL", "FAILED", "CANCELLED"]
+    current_step: str | None
+    cancel_requested: bool
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    summary: dict[str, object]
+    error: str | None
+    steps: list[SecurityPlaybookStepRead]
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ArpScanRequest(LabCommandFilter):

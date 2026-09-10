@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  cancelSecurityPlaybookRun,
+  createSecurityPlaybookRun,
   getAttackPaths,
   getHostNetworkPolicy,
   getNeighborTable,
+  getSecurityPlaybookRun,
   getWirelessAdapters,
+  listSecurityPlaybookRuns,
   listPacketCaptures,
   runDnsQuery,
   runArpScan,
   runCurlRequest,
   runDigQuery,
   runNmapScan,
+  runTestConnectionPorts,
   runSecurityTraceroute,
 } from "./api.js";
 import { formatDate } from "./format.js";
@@ -19,17 +24,37 @@ import aegisShieldDark from "./assets/aegis-shield-dark.png";
 
 const TOOLS = [
   ["overview", "Overview", "01"],
-  ["decoder", "Decoder & numbers", "02"],
-  ["network", "Network", "03"],
-  ["sniffer", "Sniffer", "04"],
-  ["credentials", "Credential hygiene", "05"],
-  ["traceroute", "Traceroute", "06"],
-  ["configuration", "Configuration audit", "07"],
-  ["wireless", "Wireless", "08"],
-  ["query", "DNS query", "09"],
-  ["policy", "Firewall & routing", "10"],
-  ["lab-cli", "Network CLI", "11"],
+  ["playbooks", "Playbooks", "02"],
+  ["decoder", "Decoder & numbers", "03"],
+  ["network", "Network", "04"],
+  ["sniffer", "Sniffer", "05"],
+  ["credentials", "Credential hygiene", "06"],
+  ["traceroute", "Traceroute", "07"],
+  ["configuration", "Configuration audit", "08"],
+  ["wireless", "Wireless", "09"],
+  ["query", "DNS query", "10"],
+  ["policy", "Firewall & routing", "11"],
+  ["lab-cli", "Network CLI", "12"],
+  ["test-connection", "TCP port test", "13"],
 ];
+
+const PLAYBOOK_PROFILES = [
+  ["FAST", "Fast", "Quick reachability and exposure checks with short time limits."],
+  ["DETAILED", "Detailed", "Broader service detection and supporting network evidence."],
+  ["AGGRESSIVE", "Aggressive", "The fullest bounded assessment with intensive service fingerprinting."],
+];
+const ACTIVE_PLAYBOOK_STATUSES = new Set(["QUEUED", "RUNNING"]);
+const FINISHED_STEP_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
+
+function upsertPlaybookRun(current, next) {
+  const existingIndex = current.findIndex((run) => run.id === next.id);
+  if (existingIndex < 0) return [next, ...current].slice(0, 10);
+  return current.map((run, index) => (index === existingIndex ? next : run));
+}
+
+function playbookStatusLabel(status) {
+  return status ? status.replaceAll("_", " ") : "UNKNOWN";
+}
 
 function textToBytes(value) {
   return new TextEncoder().encode(value);
@@ -988,11 +1013,12 @@ function LabCliTool({ devices }) {
   const [tool, setTool] = useState("nmap");
   const [deviceId, setDeviceId] = useState(devices[0]?.id || "");
   const [ports, setPorts] = useState("22,80,443,445,3389");
+  const [scanMode, setScanMode] = useState("TOP_1000");
   const [target, setTarget] = useState("");
   const [recordType, setRecordType] = useState("A");
   const [interfaceName, setInterfaceName] = useState("");
   const [grep, setGrep] = useState("");
-  const [serviceDetection, setServiceDetection] = useState(false);
+  const [nmapProfile, setNmapProfile] = useState("FAST");
   const [insecure, setInsecure] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -1008,7 +1034,13 @@ function LabCliTool({ devices }) {
       let response;
       if (tool === "nmap") {
         const parsedPorts = ports.split(",").map((value) => Number(value.trim())).filter(Number.isInteger);
-        response = await runNmapScan({ device_id: Number(deviceId), ports: parsedPorts, service_detection: serviceDetection, ...common });
+        response = await runNmapScan({
+          device_id: Number(deviceId),
+          ports: scanMode === "CUSTOM" ? parsedPorts : [80],
+          scan_mode: scanMode,
+          profile: nmapProfile,
+          ...common,
+        });
       } else if (tool === "arp-scan") {
         response = await runArpScan({ interface_name: interfaceName.trim() || null, ...common });
       } else if (tool === "ip-neigh") {
@@ -1050,10 +1082,23 @@ function LabCliTool({ devices }) {
               {devices.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.ip_address}</option>)}
             </select>
           </label>
-          <label>TCP ports (comma separated)
-            <input value={ports} onChange={(event) => setPorts(event.target.value)} placeholder="22,80,443,8080" required />
+          <label>Scan scope
+            <select value={scanMode} onChange={(event) => setScanMode(event.target.value)}>
+              <option value="TOP_1000">Nmap top 1,000 TCP ports</option>
+              <option value="CUSTOM">Custom TCP port list</option>
+            </select>
           </label>
-          <label className="checkbox-label"><input type="checkbox" checked={serviceDetection} onChange={(event) => setServiceDetection(event.target.checked)} /> Light service detection</label>
+          {scanMode === "CUSTOM" && <label>TCP ports (comma separated)
+            <input value={ports} onChange={(event) => setPorts(event.target.value)} placeholder="22,80,443,8080" required />
+          </label>}
+          <label>Nmap profile
+            <select value={nmapProfile} onChange={(event) => setNmapProfile(event.target.value)}>
+              <option value="FAST">Fast · ports only</option>
+              <option value="FAST_VERSION">Fast version · -sV intensity 0</option>
+              <option value="DETAILED">Detailed · -sV --version-light</option>
+              <option value="AGGRESSIVE">Aggressive · -sV --version-all</option>
+            </select>
+          </label>
         </>}
         {tool === "arp-scan" && <label>Interface (optional)
           <input value={interfaceName} onChange={(event) => setInterfaceName(event.target.value)} placeholder="eth0" />
@@ -1070,19 +1115,433 @@ function LabCliTool({ devices }) {
         <label>Grep output (optional text)
           <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="open, tcp, 192.168..." />
         </label>
-        <button className="button button--primary" disabled={busy || (tool === "nmap" && !deviceId)}>{busy ? "Running…" : "Run tool"}</button>
+        <button className="button button--primary" disabled={busy || (tool === "nmap" && !deviceId)}>{busy ? "Running…" : tool === "nmap" && scanMode === "TOP_1000" ? "Scan 1,000 ports" : "Run tool"}</button>
       </form>
       {error && <div className="form-error">{error}</div>}
       {result && <div className="lab-cli-result">
-        <div><strong>{result.tool}</strong><span> exit {result.exit_code} · {result.duration_ms} ms{result.truncated ? " · truncated" : ""}</span></div>
+        <div><strong>{result.tool}</strong><span> exit {result.exit_code} · {result.duration_ms} ms{result.scanned_port_count ? ` · ${result.scanned_port_count} ports scanned` : ""}{result.truncated ? " · truncated" : ""}</span></div>
         <pre>{result.output || "Command completed without output."}</pre>
       </div>}
     </section>
   );
 }
 
+function TestConnectionPortTool({ devices }) {
+  const [deviceId, setDeviceId] = useState(devices[0]?.id || "");
+  const [ports, setPorts] = useState("22,80,443,445,3389");
+  const [timeoutSeconds, setTimeoutSeconds] = useState(2);
+  const [grep, setGrep] = useState("");
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function run(event) {
+    event.preventDefault();
+    const parsedPorts = ports
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter(Number.isInteger);
+    if (!parsedPorts.length) {
+      setError("Enter at least one TCP port.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setResult(null);
+    try {
+      setResult(await runTestConnectionPorts({
+        device_id: Number(deviceId),
+        ports: parsedPorts,
+        timeout_seconds: Number(timeoutSeconds),
+        ...(grep.trim() ? { grep: grep.trim() } : {}),
+      }));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="workbench-tool lab-cli-tool">
+      <header>
+        <p className="eyebrow">PowerShell connectivity</p>
+        <h3>Test-Connection TCP port scan</h3>
+        <span>Test selected TCP ports on one registered device with PowerShell Test-Connection. Windows PowerShell hosts fall back to Test-NetConnection.</span>
+      </header>
+      <form className="lab-cli-form" onSubmit={run}>
+        <label>Registered target
+          <select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} required>
+            <option value="">Select a device</option>
+            {devices.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.ip_address}</option>)}
+          </select>
+        </label>
+        <label>TCP ports (comma separated)
+          <input value={ports} onChange={(event) => setPorts(event.target.value)} placeholder="22,80,443,445,3389" required />
+        </label>
+        <label>Per-port timeout
+          <select value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(event.target.value)}>
+            {[1, 2, 3, 5, 10].map((value) => <option key={value} value={value}>{value} seconds</option>)}
+          </select>
+        </label>
+        <label>Filter output (optional)
+          <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="True, False, 443..." />
+        </label>
+        <button className="button button--primary" disabled={busy || !deviceId}>
+          {busy ? "Testing ports…" : "Run Test-Connection"}
+        </button>
+      </form>
+      {error && <div className="form-error">{error}</div>}
+      {result && <div className="lab-cli-result">
+        <div><strong>{result.tool}</strong><span> exit {result.exit_code} · {result.duration_ms} ms · {result.scanned_port_count} ports tested{result.truncated ? " · truncated" : ""}</span></div>
+        <pre>{result.output || "Port test completed without output."}</pre>
+      </div>}
+    </section>
+  );
+}
+
+function PlaybookStep({ step }) {
+  const hasOutput = Boolean(step.output?.trim());
+  let timing = "Waiting to run";
+  if (step.duration_ms !== null && step.duration_ms !== undefined) {
+    timing = `${Math.round(step.duration_ms)} ms`;
+  } else if (step.status === "CANCELLED") {
+    timing = "Not run";
+  } else if (step.started_at) {
+    timing = `Started ${formatDate(step.started_at)}`;
+  }
+
+  return (
+    <article className="diagnostic-job playbook-step">
+      <div className="diagnostic-job__heading">
+        <div>
+          <strong>{step.position}. {step.name}</strong>
+          <small>{timing}</small>
+        </div>
+        <span className={`diagnostic-status diagnostic-status--${step.status.toLowerCase()}`}>
+          {playbookStatusLabel(step.status)}
+        </span>
+      </div>
+      {step.error && <div className="diagnostic-error">{step.error}</div>}
+      {hasOutput && (
+        <details className="diagnostic-result">
+          <summary>View step output</summary>
+          <div className="lab-cli-result playbook-step__output">
+            <pre>{step.output}</pre>
+          </div>
+        </details>
+      )}
+    </article>
+  );
+}
+
+function PlaybookTool({ devices }) {
+  const [deviceId, setDeviceId] = useState(devices[0]?.id ? String(devices[0].id) : "");
+  const [profile, setProfile] = useState("FAST");
+  const [runs, setRuns] = useState([]);
+  const [selectedRunId, setSelectedRunId] = useState(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [action, setAction] = useState("");
+  const [error, setError] = useState("");
+  const [pollError, setPollError] = useState("");
+
+  useEffect(() => {
+    if (!devices.length) {
+      setDeviceId("");
+      return;
+    }
+    if (!devices.some((device) => String(device.id) === String(deviceId))) {
+      setDeviceId(String(devices[0].id));
+    }
+  }, [deviceId, devices]);
+
+  useEffect(() => {
+    if (!deviceId) {
+      setRuns([]);
+      setSelectedRunId(null);
+      return undefined;
+    }
+
+    let disposed = false;
+    setRuns([]);
+    setSelectedRunId(null);
+    setPollError("");
+    setLoadingHistory(true);
+    setError("");
+    listSecurityPlaybookRuns(Number(deviceId), 10)
+      .then((response) => {
+        if (disposed) return;
+        const recentRuns = Array.isArray(response) ? response : [];
+        setRuns(recentRuns);
+        setSelectedRunId(recentRuns[0]?.id ?? null);
+      })
+      .catch((requestError) => {
+        if (!disposed) setError(requestError.message);
+      })
+      .finally(() => {
+        if (!disposed) setLoadingHistory(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [deviceId]);
+
+  const selectedRun = useMemo(
+    () => runs.find((run) => run.id === selectedRunId) || null,
+    [runs, selectedRunId],
+  );
+  const activeRunKey = useMemo(
+    () => runs
+      .filter((run) => ACTIVE_PLAYBOOK_STATUSES.has(run.status))
+      .map((run) => run.id)
+      .sort((left, right) => left - right)
+      .join(","),
+    [runs],
+  );
+
+  useEffect(() => {
+    if (!activeRunKey) return undefined;
+    const runIds = activeRunKey.split(",").map(Number);
+    const polledDeviceId = Number(deviceId);
+    let disposed = false;
+    let timerId;
+
+    async function poll() {
+      const updates = await Promise.allSettled(
+        runIds.map((runId) => getSecurityPlaybookRun(runId)),
+      );
+      if (disposed) return;
+
+      const refreshedRuns = updates
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => result.value)
+        .filter((run) => run.device_id === polledDeviceId);
+      if (refreshedRuns.length) {
+        setRuns((current) => refreshedRuns.reduce(upsertPlaybookRun, current));
+      }
+      const failed = updates.find((result) => result.status === "rejected");
+      const failureMessage = failed
+        ? failed.reason instanceof Error
+          ? failed.reason.message
+          : String(failed.reason)
+        : "";
+      setPollError(failed ? `Progress refresh failed: ${failureMessage}` : "");
+      timerId = window.setTimeout(poll, 2500);
+    }
+
+    timerId = window.setTimeout(poll, 2500);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timerId);
+    };
+  }, [activeRunKey, deviceId]);
+
+  async function createRun(event) {
+    event.preventDefault();
+    if (!deviceId) return;
+    setAction("create");
+    setError("");
+    setPollError("");
+    try {
+      const created = await createSecurityPlaybookRun({
+        device_id: Number(deviceId),
+        profile,
+      });
+      setRuns((current) => upsertPlaybookRun(current, created));
+      setSelectedRunId(created.id);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setAction("");
+    }
+  }
+
+  async function cancelRun(runId) {
+    setAction(`cancel-${runId}`);
+    setError("");
+    try {
+      const cancelled = await cancelSecurityPlaybookRun(runId);
+      setRuns((current) => upsertPlaybookRun(current, cancelled));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setAction("");
+    }
+  }
+
+  const steps = selectedRun?.steps || [];
+  const finishedSteps = steps.filter((step) => FINISHED_STEP_STATUSES.has(step.status)).length;
+  const progress = steps.length ? Math.round((finishedSteps / steps.length) * 100) : 0;
+  const selectedProfile = PLAYBOOK_PROFILES.find(([value]) => value === profile);
+  const currentStepName = steps.find((step) => step.step_key === selectedRun?.current_step)?.name
+    || selectedRun?.current_step
+    || "Host assessment";
+  const summary = selectedRun?.summary || {};
+  const hasSummary = Object.keys(summary).length > 0;
+
+  return (
+    <section className="workbench-tool playbook-tool">
+      <header>
+        <p className="eyebrow">Automated assessment</p>
+        <h3>Host assessment playbooks</h3>
+        <span>Run a bounded sequence of PowerShell and Linux network checks against one registered target.</span>
+      </header>
+      <form className="lab-cli-form playbook-form" onSubmit={createRun}>
+        <label>Registered target
+          <select
+            value={deviceId}
+            onChange={(event) => setDeviceId(event.target.value)}
+            disabled={Boolean(action)}
+            required
+          >
+            <option value="">Select a device</option>
+            {devices.map((device) => (
+              <option key={device.id} value={device.id}>{device.name} · {device.ip_address}</option>
+            ))}
+          </select>
+        </label>
+        <label>Playbook
+          <select value="HOST_ASSESSMENT" disabled aria-label="Playbook">
+            <option value="HOST_ASSESSMENT">Full host assessment</option>
+          </select>
+        </label>
+        <label>Assessment profile
+          <select
+            value={profile}
+            onChange={(event) => setProfile(event.target.value)}
+            disabled={Boolean(action)}
+          >
+            {PLAYBOOK_PROFILES.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="button button--primary"
+          disabled={!deviceId || loadingHistory || Boolean(action) || Boolean(activeRunKey)}
+        >
+          {action === "create"
+            ? "Starting…"
+            : loadingHistory
+              ? "Loading runs…"
+              : activeRunKey
+                ? "Assessment active"
+                : "Run assessment"}
+        </button>
+      </form>
+      <div className="playbook-profile-description">
+        <span>{selectedProfile?.[2]}</span>
+        <small>Cancellation is cooperative and takes effect after the currently running command finishes.</small>
+      </div>
+      {error && <div className="form-error playbook-error" role="alert">{error}</div>}
+      {pollError && <div className="form-error playbook-error" role="status">{pollError}</div>}
+
+      <div className="playbook-layout">
+        <aside className="playbook-history" aria-label="Recent playbook runs">
+          <div className="playbook-history__heading">
+            <strong>Recent runs</strong>
+            {loadingHistory && <span role="status">Loading…</span>}
+          </div>
+          {!loadingHistory && !runs.length && (
+            <div className="empty-state empty-state--compact">No assessments for this target yet.</div>
+          )}
+          {runs.map((run) => (
+            <button
+              type="button"
+              key={run.id}
+              className={run.id === selectedRunId ? "active" : ""}
+              aria-pressed={run.id === selectedRunId}
+              onClick={() => setSelectedRunId(run.id)}
+            >
+              <span>
+                <strong>{run.profile.charAt(0) + run.profile.slice(1).toLowerCase()}</strong>
+                <small>{formatDate(run.created_at)}</small>
+              </span>
+              <span className={`diagnostic-status diagnostic-status--${run.status.toLowerCase()}`}>
+                {playbookStatusLabel(run.status)}
+              </span>
+            </button>
+          ))}
+        </aside>
+
+        <section
+          className="playbook-run"
+          aria-labelledby={selectedRun ? `playbook-run-${selectedRun.id}-title` : undefined}
+          aria-busy={ACTIVE_PLAYBOOK_STATUSES.has(selectedRun?.status)}
+        >
+          {!selectedRun ? (
+            <div className="empty-state">Select a target and start an assessment to see its steps.</div>
+          ) : (
+            <>
+              <div className="playbook-run__heading">
+                <div>
+                  <span>RUN #{selectedRun.id} · {selectedRun.profile} · {selectedRun.target_ip}</span>
+                  <h4 id={`playbook-run-${selectedRun.id}-title`}>{currentStepName}</h4>
+                  <small>
+                    Requested by {selectedRun.requested_by} · {formatDate(selectedRun.started_at || selectedRun.created_at)}
+                  </small>
+                </div>
+                <div className="row-actions">
+                  <span
+                    className={`diagnostic-status diagnostic-status--${selectedRun.status.toLowerCase()}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {playbookStatusLabel(selectedRun.status)}
+                  </span>
+                  {ACTIVE_PLAYBOOK_STATUSES.has(selectedRun.status) && (
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => cancelRun(selectedRun.id)}
+                      disabled={selectedRun.cancel_requested || Boolean(action)}
+                    >
+                      {action === `cancel-${selectedRun.id}` || selectedRun.cancel_requested
+                        ? "Cancelling…"
+                        : "Cancel"}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div
+                className="setup-guide__progress playbook-progress"
+                role="progressbar"
+                aria-label="Playbook progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={progress}
+              >
+                <strong>{finishedSteps} of {steps.length} steps</strong>
+                <span><i style={{ width: `${progress}%` }} /></span>
+              </div>
+              {hasSummary && (
+                <div className="audit-summary playbook-summary" aria-label="Assessment summary">
+                  <article><span>Completed steps</span><strong>{summary.completed_steps ?? 0}</strong></article>
+                  <article><span>Failed steps</span><strong>{summary.failed_steps ?? 0}</strong></article>
+                  <article><span>Findings</span><strong>{summary.findings ?? 0}</strong></article>
+                  <article><span>CVE candidates</span><strong>{summary.cve_candidates ?? 0}</strong></article>
+                </div>
+              )}
+              {selectedRun.error && <div className="diagnostic-error">{selectedRun.error}</div>}
+              <div className="diagnostic-jobs playbook-steps">
+                {steps.map((step) => <PlaybookStep key={step.id} step={step} />)}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
   const cards = [
+    [
+      "playbooks",
+      "Assessment playbooks",
+      "AUTOMATED",
+      "Run a multi-step host assessment",
+    ],
     [
       "network",
       "Registered assets",
@@ -1117,6 +1576,7 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
     ["traceroute", "Traceroute", "12 HOPS", "Trace registered devices only"],
     ["query", "DNS query", "SAFE", "Validated forward and reverse lookup"],
     ["lab-cli", "Network CLI", "ADMIN", "Nmap, arp-scan, neighbors, curl and dig"],
+    ["test-connection", "TCP port test", "POWERSHELL", "Test selected ports on a registered host"],
     [
       "policy",
       "Firewall & routing",
@@ -1256,6 +1716,7 @@ export default function SecurityWorkbenchModal({
               onChangeTab={changeTab}
             />
           )}
+          {tab === "playbooks" && <PlaybookTool devices={devices} />}
           {tab === "decoder" && <DecoderTool />}
           {tab === "network" && (
             <NetworkTool devices={devices} onSelectDevice={selectDevice} />
@@ -1276,6 +1737,7 @@ export default function SecurityWorkbenchModal({
           {tab === "query" && <QueryTool />}
           {tab === "policy" && <HostNetworkPolicyTool />}
           {tab === "lab-cli" && <LabCliTool devices={devices} />}
+          {tab === "test-connection" && <TestConnectionPortTool devices={devices} />}
         </main>
       </section>
     </div>

@@ -3810,6 +3810,37 @@ td:first-child span {
 .finding small {
   color: #7b8798;
 }
+.cve-finding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 7px 0;
+}
+.cve-finding-meta span,
+.cve-finding-meta a {
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: #eef4ff;
+  color: #315fa8;
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+.cve-finding-meta a:hover {
+  text-decoration: underline;
+}
+.cve-finding-cpe {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 6px 0;
+  padding: 4px 7px;
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  background: #f3f5f8;
+  color: #526177;
+  font-size: 10px;
+}
 .finding--high > span,
 .finding--critical > span {
   color: #a63737;
@@ -6749,6 +6780,256 @@ kbd {
   color: #d6f5df;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.playbook-form {
+  grid-template-columns: repeat(3, minmax(180px, 1fr)) auto;
+  align-items: end;
+  margin: 0;
+  padding: 20px 26px 0;
+}
+.playbook-form .button {
+  min-height: 38px;
+}
+.playbook-profile-description {
+  display: grid;
+  gap: 4px;
+  margin: 14px 26px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: #536177;
+  background: #f5f8fc;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.playbook-profile-description small {
+  color: #758297;
+  font-size: 10px;
+}
+.playbook-error {
+  margin: 14px 26px 0;
+}
+.playbook-layout {
+  display: grid;
+  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+  min-height: 320px;
+  margin: 20px 26px 26px;
+  overflow: hidden;
+  border: 1px solid #dce3ed;
+  border-radius: 10px;
+  background: #fff;
+}
+.playbook-history {
+  min-width: 0;
+  border-right: 1px solid #e3e8f0;
+  background: #f7f9fc;
+}
+.playbook-history__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid #e3e8f0;
+}
+.playbook-history__heading strong {
+  font-size: 12px;
+}
+.playbook-history__heading span {
+  color: #758297;
+  font-size: 10px;
+}
+.playbook-history > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid #e7ebf1;
+  color: #26344c;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.playbook-history > button:hover,
+.playbook-history > button.active {
+  background: #edf3ff;
+}
+.playbook-history > button.active {
+  box-shadow: inset 3px 0 #315fda;
+}
+.playbook-history > button:focus-visible {
+  outline: 2px solid #315fda;
+  outline-offset: -2px;
+}
+.playbook-history > button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.playbook-history > button > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.playbook-history > button strong,
+.playbook-history > button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.playbook-history > button small {
+  color: #7a8799;
+  font-size: 10px;
+}
+.playbook-history .empty-state {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.playbook-run {
+  min-width: 0;
+  padding: 18px;
+}
+.playbook-run__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.playbook-run__heading > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.playbook-run__heading > div:first-child > span {
+  color: #66758b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.playbook-run__heading > div:first-child > h4 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #202d44;
+  font-size: 15px;
+}
+.playbook-run__heading > div:first-child > small {
+  color: #7b8799;
+}
+.playbook-progress {
+  margin: 16px 0;
+}
+.playbook-progress > span {
+  min-width: 80px;
+}
+.playbook-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 0 0 16px;
+}
+.playbook-summary article {
+  min-width: 0;
+  padding: 12px;
+}
+.playbook-summary strong {
+  font-size: 20px;
+}
+.playbook-steps {
+  overflow: hidden;
+  border: 1px solid #e3e8f0;
+  border-radius: 9px;
+}
+.playbook-step__output {
+  margin-top: 10px;
+}
+.playbook-step__output pre {
+  max-height: 340px;
+  margin: 0;
+}
+.diagnostic-status--partial {
+  color: #8a5b00;
+  background: #fff1cc;
+}
+
+.app-shell--goth .playbook-profile-description,
+.app-shell--goth .playbook-history {
+  color: #aaa0aa;
+  background: #171219;
+}
+.app-shell--goth .playbook-layout,
+.app-shell--goth .playbook-steps,
+.app-shell--goth .playbook-history,
+.app-shell--goth .playbook-history__heading,
+.app-shell--goth .playbook-history > button,
+.app-shell--goth .playbook-step {
+  border-color: #3a2d3b;
+}
+.app-shell--goth .playbook-layout,
+.app-shell--goth .playbook-run {
+  background: #141015;
+}
+.app-shell--goth .playbook-history > button {
+  color: #e5dce2;
+}
+.app-shell--goth .playbook-history > button:hover,
+.app-shell--goth .playbook-history > button.active {
+  background: #2a1d27;
+}
+.app-shell--goth .playbook-history > button.active {
+  box-shadow: inset 3px 0 #cf6287;
+}
+.app-shell--goth .playbook-history > button small,
+.app-shell--goth .playbook-history__heading span,
+.app-shell--goth .playbook-profile-description small,
+.app-shell--goth .playbook-run__heading > div:first-child > span,
+.app-shell--goth .playbook-run__heading > div:first-child > small {
+  color: #9f949e;
+}
+.app-shell--goth .playbook-run__heading > div:first-child > h4 {
+  color: #eee7eb;
+}
+.app-shell--goth .playbook-progress > span {
+  background: #382d38;
+}
+.app-shell--goth .diagnostic-status--partial {
+  color: #efc96f;
+  background: #493a1d;
+}
+
+@media (max-width: 900px) {
+  .playbook-form {
+    grid-template-columns: 1fr 1fr;
+  }
+  .playbook-layout {
+    grid-template-columns: 1fr;
+  }
+  .playbook-history {
+    max-height: 210px;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid #e3e8f0;
+  }
+  .playbook-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .playbook-form {
+    grid-template-columns: 1fr;
+  }
+  .playbook-run__heading,
+  .playbook-step .diagnostic-job__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .playbook-run__heading .row-actions {
+    justify-content: space-between;
+  }
+  .playbook-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 :root[data-aegis-theme="classic"] {

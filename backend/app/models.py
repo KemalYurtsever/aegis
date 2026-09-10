@@ -172,6 +172,7 @@ class AlertEvent(Base):
             name="ck_alert_type",
         ),
         CheckConstraint("severity IN ('WARNING', 'CRITICAL')", name="ck_alert_severity"),
+        Index("ix_alert_events_device_type_resolved", "device_id", "alert_type", "resolved_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -263,6 +264,7 @@ class VulnerabilityScan(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="RUNNING")
+    profile: Mapped[str] = mapped_column(String(12), nullable=False, default="FAST")
     findings: Mapped[list["VulnerabilityFinding"]] = relationship(cascade="all, delete-orphan", passive_deletes=True)
 
 
@@ -276,6 +278,85 @@ class VulnerabilityFinding(Base):
     description: Mapped[str] = mapped_column(String(1000), nullable=False)
     recommendation: Mapped[str] = mapped_column(String(1000), nullable=False)
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cve_id: Mapped[str | None] = mapped_column(String(24), index=True, nullable=True)
+    cvss_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cve_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    match_confidence: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    service_product: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    service_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    service_cpe: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class CveLookupCache(Base):
+    __tablename__ = "cve_lookup_cache"
+    query_key: Mapped[str] = mapped_column(String(500), primary_key=True)
+    response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
+class SecurityPlaybookRun(Base):
+    __tablename__ = "security_playbook_runs"
+    __table_args__ = (
+        CheckConstraint("profile IN ('FAST', 'DETAILED', 'AGGRESSIVE')", name="ck_security_playbook_profile"),
+        CheckConstraint(
+            "status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED')",
+            name="ck_security_playbook_status",
+        ),
+        CheckConstraint("active_slot IS NULL OR active_slot = 1", name="ck_security_playbook_active_slot"),
+        UniqueConstraint("device_id", "active_slot", name="uq_security_playbook_active_device"),
+        Index("ix_security_playbook_runs_device_created", "device_id", "created_at", "id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    target_ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    profile: Mapped[str] = mapped_column(String(12), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), index=True, nullable=False, default="QUEUED")
+    active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
+    current_step: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    steps: Mapped[list["SecurityPlaybookStep"]] = relationship(
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="SecurityPlaybookStep.position",
+    )
+
+    @property
+    def summary(self) -> dict:
+        try:
+            value = json.loads(self.summary_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+
+class SecurityPlaybookStep(Base):
+    __tablename__ = "security_playbook_steps"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')",
+            name="ck_security_playbook_step_status",
+        ),
+        UniqueConstraint("run_id", "position", name="uq_security_playbook_step_position"),
+        UniqueConstraint("run_id", "step_key", name="uq_security_playbook_step_key"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("security_playbook_runs.id", ondelete="CASCADE"), index=True, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    step_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), index=True, nullable=False, default="PENDING")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
 
 class PacketCapture(Base):
@@ -306,6 +387,9 @@ class PacketMetadata(Base):
 
 class AnomalyEvent(Base):
     __tablename__ = "anomaly_events"
+    __table_args__ = (
+        Index("ix_anomaly_events_device_metric_detected", "device_id", "metric", "detected_at"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
     metric: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -345,6 +429,7 @@ class ServiceResult(Base):
     __tablename__ = "service_results"
     __table_args__ = (
         CheckConstraint("status IN ('UP', 'DOWN')", name="ck_service_result_status"),
+        Index("ix_service_results_check_timestamp_id", "service_check_id", "timestamp", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -362,6 +447,9 @@ class ServiceResult(Base):
 
 class HostMetric(Base):
     __tablename__ = "host_metrics"
+    __table_args__ = (
+        Index("ix_host_metrics_device_timestamp_id", "device_id", "timestamp", "id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[int] = mapped_column(

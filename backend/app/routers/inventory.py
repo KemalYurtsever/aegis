@@ -121,7 +121,25 @@ def inventory_health(
     now = utc_now()
     stale_before = now - timedelta(hours=stale_hours)
     expiring_before = now + timedelta(hours=24)
-    devices = list(db.scalars(select(Device).order_by(Device.name, Device.id)))
+    latest_result_id = (
+        select(MonitorResult.id)
+        .where(MonitorResult.device_id == Device.id)
+        .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
+        .limit(1)
+        .correlate(Device)
+        .scalar_subquery()
+    )
+    device_rows = db.execute(
+        select(Device, MonitorResult.timestamp)
+        .outerjoin(MonitorResult, MonitorResult.id == latest_result_id)
+        .order_by(Device.name, Device.id)
+    ).all()
+    devices = [row[0] for row in device_rows]
+    latest_by_device = {
+        device.id: timestamp
+        for device, timestamp in device_rows
+        if timestamp is not None
+    }
     issues: list[InventoryHealthIssue] = []
 
     for device in devices:
@@ -137,21 +155,16 @@ def inventory_health(
                 issue_type="LEASE_EXPIRING", detail=f"DHCP lease expires at {lease_expiry.isoformat()}.",
             ))
 
-        latest = db.scalar(
-            select(MonitorResult)
-            .where(MonitorResult.device_id == device.id)
-            .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
-            .limit(1)
-        )
-        if latest is None:
+        latest_timestamp = latest_by_device.get(device.id)
+        if latest_timestamp is None:
             issues.append(InventoryHealthIssue(
                 device_id=device.id, device_name=device.name, ip_address=device.ip_address,
                 issue_type="NEVER_CHECKED", detail="This device has no monitoring results.",
             ))
-        elif _aware(latest.timestamp) < stale_before:
+        elif _aware(latest_timestamp) < stale_before:
             issues.append(InventoryHealthIssue(
                 device_id=device.id, device_name=device.name, ip_address=device.ip_address,
-                issue_type="STALE_CHECK", detail=f"Last monitoring result was {latest.timestamp.isoformat()}.",
+                issue_type="STALE_CHECK", detail=f"Last monitoring result was {latest_timestamp.isoformat()}.",
             ))
 
     mac_groups: dict[str, list[Device]] = {}

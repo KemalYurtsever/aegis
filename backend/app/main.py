@@ -1,12 +1,11 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
-
 from app.config import get_settings
-from app.database import Base, SessionLocal, engine, get_db, migrate_agent_monitoring_columns, migrate_automation_columns, migrate_device_inventory_columns, migrate_notification_tables
+from app.database import Base, SessionLocal, engine, ensure_performance_indexes, get_db, migrate_agent_monitoring_columns, migrate_automation_columns, migrate_device_inventory_columns, migrate_notification_tables, migrate_vulnerability_columns
 from app.models import AuditEvent
 from app.routers.alerts import router as alerts_router
 from app.routers.dashboard import get_dashboard, router as dashboard_router
@@ -24,7 +23,7 @@ from app.routers.advanced_monitoring import router as advanced_monitoring_router
 from app.routers.inventory import inventory_health, router as inventory_router
 from app.routers.reliability import router as reliability_router
 from app.routers.reports import router as reports_router
-from app.routers.topology import get_topology, router as topology_router
+from app.routers.topology import get_cached_topology, router as topology_router
 from app.routers.diagnostics import ingest_router as diagnostic_ingest_router, router as diagnostics_router
 from app.routers.automation import router as automation_router
 from app.routers.system import router as system_router
@@ -34,6 +33,7 @@ from app.schemas import HealthResponse, SchedulerStatus
 from app.services.auth_service import session_user
 from app.security import InMemoryRateLimiter, RequestBodyLimitMiddleware, rate_limit_for, request_identity
 from app.services.backup_service import BackupService, PeriodicBackup
+from app.services.security_playbook_service import SecurityPlaybookRunner
 
 
 @asynccontextmanager
@@ -41,13 +41,10 @@ async def lifespan(application: FastAPI):
     migrate_notification_tables(engine)
     migrate_device_inventory_columns(engine)
     Base.metadata.create_all(bind=engine)
-    with engine.begin() as connection:
-        connection.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_monitor_results_device_timestamp_id "
-            "ON monitor_results (device_id, timestamp, id)"
-        ))
+    migrate_vulnerability_columns(engine)
     migrate_agent_monitoring_columns(engine)
     migrate_automation_columns(engine)
+    ensure_performance_indexes(engine)
     settings = get_settings()
     session_factory = getattr(application.state, "session_factory", SessionLocal)
     application.state.session_factory = session_factory
@@ -55,6 +52,9 @@ async def lifespan(application: FastAPI):
     # A fresh limiter per application lifespan prevents stale counters after a
     # development reload and keeps test/application instances isolated.
     application.state.rate_limiter = InMemoryRateLimiter()
+    playbook_runner = SecurityPlaybookRunner(session_factory)
+    application.state.playbook_runner = playbook_runner
+    playbook_runner.start()
     scheduler_enabled = getattr(application.state, "scheduler_enabled", settings.scheduler_enabled)
     scheduler = PeriodicMonitor(
         session_factory,
@@ -78,6 +78,7 @@ async def lifespan(application: FastAPI):
     finally:
         await backup_scheduler.stop()
         await scheduler.stop()
+        await asyncio.to_thread(playbook_runner.shutdown)
 
 
 settings = get_settings()
@@ -209,7 +210,7 @@ def dashboard_refresh(request: Request, db=Depends(get_db)):
         "dashboard": get_dashboard(db),
         "scheduler": scheduler_response(request.app.state.monitor_scheduler),
         "inventory_health": inventory_health(stale_hours=24, db=db),
-        "topology": get_topology(db),
+        "topology": get_cached_topology(db),
         "agent_overview": get_agent_overview(db),
         "service_overview": get_service_overview(db),
     }

@@ -53,7 +53,8 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 | Status transitions | Derives online-to-offline and offline-to-online events from monitoring history. |
 | Service checks | Monitors TCP ports and HTTP or HTTPS endpoints on registered devices. HTTP checks use a validated path and record response time and status code. |
 | Service history | Shows recent results, uptime, successful and failed totals, average response time, and a dependency-free response-time chart. |
-| Common-port scan | Checks a fixed infrastructure port allowlist against a registered device and can turn an open port into a scheduled service check. |
+| TCP port scan | Scans Nmap's 1,000 most common TCP ports on a registered device, using Nmap when available and a bounded host-side socket scanner otherwise, then can turn an open port into a scheduled service check. |
+| Attack-surface CVE correlation | Runs a fast top-1,000 TCP pass, then performs Fast, Detailed, or Aggressive service detection only on open ports. It searches the full NVD CVE corpus for supported fingerprints, caches results for 24 hours, and marks matches for applicability review. |
 | Device fingerprinting | Uses bounded network evidence such as open services, manufacturer information, and mDNS data to suggest a device classification. |
 | Alert rules | Creates per-device rules for consecutive failures and high latency. Alerts persist, can be acknowledged, and resolve automatically after recovery. |
 | Alert history | Provides a searchable operational record of active, acknowledged, and resolved alert events. |
@@ -78,7 +79,7 @@ Anomaly results are operational indicators, not diagnoses. Aegis performs this a
 | Local network discovery | Detects the active physical Windows adapter, presents its network for confirmation, and probes at most one local `/24`. Existing addresses are skipped and available MAC addresses are imported. |
 | Network change reset | Remembers the last discovered subnet in the browser. When the connected subnet changes, the administrator is offered an exact-phrase reset before discovery so identical private IP ranges from different labs are not mixed. The same reset is available under **More actions**. |
 | Network topology | Infers logical placement from VLAN and subnet data and supports confirmed `UPLINK`, `CONNECTS TO`, `ROUTES TO`, and `MANAGES` relationships. |
-| Attack-surface assessment | Checks a fixed common-port set, identifies exposed management, cleartext, database, and infrastructure services, reads short passive banners, inspects HTTP security headers, and records TLS negotiation details. |
+| Attack-surface assessment | Checks the ranked top 1,000 TCP ports, identifies exposed management, cleartext, database, and infrastructure services, runs time-bounded version detection, inspects HTTP security headers and TLS posture, and correlates supported fingerprints with NVD CVEs. |
 | Assessment comparison | Compares the two latest assessments, calculates a capped 0–100 exposure score, and separates new, persistent, and resolved findings. Informational evidence does not increase the score. |
 | Passive attack paths | Correlates stored assessment results with groups, subnets, criticality, and remote-access services to prioritize possible paths between registered assets. It sends no additional traffic. |
 | Controlled packet capture | Captures packet metadata for 1–30 seconds and 1–1000 packets. It stores timestamps, addresses, protocol, ports, and length—never packet payloads or PCAP files. |
@@ -102,7 +103,9 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
 | Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
 | DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
-| Network CLI | Runs administrator-only Nmap TCP scans against registered devices, local ARP discovery, the host neighbor table, HTTP(S) `curl`, and DNS record queries, with optional literal line filtering. Linux uses `arp-scan` and `dig`; Windows uses Npcap/Scapy and `nslookup` when those binaries are unavailable. Commands use typed arguments, fixed timeouts, and capped output without invoking a shell. |
+| Network CLI | Runs administrator-only Nmap TCP scans against registered devices with Fast, Fast version, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) profiles. It also provides local ARP discovery, the host neighbor table, HTTP(S) `curl`, and DNS queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, and capped output without invoking a shell. |
+| PowerShell TCP test | Tests up to 128 TCP ports on one registered device with PowerShell 7 `Test-Connection -TcpPort`; Windows PowerShell falls back to `Test-NetConnection -Port`. Targets and ports are passed as validated data rather than command text. |
+| Assessment playbooks | Queues a persistent four-step assessment for one registered target: PowerShell TCP reachability, traceroute, Nmap top-1,000 attack-surface and CVE correlation, then DNS identity. Fast, Detailed, and Aggressive profiles control probe depth. The workbench shows durable per-step progress and output, and cancellation takes effect after the active command finishes. |
 
 Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, payload capture, exploit execution, brute force, or arbitrary remote command execution.
 
@@ -155,7 +158,7 @@ Aegis intentionally uses a small, inspectable architecture.
 | Web interface | React and Vite | Responsive dashboard, device workflows, reporting, administration, and browser-local utilities. |
 | Application API | FastAPI and Pydantic | Authentication, validation, authorization, monitoring workflows, reporting, and administrative APIs. |
 | Data store | SQLite and SQLAlchemy | Inventory, users, sessions, monitoring history, alerts, audit records, automation state, and configuration. |
-| Scheduler | In-process asynchronous task | Periodic checks, alert evaluation, agent-health evaluation, notifications, backups, reports, and enabled automations. |
+| Scheduler and playbook runner | Bounded in-process workers | Periodic monitoring plus a single-worker queue for persistent administrator-requested security assessments. |
 | Agent ingress | Separate FastAPI process in hybrid mode | Narrow endpoint surface for remote metrics and diagnostic job exchange. |
 | Observability | Prometheus and Grafana | Metric retention, querying, and provisioned infrastructure dashboards. |
 
@@ -168,7 +171,7 @@ SQLite is appropriate for a single Aegis application instance. The Kubernetes ma
 - PowerShell on Windows, or an equivalent terminal for native development
 - Docker Desktop for Prometheus, Grafana, or the complete container stack
 - Npcap for Windows packet metadata capture
-- Nmap for local TCP scans and remote-agent service/version diagnostics
+- Nmap is optional for top-port discovery, which has a host-side socket fallback. Nmap is required for Fast (`-sV --version-intensity 0`), Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) fingerprints and high-confidence CPE-based CVE correlation.
 - `arp-scan`, `curl`, `dig` (`dnsutils`), `iproute2`, and `traceroute` when running the backend directly on Linux; the backend container installs these packages
 
 ## Installation
@@ -324,7 +327,8 @@ Backend settings can be supplied through the process environment or `backend/.en
 | Variable | Default | Purpose |
 |---|---:|---|
 | `DATABASE_URL` | `sqlite:///./monitoring.db` | SQLAlchemy database connection. |
-| `PING_TIMEOUT_SECONDS` | `2` | Per-device reachability timeout. |
+| `PING_TIMEOUT_SECONDS` | `1` | Per-device reachability timeout. |
+| `AEGIS_MONITOR_CHECK_WORKERS` | `32` | Maximum concurrent reachability probes for manual batch checks. Database writes remain sequential. |
 | `MONITOR_INTERVAL_SECONDS` | `60` | Scheduler interval in seconds. |
 | `SCHEDULER_ENABLED` | `true` | Enables scheduled monitoring at application startup. |
 | `AEGIS_BACKUP_ENABLED` | `true` | Enables startup and scheduled database backups. |
@@ -342,7 +346,10 @@ Backend settings can be supplied through the process environment or `backend/.en
 | `AEGIS_TWILIO_ACCOUNT_SID` | unset | Twilio account identifier. |
 | `AEGIS_TWILIO_AUTH_TOKEN` | unset | Twilio authentication secret. |
 | `AEGIS_ALLOW_PUBLIC_LAN_DISCOVERY` | `false` | Allows discovery on the bounded `/24` of the active physical adapter when its address is not private. |
-| `AEGIS_DISCOVERY_ARP_PACKETS_PER_SECOND` | `20` | Rate limit for the retry-free ARP discovery pass. |
+| `AEGIS_DISCOVERY_PING_WORKERS` | `64` | Maximum concurrent ICMP probes during bounded network discovery. |
+| `AEGIS_DISCOVERY_PING_TIMEOUT_SECONDS` | `0.4` | Per-address ICMP timeout during discovery. |
+| `AEGIS_DISCOVERY_MDNS_TIMEOUT_SECONDS` | `2` | Passive mDNS collection window during discovery. |
+| `NVD_API_KEY` | unset | Optional NVD API key for a higher request rate during product/version CVE correlation. The key is sent only to `services.nvd.nist.gov`. |
 | `AEGIS_FOUNDRY_LOCAL_URL` | unset | Optional loopback or private Foundry Local-compatible endpoint for health-summary wording. |
 | `AEGIS_FOUNDRY_LOCAL_MODEL` | unset | Model identifier used with the optional local summary endpoint. |
 | `VITE_GRAFANA_URL` | `http://127.0.0.1:3000` | Browser-visible Grafana base URL set at frontend build time. |

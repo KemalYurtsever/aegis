@@ -33,7 +33,7 @@ from app.schemas import (
     StatusEvent,
 )
 from app.routers.auth import require_admin
-from app.services.monitoring_service import check_and_store_device
+from app.services.monitoring_service import check_and_store_device, check_and_store_devices
 from app.services.statistics_service import calculate_device_statistics, derive_status_events
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
@@ -132,7 +132,7 @@ def check_all_devices(db: Session = Depends(get_db)) -> BatchCheckResponse:
     devices = list(
         db.scalars(select(Device).where(Device.is_active.is_(True)).order_by(Device.id))
     )
-    results = [check_and_store_device(device, db) for device in devices]
+    results = check_and_store_devices(devices, db)
     return BatchCheckResponse(
         checked_devices=len(results),
         online_devices=sum(result.status == "ONLINE" for result in results),
@@ -153,7 +153,7 @@ def get_bulk_devices(device_ids: list[int], db: Session) -> list[Device]:
 @router.post("/bulk/check", response_model=BatchCheckResponse, status_code=status.HTTP_201_CREATED)
 def check_selected_devices(payload: BulkDeviceIds, db: Session = Depends(get_db)) -> BatchCheckResponse:
     devices = get_bulk_devices(payload.device_ids, db)
-    results = [check_and_store_device(device, db) for device in devices]
+    results = check_and_store_devices(devices, db)
     return BatchCheckResponse(
         checked_devices=len(results),
         online_devices=sum(result.status == "ONLINE" for result in results),

@@ -15,10 +15,16 @@ def create_database_engine(database_url: str):
     engine = create_engine(database_url, connect_args=connect_args)
 
     if database_url.startswith("sqlite"):
+        use_wal = database_url.startswith("sqlite:///") and ":memory:" not in database_url
+
         @event.listens_for(engine, "connect")
         def enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=5000")
+            if use_wal:
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
 
     return engine
@@ -31,6 +37,53 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 def get_db() -> Generator[Session, None, None]:
     with SessionLocal() as session:
         yield session
+
+
+def ensure_performance_indexes(engine) -> None:
+    """Add composite indexes used by recurring latest-result and alert queries."""
+    if engine.dialect.name != "sqlite":
+        return
+    statements = (
+        "CREATE INDEX IF NOT EXISTS ix_monitor_results_device_timestamp_id ON monitor_results (device_id, timestamp, id)",
+        "CREATE INDEX IF NOT EXISTS ix_service_results_check_timestamp_id ON service_results (service_check_id, timestamp, id)",
+        "CREATE INDEX IF NOT EXISTS ix_host_metrics_device_timestamp_id ON host_metrics (device_id, timestamp, id)",
+        "CREATE INDEX IF NOT EXISTS ix_alert_events_device_type_resolved ON alert_events (device_id, alert_type, resolved_at)",
+        "CREATE INDEX IF NOT EXISTS ix_anomaly_events_device_metric_detected ON anomaly_events (device_id, metric, detected_at)",
+        "CREATE INDEX IF NOT EXISTS ix_vulnerability_findings_cve_id ON vulnerability_findings (cve_id)",
+    )
+    with engine.begin() as connection:
+        tables = set(inspect(connection).get_table_names())
+        for statement in statements:
+            table_name = statement.rsplit(" ON ", 1)[1].split(" ", 1)[0]
+            if table_name in tables:
+                connection.execute(text(statement))
+
+
+def migrate_vulnerability_columns(engine) -> None:
+    """Add CVE evidence fields to existing local SQLite databases."""
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names())
+        if "vulnerability_findings" in tables:
+            columns = {column["name"] for column in inspector.get_columns("vulnerability_findings")}
+            additions = {
+                "cve_id": "VARCHAR(24)",
+                "cvss_score": "FLOAT",
+                "cve_url": "VARCHAR(300)",
+                "match_confidence": "VARCHAR(10)",
+                "service_product": "VARCHAR(200)",
+                "service_version": "VARCHAR(100)",
+                "service_cpe": "VARCHAR(500)",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE vulnerability_findings ADD COLUMN {name} {definition}"))
+        if "vulnerability_scans" in tables:
+            scan_columns = {column["name"] for column in inspector.get_columns("vulnerability_scans")}
+            if "profile" not in scan_columns:
+                connection.execute(text("ALTER TABLE vulnerability_scans ADD COLUMN profile VARCHAR(12) NOT NULL DEFAULT 'FAST'"))
 
 
 def migrate_device_inventory_columns(engine) -> None:
