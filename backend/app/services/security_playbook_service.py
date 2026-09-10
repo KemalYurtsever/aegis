@@ -31,7 +31,7 @@ from app.services.vulnerability_service import run_vulnerability_scan
 PLAYBOOK_STEPS = (
     ("powershell_tcp", "PowerShell TCP reachability"),
     ("traceroute", "Network path trace"),
-    ("attack_surface", "Nmap attack surface and CVE correlation"),
+    ("attack_surface", "Nmap exposure, NSE verification and CVE correlation"),
     ("dns_identity", "DNS identity lookup"),
 )
 ACTIVE_RUN_STATUSES = ("QUEUED", "RUNNING")
