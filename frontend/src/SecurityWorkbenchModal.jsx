@@ -1209,7 +1209,7 @@ function TestConnectionPortTool({ devices }) {
       <header>
         <p className="eyebrow">PowerShell connectivity</p>
         <h3>PowerShell TCP port scan</h3>
-        <span>Test selected TCP ports concurrently. PowerShell 7 uses Test-Connection; Windows PowerShell uses bounded .NET TCP probes.</span>
+        <span>Test selected TCP ports concurrently. Completed means the scan finished; each result identifies open, refused, or unanswered ports.</span>
       </header>
       <form className="lab-cli-form" onSubmit={run}>
         <label>Registered target
@@ -1227,7 +1227,7 @@ function TestConnectionPortTool({ devices }) {
           </select>
         </label>
         <label>Filter output (optional)
-          <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="True, False, 443..." />
+          <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="Open, Closed, NoResponse, 443..." />
         </label>
         <button className="button button--primary" disabled={busy || !deviceId}>
           {busy ? "Testing ports…" : "Run TCP test"}

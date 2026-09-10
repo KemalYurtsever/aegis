@@ -153,6 +153,11 @@ def test_test_connection_uses_validated_environment_values(monkeypatch):
         "AEGIS_TCP_TEST_PORTS": "443,80",
         "AEGIS_TCP_TEST_TIMEOUT": "2",
     }
+    script = captured["command"][4]
+    assert "PowerShell 7 Test-Connection -TcpPort" in script
+    assert "Scan completed:" in script
+    assert "NoResponse" in script
+    assert "LatencyMs=$latency" in script
 
 
 def test_windows_powershell_tcp_fallback_is_parallel_and_deadline_bounded(monkeypatch):
@@ -176,7 +181,10 @@ def test_windows_powershell_tcp_fallback_is_parallel_and_deadline_bounded(monkey
     script = captured["command"][4]
     assert "BeginConnect" in script
     assert "Test-NetConnection" not in script
+    assert "Windows PowerShell .NET TcpClient" in script
     assert "$deadline=" in script
+    assert "closed/refused" in script
+    assert "State=$state" in script
     assert captured["kwargs"]["timeout"] == 13
     assert captured["kwargs"]["scanned_port_count"] == 3
 
