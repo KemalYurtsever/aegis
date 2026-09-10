@@ -40,7 +40,7 @@ _HOSTNAME = re.compile(
 _ADDRESS_TOKEN = re.compile(r"(?<![0-9a-f:.])(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]{2,})(?![0-9a-f:.])", re.I)
 _LATENCY_TOKEN = re.compile(r"<?(\d+(?:\.\d+)?)\s*ms", re.I)
 _MAX_TOOL_OUTPUT = 100_000
-_DOCKER_TOOLBOX_COMMANDS = {"nmap", "arp-scan", "curl", "dig"}
+_DOCKER_TOOLBOX_COMMANDS = {"nmap", "arp-scan", "avahi-browse", "curl", "dig"}
 
 
 def _filter_output(output: str, grep: str | None) -> str:
@@ -269,6 +269,32 @@ def arp_scan(interface_name: str | None = None, grep: str | None = None) -> LabC
     if interface_name:
         command.extend(["--interface", interface_name])
     return _run_lab_tool("arp-scan", command, grep=grep, timeout=45)
+
+
+def avahi_browse(grep: str | None = None) -> LabCommandRead:
+    """Show the bounded DNS-SD cache without publishing an Aegis service."""
+    result = _run_lab_tool(
+        "avahi-browse",
+        [
+            "avahi-browse",
+            "--all",
+            "--resolve",
+            "--terminate",
+            "--no-db-lookup",
+            "--ignore-local",
+        ],
+        target="local mDNS",
+        grep=grep,
+        timeout=12,
+    )
+    if result.exit_code == 0 and not result.output.strip():
+        message = (
+            "No Avahi output matched the filter."
+            if grep
+            else "No DNS-SD services were visible inside Docker. Use Discover network for host-interface mDNS discovery."
+        )
+        return result.model_copy(update={"output": message})
+    return result
 
 
 def neighbor_table(grep: str | None = None) -> LabCommandRead:

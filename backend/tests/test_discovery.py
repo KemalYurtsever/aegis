@@ -48,6 +48,34 @@ def test_discovery_imports_new_devices_and_skips_existing(client, admin_headers,
     assert resolved_addresses == ["198.18.1.50"]
 
 
+def test_discovery_persists_mdns_friendly_name_model_and_services(client, admin_headers, monkeypatch):
+    monkeypatch.setattr("app.services.discovery_service.get_primary_private_network", lambda: NETWORK)
+    monkeypatch.setattr(
+        "app.services.discovery_service.discover_responsive_hosts",
+        lambda _network: [("198.18.1.60", "AA:BB:CC:DD:EE:60")],
+    )
+    monkeypatch.setattr("app.services.discovery_service.resolve_hostnames", lambda _addresses: {})
+    monkeypatch.setattr(
+        "app.services.mdns_service.discover_mdns",
+        lambda *_args: {
+            "198.18.1.60": {
+                "hostname": "cast-device.local",
+                "display_name": "Living Room TV",
+                "model": "Chromecast Ultra",
+                "services": ["googlecast", "http"],
+            }
+        },
+    )
+
+    response = client.post("/api/discovery/import", headers=admin_headers)
+
+    assert response.status_code == 200
+    device = response.json()["added_devices"][0]
+    assert device["name"] == "Living Room TV"
+    assert device["discovered_model"] == "Chromecast Ultra"
+    assert device["discovered_services"] == "googlecast,http"
+
+
 def test_discovery_network_errors_are_safe(client, monkeypatch):
     def fail():
         raise RuntimeError("No private network found")

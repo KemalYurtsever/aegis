@@ -276,13 +276,15 @@ def discover_and_import_devices(db: Session) -> DiscoveryResult:
     ]
     hostnames = resolve_hostnames(hostname_candidates)
     for address, details in mdns.items():
-        if details.get("hostname"):
-            hostnames[address] = details["hostname"]
+        advertised_name = details.get("display_name") or details.get("hostname")
+        if advertised_name:
+            hostnames[address] = advertised_name
 
     added: list[Device] = []
     skipped = 0
     for address, mac_address in responsive:
         services = mdns.get(address, {}).get("services", [])
+        discovered_model = mdns.get(address, {}).get("model")
         if address in existing:
             device = existing[address]
             if mac_address:
@@ -295,6 +297,8 @@ def discover_and_import_devices(db: Session) -> DiscoveryResult:
                 classification = classify_device(services)
                 if classification and device.device_type == "Other":
                     device.device_type = classification
+            if discovered_model:
+                device.discovered_model = discovered_model
             skipped += 1
             continue
         details = [f"Automatically discovered on {network.interface_name}."]
@@ -305,6 +309,7 @@ def discover_and_import_devices(db: Session) -> DiscoveryResult:
             ip_address=address,
             mac_address=mac_address,
             manufacturer=lookup_mac_vendor(mac_address),
+            discovered_model=discovered_model,
             discovered_services=",".join(services) or None,
             inventory_source="DISCOVERY",
             device_type=classify_device(services) or "Other",

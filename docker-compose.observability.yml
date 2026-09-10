@@ -9,6 +9,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /run/dbus
+      - /run/avahi-daemon:uid=101,gid=102,mode=0755
     environment:
       HOME: /
       XDG_CONFIG_HOME: /tmp/xdg/config
@@ -18,6 +20,9 @@ services:
       - ALL
     cap_add:
       - NET_RAW
+      - SETGID
+      - SETPCAP
+      - SETUID
     security_opt:
       - no-new-privileges:true
 

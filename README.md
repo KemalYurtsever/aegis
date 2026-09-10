@@ -55,7 +55,7 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 | Service history | Shows recent results, uptime, successful and failed totals, average response time, and a dependency-free response-time chart. |
 | TCP port scan | Scans Nmap's 1,000 most common TCP ports on a registered device, using Nmap when available and a bounded host-side socket scanner otherwise, then can turn an open port into a scheduled service check. |
 | Attack-surface CVE correlation | Runs a fast top-1,000 TCP pass, then performs Fast, Detailed, or Aggressive service detection only on open ports. It runs signed, bounded Nuclei exposure checks against discovered web endpoints, searches the full NVD CVE corpus for supported fingerprints, enriches matches with CISA KEV and FIRST EPSS priority data, caches external results for 24 hours, and marks matches for applicability review. |
-| Device fingerprinting | Uses bounded network evidence such as open services, manufacturer information, and mDNS data to suggest a device classification. |
+| Device fingerprinting | Uses bounded network evidence such as open services, manufacturer information, and mDNS/DNS-SD names, service types, and advertised model metadata to suggest a device classification. |
 | Alert rules | Creates per-device rules for consecutive failures and high latency. Alerts persist, can be acknowledged, and resolve automatically after recovery. |
 | Alert history | Provides a searchable operational record of active, acknowledged, and resolved alert events. |
 | Maintenance windows | Suppresses expected monitoring noise during approved maintenance periods without deleting monitoring configuration. |
@@ -76,7 +76,7 @@ Anomaly results are operational indicators, not diagnoses. Aegis performs this a
 
 | Function | What it does |
 |---|---|
-| Local network discovery | Detects the active physical Windows adapter, presents its network for confirmation, and probes at most one local `/24`. Existing addresses are skipped and available MAC addresses are imported. |
+| Local network discovery | Detects the active physical Windows adapter, presents its network for confirmation, and probes at most one local `/24`. Existing addresses are skipped; available MAC addresses, mDNS friendly names, advertised models, and DNS-SD services are merged into inventory. |
 | Network change reset | Remembers the last discovered subnet in the browser. When the connected subnet changes, the administrator is offered an exact-phrase reset before discovery so identical private IP ranges from different labs are not mixed. The same reset is available under **More actions**. |
 | Network topology | Infers logical placement from VLAN and subnet data and supports confirmed `UPLINK`, `CONNECTS TO`, `ROUTES TO`, and `MANAGES` relationships. |
 | Attack-surface assessment | Checks the ranked top 1,000 TCP ports, identifies exposed management, cleartext, database, and infrastructure services, runs time-bounded version detection, inspects HTTP security headers and TLS posture, runs signed Nuclei exposure, misconfiguration, and TLS templates, correlates supported fingerprints with NVD CVEs, and prioritizes candidates with CISA KEV and FIRST EPSS evidence. |
@@ -103,7 +103,7 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
 | Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
 | DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
-| Network CLI | Runs administrator-only Nmap TCP scans against registered devices with Fast, Fast version, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) profiles. It also provides local ARP discovery, the host neighbor table, HTTP(S) `curl`, and DNS queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, and capped output without invoking a shell. |
+| Network CLI | Runs administrator-only Nmap TCP scans against registered devices with Fast, Fast version, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) profiles. It also provides local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, and DNS queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, and capped output without invoking a shell. |
 | PowerShell TCP test | Tests up to 128 TCP ports concurrently on one registered device. PowerShell 7 uses `Test-Connection -TcpPort`; Windows PowerShell uses bounded .NET TCP socket probes. Targets and ports are passed as validated data rather than command text. |
 | Assessment playbooks | Queues a persistent four-step assessment for one registered target: PowerShell TCP reachability, traceroute, Nmap top-1,000 attack-surface and CVE correlation, then DNS identity. Fast, Detailed, and Aggressive profiles control probe depth. The workbench shows durable per-step progress and output, and cancellation takes effect after the active command finishes. |
 
@@ -205,7 +205,7 @@ $rng.Dispose()
 
 ### Recommended Windows hybrid deployment
 
-Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics, and agent ingress native while running a network-toolbox sidecar, Prometheus, and Grafana in Docker. When Nmap or another supported CLI is missing from Windows, the API executes it inside the toolbox container without invoking a shell:
+Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics, and agent ingress native while running a network-toolbox sidecar, Prometheus, and Grafana in Docker. The toolbox contains Nmap, Nuclei, Avahi browsing, ARP, route, HTTP, and DNS utilities. Its Avahi service listens for DNS-SD records but does not advertise Aegis. When a supported CLI is missing from Windows, the API executes it inside the toolbox container without invoking a shell:
 
 ```powershell
 .\start-hybrid.ps1

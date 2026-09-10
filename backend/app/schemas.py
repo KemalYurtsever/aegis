@@ -94,6 +94,7 @@ class DeviceRead(DeviceFields):
     id: int
     mac_address: str | None = None
     manufacturer: str | None = None
+    discovered_model: str | None = None
     discovered_services: str | None = None
     fingerprint_ports: str | None = None
     fingerprint_summary: str | None = None
@@ -249,6 +250,7 @@ class DashboardDevice(BaseModel):
     ip_address: str
     mac_address: str | None
     manufacturer: str | None
+    discovered_model: str | None
     discovered_services: str | None
     inventory_source: str | None
     vlan: str | None
@@ -970,7 +972,7 @@ class DnsQueryRead(BaseModel):
 
 
 class LabCommandRead(BaseModel):
-    tool: Literal["nmap", "arp-scan", "ip-neigh", "curl", "dig", "test-connection"]
+    tool: Literal["nmap", "arp-scan", "avahi-browse", "ip-neigh", "curl", "dig", "test-connection"]
     target: str | None = None
     exit_code: int
     output: str

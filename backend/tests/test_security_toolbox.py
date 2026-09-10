@@ -8,6 +8,7 @@ from app.services.security_toolbox_service import (
     _filter_output,
     _run_lab_tool,
     arp_scan,
+    avahi_browse,
     curl_request,
     dig_query,
     host_network_policy,
@@ -241,6 +242,48 @@ def test_windows_arp_scan_uses_bounded_native_fallback(monkeypatch):
     assert "198.18.5.1" in result.output
     assert "198.18.5.10" in result.output
     assert "198.19.0.1" not in result.output
+
+
+def test_avahi_browse_uses_a_fixed_nonpublishing_command(monkeypatch):
+    captured = {}
+
+    def fake_run(tool, command, **kwargs):
+        captured.update(tool=tool, command=command, kwargs=kwargs)
+        return LabCommandRead(
+            tool="avahi-browse", target="local mDNS", exit_code=0,
+            output="Living Room TV", duration_ms=1.0,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    result = avahi_browse("Chromecast")
+
+    assert result.exit_code == 0
+    assert captured == {
+        "tool": "avahi-browse",
+        "command": [
+            "avahi-browse", "--all", "--resolve", "--terminate",
+            "--no-db-lookup", "--ignore-local",
+        ],
+        "kwargs": {"target": "local mDNS", "grep": "Chromecast", "timeout": 12},
+    }
+
+
+def test_avahi_browse_explains_empty_docker_multicast_results(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service._run_lab_tool",
+        lambda *_args, **_kwargs: LabCommandRead(
+            tool="avahi-browse", target="local mDNS", exit_code=0,
+            output="", duration_ms=1.0,
+        ),
+    )
+
+    result = avahi_browse()
+
+    assert result.output == (
+        "No DNS-SD services were visible inside Docker. "
+        "Use Discover network for host-interface mDNS discovery."
+    )
 
 
 def test_windows_dig_falls_back_to_nslookup(monkeypatch):
@@ -483,3 +526,33 @@ def test_test_connection_endpoint_uses_registered_device(client, monkeypatch):
         "address": "198.18.5.21", "ports": [443, 80],
         "timeout_seconds": 3, "grep": "True",
     }
+
+
+def test_avahi_browse_endpoint_is_admin_only_and_forwards_literal_filter(client, monkeypatch):
+    unauthorized = client.post(
+        "/api/security/toolbox/avahi-browse",
+        json={"grep": "Chromecast"},
+    )
+    assert unauthorized.status_code == 403
+
+    headers = admin_headers(client)
+    captured = {}
+
+    def fake_browse(grep):
+        captured["grep"] = grep
+        return LabCommandRead(
+            tool="avahi-browse", target="local mDNS", exit_code=0,
+            output="Living Room TV", duration_ms=2.0,
+        )
+
+    monkeypatch.setattr("app.routers.security.avahi_browse", fake_browse)
+
+    response = client.post(
+        "/api/security/toolbox/avahi-browse",
+        headers=headers,
+        json={"grep": "Chromecast"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tool"] == "avahi-browse"
+    assert captured == {"grep": "Chromecast"}

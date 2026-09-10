@@ -4408,6 +4408,10 @@ function DeviceDetail({
             <span>{device.manufacturer || "Unknown"}</span>
           </div>
           <div>
+            <strong>Advertised model</strong>
+            <span>{device.discovered_model || "Not advertised"}</span>
+          </div>
+          <div>
             <strong>Inventory source</strong>
             <span>
               {device.inventory_source?.replaceAll("_", " ") || "Unknown"}
@@ -5633,7 +5637,7 @@ export default function App() {
     const query = filters.query.trim().toLocaleLowerCase();
     return data.devices.filter((device) => {
       const searchable =
-        `${device.name} ${device.ip_address} ${device.device_type} ${device.asset_tag || ""} ${device.device_group || ""} ${(device.tags || []).join(" ")} ${device.owner || ""} ${device.location || ""} ${device.operating_system || ""} ${device.criticality || ""} ${device.mac_address || ""} ${device.manufacturer || ""} ${device.vlan || ""}`.toLocaleLowerCase();
+        `${device.name} ${device.ip_address} ${device.device_type} ${device.asset_tag || ""} ${device.device_group || ""} ${(device.tags || []).join(" ")} ${device.owner || ""} ${device.location || ""} ${device.operating_system || ""} ${device.criticality || ""} ${device.mac_address || ""} ${device.manufacturer || ""} ${device.discovered_model || ""} ${device.vlan || ""}`.toLocaleLowerCase();
       return (
         (!query || searchable.includes(query)) &&
         (filters.status === "ALL" ||
@@ -5835,6 +5839,7 @@ export default function App() {
         "IP address",
         "MAC address",
         "Manufacturer",
+        "Advertised model",
         "Device type",
         "VLAN",
         "Inventory source",
@@ -5857,6 +5862,7 @@ export default function App() {
         device.ip_address,
         device.mac_address,
         device.manufacturer,
+        device.discovered_model,
         device.device_type,
         device.vlan,
         device.inventory_source,
@@ -7532,6 +7538,9 @@ export default function App() {
                                         ? ` · ${device.manufacturer}`
                                         : ""}
                                     </span>
+                                  )}
+                                  {device.discovered_model && (
+                                    <span>Model: {device.discovered_model}</span>
                                   )}
                                   {device.discovered_services && (
                                     <span>
