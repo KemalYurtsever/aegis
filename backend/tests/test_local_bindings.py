@@ -28,3 +28,13 @@ def test_docker_published_ports_are_loopback_only():
         assert f'"127.0.0.1:{port}:' in observability
     assert '"0.0.0.0:' not in compose
     assert '"0.0.0.0:' not in observability
+
+
+def test_toolbox_avahi_browses_without_advertising_aegis():
+    dockerfile = (PROJECT_ROOT / "deploy" / "network-toolbox" / "Dockerfile").read_text(encoding="utf-8")
+    configuration = (PROJECT_ROOT / "deploy" / "network-toolbox" / "avahi-daemon.conf").read_text(encoding="utf-8")
+
+    assert "avahi-utils" in dockerfile
+    assert "avahi-daemon" in dockerfile
+    assert "disable-publishing=yes" in configuration
+    assert "enable-reflector=no" in configuration

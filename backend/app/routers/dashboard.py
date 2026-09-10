@@ -101,6 +101,7 @@ def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
                 ip_address=device.ip_address,
                 mac_address=device.mac_address,
                 manufacturer=device.manufacturer,
+                discovered_model=device.discovered_model,
                 discovered_services=device.discovered_services,
                 inventory_source=device.inventory_source,
                 vlan=device.vlan,

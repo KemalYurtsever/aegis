@@ -16,6 +16,7 @@ from app.schemas import (
     TraceRouteRequest,
     WirelessAdapterRead,
     LabCommandRead,
+    LabCommandFilter,
     NmapTcpScanRequest,
     TestConnectionPortRequest,
     ArpScanRequest,
@@ -32,7 +33,7 @@ from app.services.security_playbook_service import (
     build_playbook_run,
     load_playbook_run,
 )
-from app.services.security_toolbox_service import arp_scan, curl_request, dig_query, host_network_policy, neighbor_table, nmap_tcp_scan, query_dns, test_connection_ports, trace_registered_device, wireless_adapters
+from app.services.security_toolbox_service import avahi_browse, arp_scan, curl_request, dig_query, host_network_policy, neighbor_table, nmap_tcp_scan, query_dns, test_connection_ports, trace_registered_device, wireless_adapters
 
 
 router = APIRouter(
@@ -218,6 +219,14 @@ def run_arp_scan(payload: ArpScanRequest) -> LabCommandRead:
 def show_neighbors(payload: NeighborTableRequest) -> LabCommandRead:
     try:
         return neighbor_table(payload.grep)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/avahi-browse", response_model=LabCommandRead)
+def browse_mdns(payload: LabCommandFilter) -> LabCommandRead:
+    try:
+        return avahi_browse(payload.grep)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

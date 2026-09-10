@@ -5,7 +5,7 @@ FROM debian:bookworm-slim
 ARG NUCLEI_TEMPLATES_VERSION=v10.4.6
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends arp-scan ca-certificates curl dnsutils iproute2 nmap tar traceroute \
+    && apt-get install -y --no-install-recommends arp-scan avahi-daemon avahi-utils ca-certificates curl dbus dnsutils iproute2 nmap tar traceroute \
     && rm -rf /var/lib/apt/lists/*
 
 # Nuclei confines signed-template helper files to its default template root.
@@ -19,5 +19,9 @@ RUN mkdir -p /nuclei-templates \
     && test -d /nuclei-templates/ssl
 
 COPY --from=nuclei /usr/local/bin/nuclei /usr/local/bin/nuclei
+COPY avahi-daemon.conf /etc/avahi/avahi-daemon.conf
+COPY entrypoint.sh /usr/local/bin/aegis-toolbox-entrypoint
+RUN dbus-uuidgen --ensure=/etc/machine-id \
+    && chmod 0755 /usr/local/bin/aegis-toolbox-entrypoint
 
-CMD ["sleep", "infinity"]
+CMD ["/usr/local/bin/aegis-toolbox-entrypoint"]

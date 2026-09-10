@@ -169,6 +169,8 @@ def migrate_device_inventory_columns(engine) -> None:
             connection.execute(text("ALTER TABLE devices ADD COLUMN mac_address VARCHAR(17)"))
         if "manufacturer" not in columns:
             connection.execute(text("ALTER TABLE devices ADD COLUMN manufacturer VARCHAR(255)"))
+        if "discovered_model" not in columns:
+            connection.execute(text("ALTER TABLE devices ADD COLUMN discovered_model VARCHAR(200)"))
         if "discovered_services" not in columns:
             connection.execute(text("ALTER TABLE devices ADD COLUMN discovered_services VARCHAR(500)"))
         if "fingerprint_ports" not in columns:

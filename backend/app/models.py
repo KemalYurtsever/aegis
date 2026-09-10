@@ -20,6 +20,7 @@ class Device(Base):
     ip_address: Mapped[str] = mapped_column(String(45), unique=True, index=True, nullable=False)
     mac_address: Mapped[str | None] = mapped_column(String(17), nullable=True)
     manufacturer: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    discovered_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
     discovered_services: Mapped[str | None] = mapped_column(String(500), nullable=True)
     fingerprint_ports: Mapped[str | None] = mapped_column(String(200), nullable=True)
     fingerprint_summary: Mapped[str | None] = mapped_column(String(500), nullable=True)

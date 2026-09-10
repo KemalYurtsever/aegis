@@ -231,6 +231,9 @@ export function runArpScan(payload = {}) {
 export function getNeighborTable(payload = {}) {
   return jsonRequest("/api/security/toolbox/neighbors", "POST", payload);
 }
+export function runAvahiBrowse(payload = {}) {
+  return jsonRequest("/api/security/toolbox/avahi-browse", "POST", payload);
+}
 export function runCurlRequest(payload) {
   return jsonRequest("/api/security/toolbox/curl", "POST", payload);
 }

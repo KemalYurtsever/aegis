@@ -11,6 +11,7 @@ import {
   listSecurityPlaybookRunIndex,
   listSecurityPlaybookRuns,
   listPacketCaptures,
+  runAvahiBrowse,
   runDnsQuery,
   runArpScan,
   runCurlRequest,
@@ -1075,6 +1076,8 @@ function LabCliTool({ devices }) {
         response = await runArpScan({ interface_name: interfaceName.trim() || null, ...common });
       } else if (tool === "ip-neigh") {
         response = await getNeighborTable(common);
+      } else if (tool === "avahi-browse") {
+        response = await runAvahiBrowse(common);
       } else if (tool === "curl") {
         response = await runCurlRequest({ url: target.trim(), method: "GET", insecure, ...common });
       } else {
@@ -1093,13 +1096,14 @@ function LabCliTool({ devices }) {
       <header>
         <p className="eyebrow">Administrator learning lab</p>
         <h3>Network command tools</h3>
-        <span>Nmap, ARP discovery, neighbor tables, curl and dig run as typed commands without a shell.</span>
+        <span>Nmap, ARP discovery, Avahi DNS-SD browsing, neighbor tables, curl and dig run as typed commands without a shell.</span>
       </header>
       <form className="lab-cli-form" onSubmit={run}>
         <label>Tool
           <select value={tool} onChange={(event) => { setTool(event.target.value); setResult(null); }}>
             <option value="nmap">Nmap TCP scan</option>
             <option value="arp-scan">arp-scan local network</option>
+            <option value="avahi-browse">avahi-browse names and models</option>
             <option value="ip-neigh">ip neigh show</option>
             <option value="curl">curl HTTP GET</option>
             <option value="dig">dig DNS query</option>
@@ -1764,7 +1768,7 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
     ],
     ["traceroute", "Traceroute", "12 HOPS", "Trace registered devices only"],
     ["query", "DNS query", "SAFE", "Validated forward and reverse lookup"],
-    ["lab-cli", "Network CLI", "ADMIN", "Nmap, arp-scan, neighbors, curl and dig"],
+    ["lab-cli", "Network CLI", "ADMIN", "Nmap, arp-scan, Avahi, neighbors, curl and dig"],
     ["test-connection", "TCP port test", "POWERSHELL", "Test selected ports on a registered host"],
     [
       "policy",
