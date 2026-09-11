@@ -61,3 +61,28 @@ def test_dashboard_aggregates_devices_and_events(client, monkeypatch):
     assert body["recent_events"][0]["event_type"] == "ONLINE_TO_OFFLINE"
     assert body["recent_events"][0]["device_name"] == "Alpha"
     assert body["active_alert_count"] == 0
+
+
+def test_combined_dashboard_refresh_reuses_one_device_snapshot(client, monkeypatch):
+    device = create_device(client, "Shared state", "198.18.56.20")
+    monkeypatch.setattr(
+        "app.services.monitoring_service.check_ip",
+        lambda *_args, **_kwargs: PingResult("ONLINE", 1.5),
+    )
+    client.post(f"/api/devices/{device['id']}/check")
+
+    def unexpected_reload(_db):
+        raise AssertionError("The combined refresh should reuse its device snapshot")
+
+    monkeypatch.setattr("app.routers.dashboard.load_device_monitor_snapshot", unexpected_reload)
+    monkeypatch.setattr("app.routers.inventory.load_device_monitor_snapshot", unexpected_reload)
+    monkeypatch.setattr("app.routers.topology.load_device_monitor_snapshot", unexpected_reload)
+    monkeypatch.setattr("app.main.cached_connected_network", lambda: None)
+
+    response = client.get("/api/dashboard/refresh")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["dashboard"]["devices"][0]["current_status"] == "ONLINE"
+    assert body["topology"]["groups"][0]["online_devices"] == 1
+    assert body["inventory_health"]["never_checked"] == 0

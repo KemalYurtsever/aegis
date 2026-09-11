@@ -1,10 +1,16 @@
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import threading
 
 from sqlalchemy.orm import Session
 
 from app.services import fingerprint_service
-from app.services.fingerprint_service import FINGERPRINT_PORTS, FingerprintEvidence, classify_from_evidence
+from app.services.fingerprint_service import (
+    FINGERPRINT_PORTS,
+    FingerprintEvidence,
+    classify_from_evidence,
+    fingerprint_targets,
+)
 
 
 DEVICE = {
@@ -62,14 +68,42 @@ def test_fingerprint_ports_are_probed_in_one_bounded_wave(monkeypatch):
     assert evidence.open_ports == []
 
 
+def test_batch_fingerprints_keep_evidence_with_the_correct_target(monkeypatch):
+    responsive = {
+        ("198.18.56.70", 631),
+        ("198.18.56.71", 22),
+    }
+
+    def fake_connection(target, timeout):
+        assert timeout == 0.4
+        if target in responsive:
+            return nullcontext()
+        raise OSError
+
+    monkeypatch.setattr(fingerprint_service.socket, "create_connection", fake_connection)
+
+    evidence = fingerprint_targets([
+        ("198.18.56.70", "Printer vendor", None),
+        ("198.18.56.71", "Server vendor", "ssh"),
+    ])
+
+    assert evidence[0].open_ports == [631]
+    assert evidence[0].classification == "Printer"
+    assert evidence[1].open_ports == [22]
+    assert evidence[1].classification == "Server"
+
+
 def test_fingerprint_all_commits_results_once(client, admin_headers, monkeypatch):
     for index in range(3):
         client.post("/api/devices", headers=admin_headers, json={**DEVICE, "name": f"Device {index}", "ip_address": f"192.168.56.{70 + index}"})
 
     timestamp = datetime.now(timezone.utc)
     monkeypatch.setattr(
-        "app.routers.services.fingerprint_target",
-        lambda *_args: FingerprintEvidence([], None, "No identifying service responded", timestamp),
+        "app.routers.services.fingerprint_targets",
+        lambda jobs: [
+            FingerprintEvidence([], None, "No identifying service responded", timestamp)
+            for _job in jobs
+        ],
     )
     original_commit = Session.commit
     commits = 0

@@ -2,7 +2,7 @@ import os
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import case, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import (
@@ -15,25 +15,20 @@ from app.models import (
 )
 from app.routers.alerts import serialize_alert
 from app.schemas import DashboardDevice, DashboardEvent, DashboardResponse
+from app.services.statistics_service import (
+    DeviceMonitorSnapshot,
+    load_device_monitor_snapshot,
+)
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-@router.get("", response_model=DashboardResponse)
-def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
-    latest_result_id = (
-        select(MonitorResult.id)
-        .where(MonitorResult.device_id == Device.id)
-        .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
-        .limit(1)
-        .correlate(Device)
-        .scalar_subquery()
-    )
-    device_result_rows = db.execute(
-        select(Device, MonitorResult)
-        .outerjoin(MonitorResult, MonitorResult.id == latest_result_id)
-        .order_by(Device.name, Device.id)
-    ).all()
+def build_dashboard(
+    db: Session,
+    device_result_rows: DeviceMonitorSnapshot | None = None,
+) -> DashboardResponse:
+    if device_result_rows is None:
+        device_result_rows = load_device_monitor_snapshot(db)
     devices = [row[0] for row in device_result_rows]
     device_ids = [device.id for device in devices]
     if device_ids:
@@ -127,6 +122,7 @@ def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
     active_alerts = list(
         db.scalars(
             select(AlertEvent)
+            .options(joinedload(AlertEvent.device))
             .where(
                 AlertEvent.resolved_at.is_(None),
                 AlertEvent.acknowledged_at.is_(None),
@@ -165,3 +161,8 @@ def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
         notification_configured=notification_configured,
         notification_tested=notification_tested,
     )
+
+
+@router.get("", response_model=DashboardResponse)
+def get_dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
+    return build_dashboard(db)

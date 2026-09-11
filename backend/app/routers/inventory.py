@@ -6,11 +6,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Device, MonitorResult, utc_now
+from app.models import Device, utc_now
 from app.routers.auth import require_admin
 from app.schemas import DhcpLeaseImport, DhcpLeaseImportResult, InventoryHealthIssue, InventoryHealthResponse
 from app.services.discovery_service import is_generic_ptr_hostname
 from app.services.mac_vendor_service import lookup_mac_vendor
+from app.services.statistics_service import (
+    DeviceMonitorSnapshot,
+    load_device_monitor_snapshot,
+)
 
 
 router = APIRouter(
@@ -113,32 +117,21 @@ def _aware(value):
     return value.replace(tzinfo=timezone.utc)
 
 
-@router.get("/health", response_model=InventoryHealthResponse)
-def inventory_health(
-    stale_hours: int = Query(default=24, ge=1, le=720),
-    db: Session = Depends(get_db),
+def build_inventory_health(
+    stale_hours: int,
+    db: Session,
+    device_result_rows: DeviceMonitorSnapshot | None = None,
 ) -> InventoryHealthResponse:
     now = utc_now()
     stale_before = now - timedelta(hours=stale_hours)
     expiring_before = now + timedelta(hours=24)
-    latest_result_id = (
-        select(MonitorResult.id)
-        .where(MonitorResult.device_id == Device.id)
-        .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
-        .limit(1)
-        .correlate(Device)
-        .scalar_subquery()
-    )
-    device_rows = db.execute(
-        select(Device, MonitorResult.timestamp)
-        .outerjoin(MonitorResult, MonitorResult.id == latest_result_id)
-        .order_by(Device.name, Device.id)
-    ).all()
-    devices = [row[0] for row in device_rows]
+    if device_result_rows is None:
+        device_result_rows = load_device_monitor_snapshot(db)
+    devices = [row[0] for row in device_result_rows]
     latest_by_device = {
-        device.id: timestamp
-        for device, timestamp in device_rows
-        if timestamp is not None
+        device.id: result.timestamp
+        for device, result in device_result_rows
+        if result is not None
     }
     issues: list[InventoryHealthIssue] = []
 
@@ -194,3 +187,11 @@ def inventory_health(
         duplicate_mac_records=counts["DUPLICATE_MAC"],
         issues=issues,
     )
+
+
+@router.get("/health", response_model=InventoryHealthResponse)
+def inventory_health(
+    stale_hours: int = Query(default=24, ge=1, le=720),
+    db: Session = Depends(get_db),
+) -> InventoryHealthResponse:
+    return build_inventory_health(stale_hours, db)

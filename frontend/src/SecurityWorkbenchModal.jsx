@@ -48,11 +48,36 @@ const PLAYBOOK_PROFILES = [
 ];
 const ACTIVE_PLAYBOOK_STATUSES = new Set(["QUEUED", "RUNNING"]);
 const FINISHED_STEP_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
+const DEFAULT_TCP_PORTS = "22,80,443,445,3389";
+const DEFAULT_UDP_PORTS = [
+  53, 67, 69, 123, 137, 161, 500, 514, 520, 623,
+  1434, 1900, 4500, 5060, 5353, 5683, 10001, 11211, 20000, 47808,
+].join(",");
+
+function parsePortList(value, label, maximum) {
+  const tokens = value.split(",").map((token) => token.trim()).filter(Boolean);
+  if (!tokens.length) throw new Error(`Enter at least one ${label} port.`);
+  if (tokens.some((token) => !/^\d+$/.test(token))) {
+    throw new Error(`${label} ports must be comma-separated numbers.`);
+  }
+  const ports = [...new Set(tokens.map(Number))];
+  if (ports.some((port) => port < 1 || port > 65535)) {
+    throw new Error(`${label} ports must be between 1 and 65535.`);
+  }
+  if (ports.length > maximum) {
+    throw new Error(`${label} scanning accepts at most ${maximum} ports.`);
+  }
+  return ports;
+}
 
 function upsertPlaybookRun(current, next) {
   const existingIndex = current.findIndex((run) => run.id === next.id);
   if (existingIndex < 0) return [next, ...current].slice(0, 10);
-  return current.map((run, index) => (index === existingIndex ? next : run));
+  return current.map((run, index) => (
+    index === existingIndex
+      ? { ...run, ...next, steps: next.steps ?? run.steps }
+      : run
+  ));
 }
 
 function mergeGlobalPlaybookRuns(current, incoming) {
@@ -1042,7 +1067,7 @@ function QueryTool() {
 function LabCliTool({ devices }) {
   const [tool, setTool] = useState("nmap");
   const [deviceId, setDeviceId] = useState(devices[0]?.id || "");
-  const [ports, setPorts] = useState("22,80,443,445,3389");
+  const [ports, setPorts] = useState(DEFAULT_TCP_PORTS);
   const [scanMode, setScanMode] = useState("TOP_1000");
   const [target, setTarget] = useState("");
   const [recordType, setRecordType] = useState("A");
@@ -1050,7 +1075,7 @@ function LabCliTool({ devices }) {
   const [grep, setGrep] = useState("");
   const [nmapProfile, setNmapProfile] = useState("FAST");
   const [showNmapReason, setShowNmapReason] = useState(false);
-  const [udpPorts, setUdpPorts] = useState("53,67,69,123,137,161,500,514,520,623,1434,1900,4500,5060,5353,5683,10001,11211,20000,47808");
+  const [udpPorts, setUdpPorts] = useState(DEFAULT_UDP_PORTS);
   const [udpProfile, setUdpProfile] = useState("FAST");
   const [showUdpReason, setShowUdpReason] = useState(true);
   const [insecure, setInsecure] = useState(false);
@@ -1067,20 +1092,18 @@ function LabCliTool({ devices }) {
     try {
       let response;
       if (tool === "nmap") {
-        const parsedPorts = ports.split(",").map((value) => Number(value.trim())).filter(Number.isInteger);
         response = await runNmapScan({
           device_id: Number(deviceId),
-          ports: scanMode === "CUSTOM" ? parsedPorts : [80],
+          ports: scanMode === "CUSTOM" ? parsePortList(ports, "TCP", 1000) : [80],
           scan_mode: scanMode,
           profile: nmapProfile,
           show_reason: showNmapReason,
           ...common,
         });
       } else if (tool === "nmap-udp") {
-        const parsedPorts = udpPorts.split(",").map((value) => Number(value.trim())).filter(Number.isInteger);
         response = await runNmapUdpScan({
           device_id: Number(deviceId),
-          ports: parsedPorts,
+          ports: parsePortList(udpPorts, "UDP", 64),
           profile: udpProfile,
           show_reason: showUdpReason,
           ...common,
@@ -1207,7 +1230,7 @@ function LabCliTool({ devices }) {
 
 function TestConnectionPortTool({ devices }) {
   const [deviceId, setDeviceId] = useState(devices[0]?.id || "");
-  const [ports, setPorts] = useState("22,80,443,445,3389");
+  const [ports, setPorts] = useState(DEFAULT_TCP_PORTS);
   const [timeoutSeconds, setTimeoutSeconds] = useState(2);
   const [grep, setGrep] = useState("");
   const [result, setResult] = useState(null);
@@ -1216,21 +1239,13 @@ function TestConnectionPortTool({ devices }) {
 
   async function run(event) {
     event.preventDefault();
-    const parsedPorts = ports
-      .split(",")
-      .map((value) => Number(value.trim()))
-      .filter(Number.isInteger);
-    if (!parsedPorts.length) {
-      setError("Enter at least one TCP port.");
-      return;
-    }
     setBusy(true);
     setError("");
     setResult(null);
     try {
       setResult(await runTestConnectionPorts({
         device_id: Number(deviceId),
-        ports: parsedPorts,
+        ports: parsePortList(ports, "TCP", 128),
         timeout_seconds: Number(timeoutSeconds),
         ...(grep.trim() ? { grep: grep.trim() } : {}),
       }));
@@ -1437,28 +1452,44 @@ function PlaybookTool({ devices }) {
       .join(","),
     [allRuns],
   );
+  const selectedActiveRunId = ACTIVE_PLAYBOOK_STATUSES.has(selectedRun?.status)
+    ? selectedRun.id
+    : null;
 
   useEffect(() => {
     if (!activeRunKey) return undefined;
-    const runIds = activeRunKey.split(",").map(Number);
     const polledDeviceId = Number(deviceId);
     let disposed = false;
     let timerId;
 
     async function poll() {
-      const updates = await Promise.allSettled(
-        runIds.map((runId) => getSecurityPlaybookRun(runId)),
-      );
+      if (document.visibilityState === "hidden") {
+        timerId = window.setTimeout(poll, 10000);
+        return;
+      }
+      const requests = [listSecurityPlaybookRunIndex(50)];
+      if (selectedActiveRunId) requests.push(getSecurityPlaybookRun(selectedActiveRunId));
+      const updates = await Promise.allSettled(requests);
       if (disposed) return;
 
-      const refreshedRuns = updates
-        .filter((result) => result.status === "fulfilled")
-        .map((result) => result.value);
-      if (refreshedRuns.length) {
-        setAllRuns((current) => mergeGlobalPlaybookRuns(current, refreshedRuns));
-        setRuns((current) => refreshedRuns
-          .filter((run) => run.device_id === polledDeviceId)
-          .reduce(upsertPlaybookRun, current));
+      const indexResult = updates[0];
+      if (indexResult.status === "fulfilled") {
+        const refreshedIndex = Array.isArray(indexResult.value) ? indexResult.value : [];
+        setAllRuns((current) => mergeGlobalPlaybookRuns(current, refreshedIndex));
+        const currentTargetIndex = new Map(
+          refreshedIndex
+            .filter((run) => run.device_id === polledDeviceId)
+            .map((run) => [run.id, run]),
+        );
+        setRuns((current) => current.map((run) => {
+          const update = currentTargetIndex.get(run.id);
+          return update ? { ...run, ...update, steps: run.steps } : run;
+        }));
+      }
+      const detailResult = updates[1];
+      if (detailResult?.status === "fulfilled") {
+        setRuns((current) => upsertPlaybookRun(current, detailResult.value));
+        setAllRuns((current) => mergeGlobalPlaybookRuns(current, [detailResult.value]));
       }
       const failed = updates.find((result) => result.status === "rejected");
       const failureMessage = failed
@@ -1475,7 +1506,7 @@ function PlaybookTool({ devices }) {
       disposed = true;
       window.clearTimeout(timerId);
     };
-  }, [activeRunKey, deviceId]);
+  }, [activeRunKey, deviceId, selectedActiveRunId]);
 
   async function createRun(event) {
     event.preventDefault();
@@ -1852,15 +1883,57 @@ export default function SecurityWorkbenchModal({
   const [attackPaths, setAttackPaths] = useState(null);
   const [adapters, setAdapters] = useState([]);
   const [error, setError] = useState("");
-  useEffect(() => {
-    Promise.all([listPacketCaptures(), getAttackPaths(), getWirelessAdapters()])
-      .then(([captureData, pathData, adapterData]) => {
-        setCaptures(captureData);
-        setAttackPaths(pathData);
-        setAdapters(adapterData);
-      })
-      .catch((requestError) => setError(requestError.message));
+  const [loadingEvidence, setLoadingEvidence] = useState(false);
+  const loadedEvidence = useRef(new Set());
+  const evidenceRequests = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
   }, []);
+  useEffect(() => {
+    const required = tab === "overview"
+      ? ["captures", "attackPaths", "adapters"]
+      : tab === "sniffer"
+        ? ["captures"]
+        : tab === "configuration"
+          ? ["attackPaths"]
+          : tab === "wireless"
+            ? ["adapters"]
+            : [];
+    const pending = required.filter((key) => !loadedEvidence.current.has(key));
+    if (!pending.length) return undefined;
+
+    const loaders = {
+      captures: listPacketCaptures,
+      attackPaths: getAttackPaths,
+      adapters: getWirelessAdapters,
+    };
+    pending.forEach((key) => loadedEvidence.current.add(key));
+    evidenceRequests.current += 1;
+    setLoadingEvidence(true);
+    Promise.allSettled(pending.map((key) => loaders[key]()))
+      .then((results) => {
+        if (!mounted.current) return;
+        const failures = [];
+        results.forEach((result, index) => {
+          const key = pending[index];
+          if (result.status === "rejected") {
+            loadedEvidence.current.delete(key);
+            failures.push(result.reason instanceof Error ? result.reason.message : String(result.reason));
+            return;
+          }
+          if (key === "captures") setCaptures(result.value);
+          if (key === "attackPaths") setAttackPaths(result.value);
+          if (key === "adapters") setAdapters(result.value);
+        });
+        setError(failures.join(" · "));
+      })
+      .finally(() => {
+        evidenceRequests.current = Math.max(0, evidenceRequests.current - 1);
+        if (mounted.current) setLoadingEvidence(evidenceRequests.current > 0);
+      });
+    return undefined;
+  }, [tab]);
   const selectedLabel = useMemo(
     () => TOOLS.find(([value]) => value === tab)?.[1],
     [tab],
@@ -1936,6 +2009,9 @@ export default function SecurityWorkbenchModal({
             <div className="form-error workbench-error">
               Some live evidence could not be loaded: {error}
             </div>
+          )}
+          {loadingEvidence && (
+            <div className="panel-help" role="status">Loading this tool's live evidence…</div>
           )}
           {tab === "overview" && (
             <Overview

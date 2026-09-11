@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, contains_eager
 
 from app.database import get_db
 from app.models import AgentEnrollment, Device, HostMetric, utc_now
@@ -49,7 +49,10 @@ def serialize_enrollment(enrollment: AgentEnrollment, now: datetime | None = Non
 @router.get("/agents/overview", response_model=AgentFleetOverview)
 def get_agent_overview(db: Session = Depends(get_db)) -> AgentFleetOverview:
     enrollments = list(db.scalars(
-        select(AgentEnrollment).join(AgentEnrollment.device).order_by(Device.name, AgentEnrollment.id)
+        select(AgentEnrollment)
+        .join(AgentEnrollment.device)
+        .options(contains_eager(AgentEnrollment.device))
+        .order_by(Device.name, AgentEnrollment.id)
     ))
     rows = [
         AgentFleetItem(

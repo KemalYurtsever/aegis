@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import MonitorResult
+from app.models import Device, MonitorResult
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,29 @@ class StatusEventResult:
     previous_status: str
     current_status: str
     event_type: str
+
+
+DeviceMonitorSnapshot = list[tuple[Device, MonitorResult | None]]
+
+
+def load_device_monitor_snapshot(db: Session) -> DeviceMonitorSnapshot:
+    """Load every device and its latest monitoring result in one reusable query."""
+    latest_result_id = (
+        select(MonitorResult.id)
+        .where(MonitorResult.device_id == Device.id)
+        .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
+        .limit(1)
+        .correlate(Device)
+        .scalar_subquery()
+    )
+    return [
+        (device, result)
+        for device, result in db.execute(
+            select(Device, MonitorResult)
+            .outerjoin(MonitorResult, MonitorResult.id == latest_result_id)
+            .order_by(Device.name, Device.id)
+        )
+    ]
 
 
 def calculate_device_statistics(device_id: int, db: Session) -> StatisticsResult:
