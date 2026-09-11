@@ -1256,6 +1256,11 @@ class MaintenanceWindowCreate(BaseModel):
     enabled: bool = True
     reason: str | None = Field(default=None, max_length=300)
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_name(cls, value):
+        return " ".join(value.split()) if isinstance(value, str) else value
+
     @field_validator("name", "device_group", "reason")
     @classmethod
     def clean_maintenance_text(cls, value: str | None) -> str | None:
@@ -1280,6 +1285,11 @@ class MaintenanceWindowUpdate(BaseModel):
     repeat: Literal["NONE", "DAILY", "WEEKLY"] = None
     enabled: bool = None
     reason: str | None = Field(default=None, max_length=300)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_name(cls, value):
+        return " ".join(value.split()) if isinstance(value, str) else value
 
     @field_validator("name", "device_group", "reason")
     @classmethod
