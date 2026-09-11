@@ -123,6 +123,23 @@ def test_maintenance_window_schedule_can_be_updated(client):
     )
     assert malformed.status_code == 422
 
+    rejected = client.patch(
+        f"/api/automation/maintenance-windows/{created.json()['id']}",
+        headers=headers,
+        json={"name": "  \t ", "reason": "Must not be saved"},
+    )
+    assert rejected.status_code == 422
+    stored = client.get("/api/automation/maintenance-windows", headers=headers).json()
+    assert stored[0]["name"] == "Network upgrade"
+    assert stored[0]["reason"] == "Core switch replacement"
+
+    blank = client.post("/api/automation/maintenance-windows", headers=headers, json={
+        "name": "   ",
+        "starts_at": now.isoformat(),
+        "ends_at": (now + timedelta(hours=1)).isoformat(),
+    })
+    assert blank.status_code == 422
+
 
 def test_automation_events_can_be_filtered_by_severity(client):
     headers = admin_headers(client)

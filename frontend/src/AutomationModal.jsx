@@ -90,8 +90,10 @@ export default function AutomationModal({ onClose }) {
       await action();
       setMessage(success);
       await load();
+      return true;
     } catch (error) {
       setMessage(error.message);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -114,12 +116,14 @@ export default function AutomationModal({ onClose }) {
       starts_at: localToIso(form.starts_at),
       ends_at: localToIso(form.ends_at),
     };
-    await perform(
+    const saved = await perform(
       () => editingWindowId ? updateMaintenanceWindow(editingWindowId, payload) : createMaintenanceWindow(payload),
       editingWindowId ? "Maintenance window updated." : "Maintenance window created.",
     );
-    setForm(EMPTY_WINDOW);
-    setEditingWindowId(null);
+    if (saved) {
+      setForm(EMPTY_WINDOW);
+      setEditingWindowId(null);
+    }
   }
 
   function editWindow(window) {
@@ -439,6 +443,9 @@ export default function AutomationModal({ onClose }) {
           <form className="automation-window-form" onSubmit={saveWindow}>
             <input
               placeholder="Window name"
+              aria-label="Window name"
+              maxLength={100}
+              disabled={busy}
               required
               value={form.name}
               onChange={(event) =>
@@ -447,6 +454,9 @@ export default function AutomationModal({ onClose }) {
             />
             <input
               placeholder="Device group (optional)"
+              aria-label="Device group (optional)"
+              maxLength={80}
+              disabled={busy}
               value={form.device_group}
               onChange={(event) =>
                 setForm({ ...form, device_group: event.target.value })
@@ -456,6 +466,8 @@ export default function AutomationModal({ onClose }) {
               type="datetime-local"
               required
               value={form.starts_at}
+              aria-label="Maintenance start (local time)"
+              disabled={busy}
               onChange={(event) =>
                 setForm({ ...form, starts_at: event.target.value })
               }
@@ -464,12 +476,16 @@ export default function AutomationModal({ onClose }) {
               type="datetime-local"
               required
               value={form.ends_at}
+              aria-label="Maintenance end (local time)"
+              disabled={busy}
               onChange={(event) =>
                 setForm({ ...form, ends_at: event.target.value })
               }
             />
             <select
               value={form.repeat}
+              aria-label="Maintenance recurrence"
+              disabled={busy}
               onChange={(event) =>
                 setForm({ ...form, repeat: event.target.value })
               }
@@ -480,6 +496,9 @@ export default function AutomationModal({ onClose }) {
             </select>
             <input
               placeholder="Reason (optional)"
+              aria-label="Maintenance reason (optional)"
+              maxLength={300}
+              disabled={busy}
               value={form.reason}
               onChange={(event) =>
                 setForm({ ...form, reason: event.target.value })
@@ -490,7 +509,7 @@ export default function AutomationModal({ onClose }) {
                 {editingWindowId ? "Save window" : "Add window"}
               </button>
               {editingWindowId && (
-                <button type="button" className="button button--secondary" onClick={cancelWindowEdit}>
+                <button type="button" className="button button--secondary" disabled={busy} onClick={cancelWindowEdit}>
                   Cancel
                 </button>
               )}
