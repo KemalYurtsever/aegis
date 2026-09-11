@@ -9,9 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Device, MonitorResult, TopologyLink
+from app.models import Device, TopologyLink
 from app.schemas import TopologyDevice, TopologyLinkCreate, TopologyLinkRead, TopologyNetwork, TopologyResponse
 from app.services.discovery_service import LocalNetwork, get_primary_private_network
+from app.services.statistics_service import (
+    DeviceMonitorSnapshot,
+    load_device_monitor_snapshot,
+)
 
 router = APIRouter(prefix="/api/topology", tags=["topology"])
 
@@ -128,20 +132,17 @@ def cached_connected_network() -> LocalNetwork | None:
         return stale_value
 
 
-def build_topology(db: Session, active_network: LocalNetwork | None) -> TopologyResponse:
-    latest_result_id = (
-        select(MonitorResult.id)
-        .where(MonitorResult.device_id == Device.id)
-        .order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc())
-        .limit(1)
-        .correlate(Device)
-        .scalar_subquery()
-    )
-    device_rows = db.execute(
-        select(Device, MonitorResult.status)
-        .outerjoin(MonitorResult, MonitorResult.id == latest_result_id)
-        .order_by(Device.name, Device.id)
-    ).all()
+def build_topology(
+    db: Session,
+    active_network: LocalNetwork | None,
+    device_result_rows: DeviceMonitorSnapshot | None = None,
+) -> TopologyResponse:
+    if device_result_rows is None:
+        device_result_rows = load_device_monitor_snapshot(db)
+    device_rows = [
+        (device, result.status if result else None)
+        for device, result in device_result_rows
+    ]
     devices = [row[0] for row in device_rows]
     status_by_device = {
         device.id: status
@@ -217,7 +218,3 @@ def build_topology(db: Session, active_network: LocalNetwork | None) -> Topology
 @router.get("", response_model=TopologyResponse)
 def get_topology(db: Session = Depends(get_db)) -> TopologyResponse:
     return build_topology(db, connected_network())
-
-
-def get_cached_topology(db: Session) -> TopologyResponse:
-    return build_topology(db, cached_connected_network())

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import AlertEvent, AlertRule, Device, utc_now
@@ -58,7 +58,11 @@ def list_alerts(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[AlertEventRead]:
-    statement = select(AlertEvent).order_by(AlertEvent.triggered_at.desc(), AlertEvent.id.desc())
+    statement = (
+        select(AlertEvent)
+        .options(joinedload(AlertEvent.device))
+        .order_by(AlertEvent.triggered_at.desc(), AlertEvent.id.desc())
+    )
     if active_only:
         statement = statement.where(AlertEvent.resolved_at.is_(None))
     return [serialize_alert(alert) for alert in db.scalars(statement.limit(limit))]

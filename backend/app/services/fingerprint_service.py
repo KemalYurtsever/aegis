@@ -45,17 +45,55 @@ def classify_from_evidence(open_ports: list[int], manufacturer: str | None, mdns
     return classification, "; ".join(signals) or "No identifying service responded"
 
 
-def fingerprint_target(address: str, manufacturer: str | None = None, mdns_services: str | None = None, timeout_seconds: float = 0.4) -> FingerprintEvidence:
-    def probe(port: int) -> int | None:
+def fingerprint_targets(
+    targets: list[tuple[str, str | None, str | None]],
+    timeout_seconds: float = 0.4,
+    max_workers: int = 128,
+) -> list[FingerprintEvidence]:
+    """Fingerprint targets through one bounded socket pool."""
+    if not targets:
+        return []
+
+    def probe(job: tuple[int, str, int]) -> tuple[int, int] | None:
+        target_index, address, port = job
         try:
             with socket.create_connection((address, port), timeout=timeout_seconds):
-                return port
+                return target_index, port
         except OSError:
             return None
 
-    # Each target has a small, fixed port set. Probe it in one bounded wave so
-    # an unreachable device costs one timeout rather than two sequential ones.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(FINGERPRINT_PORTS)) as executor:
-        open_ports = sorted(port for port in executor.map(probe, FINGERPRINT_PORTS) if port is not None)
-    classification, summary = classify_from_evidence(open_ports, manufacturer, mdns_services)
-    return FingerprintEvidence(open_ports, classification, summary[:500], datetime.now(timezone.utc))
+    jobs = [
+        (target_index, address, port)
+        for target_index, (address, _manufacturer, _services) in enumerate(targets)
+        for port in FINGERPRINT_PORTS
+    ]
+    open_ports_by_target: list[list[int]] = [[] for _target in targets]
+    worker_count = min(max_workers, len(jobs))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for result in executor.map(probe, jobs):
+            if result is not None:
+                target_index, port = result
+                open_ports_by_target[target_index].append(port)
+
+    timestamp = datetime.now(timezone.utc)
+    evidence: list[FingerprintEvidence] = []
+    for open_ports, (_address, manufacturer, mdns_services) in zip(
+        open_ports_by_target,
+        targets,
+    ):
+        open_ports.sort()
+        classification, summary = classify_from_evidence(open_ports, manufacturer, mdns_services)
+        evidence.append(FingerprintEvidence(open_ports, classification, summary[:500], timestamp))
+    return evidence
+
+
+def fingerprint_target(
+    address: str,
+    manufacturer: str | None = None,
+    mdns_services: str | None = None,
+    timeout_seconds: float = 0.4,
+) -> FingerprintEvidence:
+    return fingerprint_targets(
+        [(address, manufacturer, mdns_services)],
+        timeout_seconds=timeout_seconds,
+    )[0]

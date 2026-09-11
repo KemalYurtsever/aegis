@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.database import Base, SessionLocal, engine, ensure_performance_indexes, get_db, migrate_agent_monitoring_columns, migrate_automation_columns, migrate_device_inventory_columns, migrate_notification_tables, migrate_security_playbook_columns, migrate_vulnerability_columns
 from app.models import AuditEvent
 from app.routers.alerts import router as alerts_router
-from app.routers.dashboard import get_dashboard, router as dashboard_router
+from app.routers.dashboard import build_dashboard, router as dashboard_router
 from app.routers.discovery import router as discovery_router
 from app.routers.services import get_service_overview, router as services_router
 from app.routers.metrics import router as metrics_router
@@ -20,10 +20,10 @@ from app.routers.snmp import router as snmp_router
 from app.routers.prometheus import router as prometheus_router
 from app.routers.vulnerabilities import router as vulnerabilities_router
 from app.routers.advanced_monitoring import router as advanced_monitoring_router
-from app.routers.inventory import inventory_health, router as inventory_router
+from app.routers.inventory import build_inventory_health, router as inventory_router
 from app.routers.reliability import router as reliability_router
 from app.routers.reports import router as reports_router
-from app.routers.topology import get_cached_topology, router as topology_router
+from app.routers.topology import build_topology, cached_connected_network, router as topology_router
 from app.routers.diagnostics import ingest_router as diagnostic_ingest_router, router as diagnostics_router
 from app.routers.automation import router as automation_router
 from app.routers.system import router as system_router
@@ -34,6 +34,7 @@ from app.services.auth_service import session_user
 from app.security import InMemoryRateLimiter, RequestBodyLimitMiddleware, rate_limit_for, request_identity
 from app.services.backup_service import BackupService, PeriodicBackup
 from app.services.security_playbook_service import SecurityPlaybookRunner
+from app.services.statistics_service import load_device_monitor_snapshot
 
 
 @asynccontextmanager
@@ -207,11 +208,12 @@ def scheduler_status(request: Request) -> SchedulerStatus:
 @app.get("/api/dashboard/refresh", tags=["dashboard"])
 def dashboard_refresh(request: Request, db=Depends(get_db)):
     """Return the dashboard's periodic data as one authenticated response."""
+    device_result_rows = load_device_monitor_snapshot(db)
     return {
-        "dashboard": get_dashboard(db),
+        "dashboard": build_dashboard(db, device_result_rows),
         "scheduler": scheduler_response(request.app.state.monitor_scheduler),
-        "inventory_health": inventory_health(stale_hours=24, db=db),
-        "topology": get_cached_topology(db),
+        "inventory_health": build_inventory_health(24, db, device_result_rows),
+        "topology": build_topology(db, cached_connected_network(), device_result_rows),
         "agent_overview": get_agent_overview(db),
         "service_overview": get_service_overview(db),
     }

@@ -1,4 +1,3 @@
-import concurrent.futures
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
@@ -8,7 +7,11 @@ from app.models import Device, ServiceCheck, ServiceResult
 from app.routers.devices import get_device_or_404
 from app.routers.auth import require_admin
 from app.schemas import DeviceFingerprintRead, FingerprintBatchResponse, PortScanResponse, ServiceCheckCreate, ServiceCheckRead, ServiceOverview, ServiceOverviewItem, ServiceResultRead, ServiceStatistics
-from app.services.fingerprint_service import FingerprintEvidence, fingerprint_target
+from app.services.fingerprint_service import (
+    FingerprintEvidence,
+    fingerprint_target,
+    fingerprint_targets,
+)
 from app.services.port_scan_service import scan_nmap_top_tcp_ports
 from app.services.scan_policy import scan_target_rejection_reason
 from app.services.service_check_service import run_and_store_service_check
@@ -183,17 +186,11 @@ def fingerprint_all_devices(db: Session = Depends(get_db)) -> FingerprintBatchRe
             allowed.append(device)
         except HTTPException:
             continue
-    jobs = [(device.ip_address, device.manufacturer, device.discovered_services) for device in allowed]
-
-    def fingerprint(job):
-        return fingerprint_target(*job)
-
-    worker_count = min(8, len(allowed))
-    if worker_count:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-            evidence_rows = list(executor.map(fingerprint, jobs))
-    else:
-        evidence_rows = []
+    jobs = [
+        (device.ip_address, device.manufacturer, device.discovered_services)
+        for device in allowed
+    ]
+    evidence_rows = fingerprint_targets(jobs)
     results = [apply_fingerprint(device, evidence) for device, evidence in zip(allowed, evidence_rows)]
     if results:
         db.commit()

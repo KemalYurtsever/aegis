@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import RemoteDiagnosticsPanel from "./RemoteDiagnosticsPanel.jsx";
-import AutomationModal from "./AutomationModal.jsx";
-import SystemStatusModal from "./SystemStatusModal.jsx";
-import AttackPathsModal from "./AttackPathsModal.jsx";
-import SecurityWorkbenchModal from "./SecurityWorkbenchModal.jsx";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import aegisShield from "./assets/aegis-shield.png";
 import aegisShieldDark from "./assets/aegis-shield-dark.png";
 import { formatDate, formatMetric, toDateTimeLocal } from "./format.js";
@@ -31,14 +34,9 @@ import {
   deleteServiceCheck,
   discoverDevices,
   enrollAgent,
-  getDashboard,
   listAlerts,
-  getServiceOverview,
-  getAgentOverview,
-  getTopology,
   createTopologyLink,
   deleteTopologyLink,
-  getSchedulerStatus,
   getServiceHistory,
   getServiceStatistics,
   getAuthStatus,
@@ -74,7 +72,6 @@ import {
   fingerprintAllDevices,
   getDashboardRefresh,
   importDhcpLeases,
-  getInventoryHealth,
   getAvailabilityReport,
   listBackups,
   getBackupStatus,
@@ -88,6 +85,12 @@ import {
   resumeScheduler,
   refreshAssetBaselines,
 } from "./api.js";
+
+const AttackPathsModal = lazy(() => import("./AttackPathsModal.jsx"));
+const AutomationModal = lazy(() => import("./AutomationModal.jsx"));
+const RemoteDiagnosticsPanel = lazy(() => import("./RemoteDiagnosticsPanel.jsx"));
+const SecurityWorkbenchModal = lazy(() => import("./SecurityWorkbenchModal.jsx"));
+const SystemStatusModal = lazy(() => import("./SystemStatusModal.jsx"));
 
 const EMPTY_DASHBOARD = {
   total_devices: 0,
@@ -261,6 +264,15 @@ function MetricCard({ label, value, tone }) {
       <strong>{value}</strong>
     </article>
   );
+}
+
+function LazyPanelFallback({ label, modal = false }) {
+  const content = (
+    <div className="panel empty-state" role="status">
+      Loading {label}…
+    </div>
+  );
+  return modal ? <div className="modal-backdrop">{content}</div> : content;
 }
 
 function OperationalInsights({ devices, onSelectDevice }) {
@@ -4478,7 +4490,9 @@ function DeviceDetail({
         onChanged={load}
       />
       {isAdmin && (
-        <RemoteDiagnosticsPanel deviceId={device.id} agent={details.agent} />
+        <Suspense fallback={<LazyPanelFallback label="remote diagnostics" />}>
+          <RemoteDiagnosticsPanel deviceId={device.id} agent={details.agent} />
+        </Suspense>
       )}
       <SnmpPanel
         deviceId={device.id}
@@ -6058,10 +6072,23 @@ export default function App() {
     if (!auth?.authenticated) return undefined;
     loadDashboard();
     const timer = window.setInterval(
-      () => !selectedId && loadDashboard({ quiet: true }),
+      () => {
+        if (!selectedId && document.visibilityState === "visible") {
+          loadDashboard({ quiet: true });
+        }
+      },
       15000,
     );
-    return () => window.clearInterval(timer);
+    function refreshWhenVisible() {
+      if (!selectedId && document.visibilityState === "visible") {
+        loadDashboard({ quiet: true });
+      }
+    }
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [loadDashboard, selectedId, auth?.authenticated]);
 
   useEffect(() => {
@@ -7667,29 +7694,31 @@ export default function App() {
       {showReliability && (
         <ReliabilityModal onClose={() => setShowReliability(false)} />
       )}
-      {showAutomation && (
-        <AutomationModal onClose={() => setShowAutomation(false)} />
-      )}
-      {showSystemStatus && (
-        <SystemStatusModal onClose={() => setShowSystemStatus(false)} />
-      )}
-      {showAttackPaths && (
-        <AttackPathsModal
-          onClose={() => setShowAttackPaths(false)}
-          onSelectDevice={navigateToDevice}
-        />
-      )}
-      {showSecurityWorkbench && (
-        <SecurityWorkbenchModal
-          devices={data.devices}
-          visualTheme={visualTheme}
-          onClose={() => setShowSecurityWorkbench(false)}
-          onOpenCapture={() => setShowPacketCapture(true)}
-          onSelectDevice={navigateFromSecurityWorkbench}
-          initialTab={workbenchTab}
-          onTabChange={setWorkbenchTab}
-        />
-      )}
+      <Suspense fallback={<LazyPanelFallback label="workspace" modal />}>
+        {showAutomation && (
+          <AutomationModal onClose={() => setShowAutomation(false)} />
+        )}
+        {showSystemStatus && (
+          <SystemStatusModal onClose={() => setShowSystemStatus(false)} />
+        )}
+        {showAttackPaths && (
+          <AttackPathsModal
+            onClose={() => setShowAttackPaths(false)}
+            onSelectDevice={navigateToDevice}
+          />
+        )}
+        {showSecurityWorkbench && (
+          <SecurityWorkbenchModal
+            devices={data.devices}
+            visualTheme={visualTheme}
+            onClose={() => setShowSecurityWorkbench(false)}
+            onOpenCapture={() => setShowPacketCapture(true)}
+            onSelectDevice={navigateFromSecurityWorkbench}
+            initialTab={workbenchTab}
+            onTabChange={setWorkbenchTab}
+          />
+        )}
+      </Suspense>
       {showReports && (
         <AvailabilityReportModal onClose={() => setShowReports(false)} />
       )}

@@ -1,3 +1,4 @@
+import concurrent.futures
 import os
 import platform
 import shutil
@@ -109,12 +110,21 @@ def system_readiness(request: Request, db: Session = Depends(get_db)) -> SystemR
     }
     listening: list[str] = []
     missing_ports: list[str] = []
-    for name, port in service_ports.items():
+
+    def check_port(item: tuple[str, int]) -> tuple[str, bool]:
+        name, port = item
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.25):
-                listening.append(name)
+                return name, True
         except OSError:
-            missing_ports.append(name)
+            return name, False
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(service_ports),
+    ) as executor:
+        port_states = list(executor.map(check_port, service_ports.items()))
+    listening.extend(name for name, available in port_states if available)
+    missing_ports.extend(name for name, available in port_states if not available)
     components.append(_component(
         "Local services",
         "WARNING" if missing_ports else "HEALTHY",
@@ -124,15 +134,25 @@ def system_readiness(request: Request, db: Session = Depends(get_db)) -> SystemR
 
     observability: list[str] = []
     unavailable: list[str] = []
-    for name, url in (
+    observability_endpoints = (
         ("Grafana", "http://127.0.0.1:3000/api/health"),
         ("Prometheus", "http://127.0.0.1:9090/-/ready"),
-    ):
+    )
+
+    def check_endpoint(item: tuple[str, str]) -> tuple[str, bool]:
+        name, url = item
         try:
             with urlopen(url, timeout=0.5) as response:
-                (observability if response.status < 400 else unavailable).append(name)
+                return name, response.status < 400
         except (OSError, URLError):
-            unavailable.append(name)
+            return name, False
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(observability_endpoints),
+    ) as executor:
+        endpoint_states = list(executor.map(check_endpoint, observability_endpoints))
+    observability.extend(name for name, available in endpoint_states if available)
+    unavailable.extend(name for name, available in endpoint_states if not available)
     components.append(_component(
         "Observability",
         "WARNING" if unavailable else "HEALTHY",

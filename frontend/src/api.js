@@ -49,18 +49,10 @@ export function getAuthStatus() {
   return request("/api/auth/status");
 }
 export function setupAdmin(payload) {
-  return request("/api/auth/setup", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest("/api/auth/setup", "POST", payload);
 }
 export function loginUser(payload) {
-  return request("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest("/api/auth/login", "POST", payload);
 }
 export function logoutUser() {
   return request("/api/auth/logout", { method: "POST" });
@@ -69,18 +61,10 @@ export function listUsers() {
   return request("/api/auth/users");
 }
 export function createUser(payload) {
-  return request("/api/auth/users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest("/api/auth/users", "POST", payload);
 }
 export function updateUser(userId, payload) {
-  return request(`/api/auth/users/${userId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/auth/users/${userId}`, "PUT", payload);
 }
 export function listAuditEvents(limit = 250) {
   return request(`/api/auth/audit-events?limit=${limit}`);
@@ -89,11 +73,7 @@ export function listNotificationChannels() {
   return request("/api/notifications/channels");
 }
 export function updateNotificationChannel(type, payload) {
-  return request(`/api/notifications/channels/${type}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/notifications/channels/${type}`, "PUT", payload);
 }
 export function testNotificationChannel(type) {
   return request(`/api/notifications/channels/${type}/test`, {
@@ -112,11 +92,7 @@ export function getSnmpConfig(deviceId) {
   return request(`/api/devices/${deviceId}/snmp`);
 }
 export function updateSnmpConfig(deviceId, payload) {
-  return request(`/api/devices/${deviceId}/snmp`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/devices/${deviceId}/snmp`, "PUT", payload);
 }
 export function pollSnmp(deviceId) {
   return request(`/api/devices/${deviceId}/snmp/poll`, { method: "POST" });
@@ -150,15 +126,7 @@ export function listPacketCaptures() {
   return request("/api/packet-captures");
 }
 export function startPacketCapture(payload) {
-  return request("/api/packet-captures", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
-
-export function getDashboard() {
-  return request("/api/dashboard");
+  return jsonRequest("/api/packet-captures", "POST", payload);
 }
 
 export function getDashboardRefresh() {
@@ -169,28 +137,12 @@ export function listAlerts(activeOnly = false, limit = 500) {
   return request(`/api/alerts?active_only=${activeOnly}&limit=${limit}`);
 }
 
-export function getServiceOverview() {
-  return request("/api/service-checks/overview");
-}
-
-export function getTopology() {
-  return request("/api/topology");
-}
-
 export function createTopologyLink(payload) {
   return jsonRequest("/api/topology/links", "POST", payload);
 }
 
 export function deleteTopologyLink(linkId) {
   return request(`/api/topology/links/${linkId}`, { method: "DELETE" });
-}
-
-export function getAgentOverview() {
-  return request("/api/agents/overview");
-}
-
-export function getSchedulerStatus() {
-  return request("/api/scheduler/status");
 }
 
 export function getSystemReadiness() {
@@ -284,41 +236,24 @@ export function checkAllDevices() {
   return request("/api/devices/check-all", { method: "POST" });
 }
 export function checkSelectedDevices(deviceIds) {
-  return request("/api/devices/bulk/check", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ device_ids: deviceIds }),
-  });
+  return jsonRequest("/api/devices/bulk/check", "POST", { device_ids: deviceIds });
 }
 export function updateSelectedMonitoring(deviceIds, action) {
-  return request("/api/devices/bulk/monitoring", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ device_ids: deviceIds, action }),
-  });
+  return jsonRequest("/api/devices/bulk/monitoring", "PUT", { device_ids: deviceIds, action });
 }
 export function updateSelectedGroup(deviceIds, deviceGroup) {
-  return request("/api/devices/bulk/group", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ device_ids: deviceIds, device_group: deviceGroup }),
+  return jsonRequest("/api/devices/bulk/group", "PUT", {
+    device_ids: deviceIds,
+    device_group: deviceGroup,
   });
 }
 
 export function createDevice(payload) {
-  return request("/api/devices", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest("/api/devices", "POST", payload);
 }
 
 export function updateDevice(deviceId, payload) {
-  return request(`/api/devices/${deviceId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/devices/${deviceId}`, "PUT", payload);
 }
 
 export function deleteDevice(deviceId) {
@@ -334,11 +269,7 @@ export function getDeviceNotes(deviceId) {
 }
 
 export function createDeviceNote(deviceId, body) {
-  return request(`/api/devices/${deviceId}/notes`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body }),
-  });
+  return jsonRequest(`/api/devices/${deviceId}/notes`, "POST", { body });
 }
 
 export function deleteDeviceNote(deviceId, noteId) {
@@ -423,11 +354,7 @@ export async function getDeviceDetails(deviceId) {
 }
 
 export function updateAlertRule(deviceId, payload) {
-  return request(`/api/devices/${deviceId}/alert-rule`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/devices/${deviceId}/alert-rule`, "PUT", payload);
 }
 
 export function acknowledgeAlert(alertId) {
@@ -447,19 +374,11 @@ export function discoverDevices() {
 }
 
 export function createServiceCheck(deviceId, payload) {
-  return request(`/api/devices/${deviceId}/service-checks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/devices/${deviceId}/service-checks`, "POST", payload);
 }
 
 export function updateServiceCheck(checkId, payload) {
-  return request(`/api/service-checks/${checkId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/service-checks/${checkId}`, "PUT", payload);
 }
 
 export function runServiceCheck(checkId) {
@@ -485,14 +404,7 @@ export function fingerprintAllDevices() {
   return request("/api/devices/fingerprint-all", { method: "POST" });
 }
 export function importDhcpLeases(rows) {
-  return request("/api/inventory/dhcp-leases/import", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rows }),
-  });
-}
-export function getInventoryHealth(staleHours = 24) {
-  return request(`/api/inventory/health?stale_hours=${staleHours}`);
+  return jsonRequest("/api/inventory/dhcp-leases/import", "POST", { rows });
 }
 export function getAvailabilityReport(days = 30) {
   return request(`/api/reports/availability?days=${days}`);
@@ -517,13 +429,9 @@ export function previewRetention(days = null) {
   );
 }
 export function applyRetention(days) {
-  return request("/api/retention/apply", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      retention_days: days,
-      confirmation: "DELETE HISTORY",
-    }),
+  return jsonRequest("/api/retention/apply", "POST", {
+    retention_days: days,
+    confirmation: "DELETE HISTORY",
   });
 }
 export async function downloadBackup(filename) {
@@ -566,11 +474,7 @@ export function listDiagnosticJobs(deviceId) {
 }
 
 export function createDiagnosticJob(deviceId, payload) {
-  return request(`/api/devices/${deviceId}/diagnostic-jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return jsonRequest(`/api/devices/${deviceId}/diagnostic-jobs`, "POST", payload);
 }
 
 export function cancelDiagnosticJob(jobId) {
