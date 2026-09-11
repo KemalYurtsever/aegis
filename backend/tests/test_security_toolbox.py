@@ -13,6 +13,7 @@ from app.services.security_toolbox_service import (
     dig_query,
     host_network_policy,
     nmap_tcp_scan,
+    nmap_udp_scan,
     parse_traceroute,
     query_dns,
     test_connection_ports as run_test_connection_ports,
@@ -128,6 +129,41 @@ def test_nmap_detailed_and_aggressive_profiles_select_version_depth(monkeypatch)
     assert detailed[1]["timeout"] == 100
     assert aggressive[0][-3:-1] == ["-sV", "--version-all"]
     assert aggressive[1]["timeout"] == 200
+
+
+def test_nmap_udp_scan_is_bounded_and_uses_profile_specific_version_depth(monkeypatch):
+    captured = {}
+
+    def fake_run(tool, command, **kwargs):
+        captured.update(tool=tool, command=command, kwargs=kwargs)
+        return LabCommandRead(
+            tool="nmap-udp", target="192.168.5.1", exit_code=0,
+            output="53/udp open domain", duration_ms=1.0, scanned_port_count=3,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    result = nmap_udp_scan(
+        "192.168.5.1",
+        [161, 53, 161, 1900],
+        profile="DETAILED",
+        show_reason=True,
+        grep="open",
+    )
+
+    assert result.scanned_port_count == 3
+    assert captured["tool"] == "nmap-udp"
+    assert captured["command"] == [
+        "nmap", "-Pn", "-sU", "-n", "-T4", "--max-retries", "1",
+        "--host-timeout", "60s", "--open", "-p", "161,53,1900",
+        "-sV", "--version-light", "--reason", "192.168.5.1",
+    ]
+    assert captured["kwargs"] == {
+        "target": "192.168.5.1",
+        "grep": "open",
+        "timeout": 70,
+        "scanned_port_count": 3,
+    }
 
 
 def test_test_connection_uses_validated_environment_values(monkeypatch):
@@ -501,6 +537,54 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
         "address": "192.168.5.20", "ports": [22, 443], "service_detection": True,
         "grep": "open", "scan_mode": "CUSTOM", "profile": "FAST",
         "show_reason": True,
+    }
+
+
+def test_nmap_udp_endpoint_resolves_registered_device(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post(
+        "/api/devices",
+        headers=headers,
+        json={"name": "UDP target", "ip_address": "192.168.5.22", "device_type": "Server", "is_active": True},
+    ).json()
+    captured = {}
+
+    def fake_scan(address, ports, *, profile, show_reason, grep):
+        captured.update(
+            address=address,
+            ports=ports,
+            profile=profile,
+            show_reason=show_reason,
+            grep=grep,
+        )
+        return LabCommandRead(
+            tool="nmap-udp", target=address, exit_code=0,
+            output="161/udp open snmp", duration_ms=3.5, scanned_port_count=len(ports),
+        )
+
+    monkeypatch.setattr("app.routers.security.nmap_udp_scan", fake_scan)
+
+    response = client.post(
+        "/api/security/toolbox/nmap-udp",
+        headers=headers,
+        json={
+            "device_id": device["id"],
+            "ports": [161, 53, 161],
+            "profile": "DETAILED",
+            "show_reason": True,
+            "grep": "open",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tool"] == "nmap-udp"
+    assert response.json()["scanned_port_count"] == 2
+    assert captured == {
+        "address": "192.168.5.22",
+        "ports": [161, 53],
+        "profile": "DETAILED",
+        "show_reason": True,
+        "grep": "open",
     }
 
 

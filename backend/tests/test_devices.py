@@ -123,6 +123,12 @@ def test_rejects_invalid_ip(client):
     assert client.get("/api/devices").json() == []
 
 
+def test_rejects_non_unicast_inventory_addresses(client):
+    for address in ("0.0.0.0", "224.0.0.251", "255.255.255.255", "ff02::fb"):
+        response = create_device(client, ip_address=address)
+        assert response.status_code == 422
+
+
 def test_rejects_duplicate_ip(client):
     assert create_device(client).status_code == 201
     duplicate = create_device(client, name="Duplicate")

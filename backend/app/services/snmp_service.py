@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Device, SnmpConfig, SnmpResult
+from app.services.scan_policy import scan_target_rejection_reason
 
 OIDS = {
     "description": "1.3.6.1.2.1.1.1.0",
@@ -46,6 +47,11 @@ async def query_snmp(host: str, port: int, community: str, timeout: float = 2.0)
 
 
 def poll_device(device: Device, config: SnmpConfig, db: Session) -> SnmpResult:
+    rejection = scan_target_rejection_reason(device.ip_address, mac_address=device.mac_address)
+    if rejection:
+        result = SnmpResult(device_id=device.id, status="FAILED", error=rejection)
+        db.add(result); db.commit(); db.refresh(result)
+        return result
     if config.community_env != SNMP_COMMUNITY_ENV:
         result = SnmpResult(device_id=device.id, status="FAILED", error="SNMP credential reference is not allowed")
         db.add(result); db.commit(); db.refresh(result)

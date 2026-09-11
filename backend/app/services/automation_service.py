@@ -385,7 +385,7 @@ def discover_service_checks(db: Session) -> int:
         Device.is_active.is_(True),
         Device.id.not_in(configured_devices),
     ).order_by(Device.id).limit(1))
-    if device is None or not scan_target_allowed(device.ip_address):
+    if device is None or not scan_target_allowed(device.ip_address, device.mac_address):
         return 0
     open_ports = scan_common_tcp_ports(device.ip_address)
     for item in open_ports:

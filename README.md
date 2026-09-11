@@ -90,7 +90,7 @@ Attack-surface findings and passive attack paths are prioritization evidence, no
 
 ### Security workbench
 
-The administrator-only **Security workbench** consolidates defensive investigation tools without turning Aegis into a credential or interception suite.
+The administrator-only **Security workbench** consolidates defensive investigation tools without turning Aegis into a credential or interception suite. Active tools accept registered unicast hosts; network, broadcast, multicast, and unspecified addresses are rejected as single-device targets.
 
 | Tool | What it does |
 |---|---|
@@ -103,7 +103,7 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
 | Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
 | DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
-| Network CLI | Runs administrator-only Nmap TCP scans against registered devices with Fast, Fast version, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) profiles. It also provides local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, and DNS queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, and capped output without invoking a shell. |
+| Network CLI | Runs administrator-only Nmap TCP scans and a separate bounded scan of up to 64 UDP ports against registered devices. Both provide Fast, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) depth where applicable. It also provides local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, and DNS queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, and capped output without invoking a shell. |
 | PowerShell TCP test | Tests up to 128 TCP ports concurrently on one registered device. PowerShell 7 uses `Test-Connection -TcpPort`; Windows PowerShell uses bounded .NET TCP socket probes. Results distinguish open ports, refused connections, unanswered probes, and errors, while targets and ports are passed as validated data rather than command text. |
 | Assessment playbooks | Queues a persistent four-step assessment for one registered target: PowerShell TCP reachability, traceroute, Nmap top-1,000 attack-surface and CVE correlation, then DNS identity. Fast, Detailed, and Aggressive profiles control probe depth. The workbench shows durable per-step progress and output, and cancellation takes effect after the active command finishes. |
 
@@ -171,7 +171,7 @@ SQLite is appropriate for a single Aegis application instance. The Kubernetes ma
 - PowerShell on Windows, or an equivalent terminal for native development
 - Docker Desktop for Prometheus, Grafana, or the complete container stack
 - Npcap for Windows packet metadata capture
-- Nmap is optional for top-port discovery, which has a host-side socket fallback. Nmap is required for Fast (`-sV --version-intensity 0`), Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) fingerprints and high-confidence CPE-based CVE correlation.
+- Nmap is optional for TCP top-port discovery, which has a host-side socket fallback. Nmap is required for UDP exposure checks, Fast (`-sV --version-intensity 0`), Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) fingerprints, and high-confidence CPE-based CVE correlation.
 - `arp-scan`, `curl`, `dig` (`dnsutils`), `iproute2`, and `traceroute` when running the backend directly on Linux; the backend container installs these packages
 
 ## Installation

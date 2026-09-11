@@ -4,7 +4,7 @@ import threading
 from types import SimpleNamespace
 import pytest
 
-from app.services.discovery_service import LocalNetwork, discovery_address_allowed, discover_responsive_hosts, select_windows_lan_candidate, select_windows_route_network
+from app.services.discovery_service import LocalNetwork, discovery_address_allowed, discover_responsive_hosts, read_windows_arp_table, select_windows_lan_candidate, select_windows_route_network
 from app.services.ping_service import PingResult
 
 
@@ -74,6 +74,51 @@ def test_discovery_persists_mdns_friendly_name_model_and_services(client, admin_
     assert device["name"] == "Living Room TV"
     assert device["discovered_model"] == "Chromecast Ultra"
     assert device["discovered_services"] == "googlecast,http"
+
+
+def test_discovery_does_not_import_subnet_network_or_broadcast_addresses(client, admin_headers, monkeypatch):
+    monkeypatch.setattr("app.services.discovery_service.get_primary_private_network", lambda: NETWORK)
+    monkeypatch.setattr(
+        "app.services.discovery_service.discover_responsive_hosts",
+        lambda _network: [
+            ("192.168.1.0", None),
+            ("192.168.1.50", "AA:BB:CC:DD:EE:50"),
+            ("192.168.1.255", None),
+        ],
+    )
+    monkeypatch.setattr("app.services.discovery_service.resolve_hostnames", lambda _addresses: {})
+    monkeypatch.setattr(
+        "app.services.mdns_service.discover_mdns",
+        lambda *_args: {
+            "192.168.1.0": {"services": ["http"]},
+            "192.168.1.60": {"services": ["googlecast"]},
+            "192.168.1.255": {"services": ["http"]},
+        },
+    )
+
+    response = client.post("/api/discovery/import", headers=admin_headers)
+
+    assert response.status_code == 200
+    addresses = {device["ip_address"] for device in response.json()["added_devices"]}
+    assert addresses == {"192.168.1.50", "192.168.1.60"}
+
+
+def test_arp_table_ignores_broadcast_and_multicast_mac_addresses(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.discovery_service.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "  192.168.1.20    02-11-22-33-44-55    dynamic\n"
+                "  192.168.1.255   ff-ff-ff-ff-ff-ff    static\n"
+                "  224.0.0.251     01-00-5e-00-00-fb    static\n"
+            ),
+        ),
+    )
+
+    assert read_windows_arp_table() == {
+        "192.168.1.20": "02:11:22:33:44:55",
+    }
 
 
 def test_discovery_network_errors_are_safe(client, monkeypatch):

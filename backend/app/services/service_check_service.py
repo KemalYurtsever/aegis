@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ServiceCheck, ServiceResult
 from app.config import get_settings
+from app.services.scan_policy import scan_target_allowed
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,8 @@ class ServiceProbeResult:
 
 def probe_service(check: ServiceCheck, timeout_seconds: float = 3.0) -> ServiceProbeResult:
     started = time.monotonic()
+    if not scan_target_allowed(check.device.ip_address, check.device.mac_address):
+        return ServiceProbeResult("DOWN", None, diagnostic_reason="invalid_target")
     try:
         if check.check_type == "TCP":
             with socket.create_connection((check.device.ip_address, check.port), timeout=timeout_seconds):

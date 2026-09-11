@@ -17,6 +17,7 @@ import {
   runCurlRequest,
   runDigQuery,
   runNmapScan,
+  runNmapUdpScan,
   runTestConnectionPorts,
   runSecurityTraceroute,
 } from "./api.js";
@@ -1049,6 +1050,9 @@ function LabCliTool({ devices }) {
   const [grep, setGrep] = useState("");
   const [nmapProfile, setNmapProfile] = useState("FAST");
   const [showNmapReason, setShowNmapReason] = useState(false);
+  const [udpPorts, setUdpPorts] = useState("53,67,69,123,137,161,500,514,520,623,1434,1900,4500,5060,5353,5683,10001,11211,20000,47808");
+  const [udpProfile, setUdpProfile] = useState("FAST");
+  const [showUdpReason, setShowUdpReason] = useState(true);
   const [insecure, setInsecure] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -1070,6 +1074,15 @@ function LabCliTool({ devices }) {
           scan_mode: scanMode,
           profile: nmapProfile,
           show_reason: showNmapReason,
+          ...common,
+        });
+      } else if (tool === "nmap-udp") {
+        const parsedPorts = udpPorts.split(",").map((value) => Number(value.trim())).filter(Number.isInteger);
+        response = await runNmapUdpScan({
+          device_id: Number(deviceId),
+          ports: parsedPorts,
+          profile: udpProfile,
+          show_reason: showUdpReason,
           ...common,
         });
       } else if (tool === "arp-scan") {
@@ -1096,12 +1109,13 @@ function LabCliTool({ devices }) {
       <header>
         <p className="eyebrow">Administrator learning lab</p>
         <h3>Network command tools</h3>
-        <span>Nmap, ARP discovery, Avahi DNS-SD browsing, neighbor tables, curl and dig run as typed commands without a shell.</span>
+        <span>Bounded TCP and UDP Nmap checks, ARP discovery, Avahi, neighbor tables, curl and dig run as typed commands without a shell.</span>
       </header>
       <form className="lab-cli-form" onSubmit={run}>
         <label>Tool
           <select value={tool} onChange={(event) => { setTool(event.target.value); setResult(null); }}>
             <option value="nmap">Nmap TCP scan</option>
+            <option value="nmap-udp">Nmap UDP exposure scan</option>
             <option value="arp-scan">arp-scan local network</option>
             <option value="avahi-browse">avahi-browse names and models</option>
             <option value="ip-neigh">ip neigh show</option>
@@ -1109,13 +1123,13 @@ function LabCliTool({ devices }) {
             <option value="dig">dig DNS query</option>
           </select>
         </label>
+        {(tool === "nmap" || tool === "nmap-udp") && <label>Registered target
+          <select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} required>
+            <option value="">Select a device</option>
+            {devices.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.ip_address}</option>)}
+          </select>
+        </label>}
         {tool === "nmap" && <>
-          <label>Registered target
-            <select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} required>
-              <option value="">Select a device</option>
-              {devices.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.ip_address}</option>)}
-            </select>
-          </label>
           <label>Scan scope
             <select value={scanMode} onChange={(event) => setScanMode(event.target.value)}>
               <option value="TOP_1000">Nmap top 1,000 TCP ports</option>
@@ -1142,6 +1156,26 @@ function LabCliTool({ devices }) {
             With reason (--reason)
           </label>
         </>}
+        {tool === "nmap-udp" && <>
+          <label>UDP ports (comma separated)
+            <input value={udpPorts} onChange={(event) => setUdpPorts(event.target.value)} required />
+          </label>
+          <label>UDP profile
+            <select value={udpProfile} onChange={(event) => setUdpProfile(event.target.value)}>
+              <option value="FAST">Fast · ports only</option>
+              <option value="DETAILED">Detailed · -sV --version-light</option>
+              <option value="AGGRESSIVE">Aggressive · -sV --version-all</option>
+            </select>
+          </label>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={showUdpReason}
+              onChange={(event) => setShowUdpReason(event.target.checked)}
+            />
+            With reason (--reason)
+          </label>
+        </>}
         {tool === "arp-scan" && <label>Interface (optional)
           <input value={interfaceName} onChange={(event) => setInterfaceName(event.target.value)} placeholder="eth0" />
         </label>}
@@ -1157,8 +1191,11 @@ function LabCliTool({ devices }) {
         <label>Grep output (optional text)
           <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="open, tcp, 192.168..." />
         </label>
-        <button className="button button--primary" disabled={busy || (tool === "nmap" && !deviceId)}>{busy ? "Running…" : tool === "nmap" && scanMode === "TOP_1000" ? "Scan 1,000 ports" : "Run tool"}</button>
+        <button className="button button--primary" disabled={busy || (["nmap", "nmap-udp"].includes(tool) && !deviceId)}>{busy ? "Running…" : tool === "nmap" && scanMode === "TOP_1000" ? "Scan 1,000 ports" : tool === "nmap-udp" ? "Scan UDP exposure" : "Run tool"}</button>
       </form>
+      {tool === "nmap-udp" && (
+        <p className="panel-help">UDP results marked open are responsive. Open|filtered is inconclusive because UDP services often stay silent and firewalls may drop the probe.</p>
+      )}
       {error && <div className="form-error">{error}</div>}
       {result && <div className="lab-cli-result">
         <div><strong>{result.tool}</strong><span> exit {result.exit_code} · {result.duration_ms} ms{result.scanned_port_count ? ` · ${result.scanned_port_count} ports scanned` : ""}{result.truncated ? " · truncated" : ""}</span></div>
@@ -1768,7 +1805,7 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
     ],
     ["traceroute", "Traceroute", "12 HOPS", "Trace registered devices only"],
     ["query", "DNS query", "SAFE", "Validated forward and reverse lookup"],
-    ["lab-cli", "Network CLI", "ADMIN", "Nmap, arp-scan, Avahi, neighbors, curl and dig"],
+    ["lab-cli", "Network CLI", "ADMIN", "TCP/UDP Nmap, arp-scan, Avahi, neighbors, curl and dig"],
     ["test-connection", "TCP port test", "POWERSHELL", "Test selected ports on a registered host"],
     [
       "policy",
