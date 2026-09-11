@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.scan_policy import mac_target_rejection_reason, unicast_target_rejection_reason
+
 
 class DeviceType(str, Enum):
     server = "Server"
@@ -46,9 +48,13 @@ class DeviceFields(BaseModel):
     @classmethod
     def normalize_ip_address(cls, value: str) -> str:
         try:
-            return str(ip_address(value.strip()))
+            normalized = str(ip_address(value.strip()))
         except ValueError as exc:
             raise ValueError("A valid IPv4 or IPv6 address is required") from exc
+        rejection = unicast_target_rejection_reason(normalized)
+        if rejection:
+            raise ValueError(rejection)
+        return normalized
 
     @field_validator("description", "asset_tag", "owner", "location", "operating_system", "maintenance_reason", "device_group")
     @classmethod
@@ -427,7 +433,11 @@ class DhcpLeaseRow(BaseModel):
         compact = re.sub(r"[:.\-]", "", value.strip())
         if not re.fullmatch(r"[0-9A-Fa-f]{12}", compact):
             raise ValueError("A valid 48-bit MAC address is required")
-        return ":".join(compact[index:index + 2] for index in range(0, 12, 2)).upper()
+        normalized = ":".join(compact[index:index + 2] for index in range(0, 12, 2)).upper()
+        rejection = mac_target_rejection_reason(normalized)
+        if rejection:
+            raise ValueError(rejection)
+        return normalized
 
 
 class DhcpLeaseImport(BaseModel):
@@ -972,7 +982,7 @@ class DnsQueryRead(BaseModel):
 
 
 class LabCommandRead(BaseModel):
-    tool: Literal["nmap", "arp-scan", "avahi-browse", "ip-neigh", "curl", "dig", "test-connection"]
+    tool: Literal["nmap", "nmap-udp", "arp-scan", "avahi-browse", "ip-neigh", "curl", "dig", "test-connection"]
     target: str | None = None
     exit_code: int
     output: str
@@ -992,6 +1002,27 @@ class NmapTcpScanRequest(LabCommandFilter):
     profile: Literal["FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"] = "FAST"
     service_detection: bool = False
     show_reason: bool = False
+
+    @field_validator("ports")
+    @classmethod
+    def normalize_ports(cls, values: list[int]) -> list[int]:
+        if any(port < 1 or port > 65535 for port in values):
+            raise ValueError("Ports must be between 1 and 65535")
+        return list(dict.fromkeys(values))
+
+
+class NmapUdpScanRequest(LabCommandFilter):
+    device_id: int = Field(gt=0)
+    ports: list[int] = Field(
+        default_factory=lambda: [
+            53, 67, 69, 123, 137, 161, 500, 514, 520, 623,
+            1434, 1900, 4500, 5060, 5353, 5683, 10001, 11211, 20000, 47808,
+        ],
+        min_length=1,
+        max_length=64,
+    )
+    profile: Literal["FAST", "DETAILED", "AGGRESSIVE"] = "FAST"
+    show_reason: bool = True
 
     @field_validator("ports")
     @classmethod

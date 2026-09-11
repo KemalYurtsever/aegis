@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.models import Device, MonitorResult
 from app.services.alert_service import evaluate_alerts
 from app.services.ping_service import PingResult, check_ip
+from app.services.scan_policy import scan_target_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,8 @@ def store_device_checks(
 
 
 def check_and_store_device(device: Device, db: Session) -> MonitorResult:
+    if not scan_target_allowed(device.ip_address, device.mac_address):
+        return store_device_check(device, PingResult("OFFLINE", None, "invalid_target"), db)
     ping_result = check_ip(device.ip_address, get_settings().ping_timeout_seconds)
     ping_result = apply_neighbor_evidence([device], [ping_result])[0]
     return store_device_check(device, ping_result, db)
@@ -61,7 +64,11 @@ def apply_neighbor_evidence(
     candidates = [
         (index, device)
         for index, (device, result) in enumerate(zip(devices, ping_results))
-        if result.status == "OFFLINE" and device.mac_address
+        if (
+            result.status == "OFFLINE"
+            and device.mac_address
+            and scan_target_allowed(device.ip_address, device.mac_address)
+        )
     ]
     if not candidates:
         return ping_results
@@ -92,14 +99,14 @@ def check_and_store_devices(devices: list[Device], db: Session) -> list[MonitorR
         return []
 
     settings = get_settings()
-    addresses = [device.ip_address for device in devices]
+    def probe(device: Device) -> PingResult:
+        if not scan_target_allowed(device.ip_address, device.mac_address):
+            return PingResult("OFFLINE", None, "invalid_target")
+        return check_ip(device.ip_address, settings.ping_timeout_seconds)
 
-    def probe(address: str) -> PingResult:
-        return check_ip(address, settings.ping_timeout_seconds)
-
-    worker_count = min(settings.monitor_check_workers, len(addresses))
+    worker_count = min(settings.monitor_check_workers, len(devices))
     with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="aegis-check") as executor:
-        ping_results = list(executor.map(probe, addresses))
+        ping_results = list(executor.map(probe, devices))
     ping_results = apply_neighbor_evidence(devices, ping_results)
 
     # SQLAlchemy sessions stay on the request thread and the completed probe

@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import SecurityPlaybookRun, utc_now
+from app.models import Device, SecurityPlaybookRun, utc_now
 from app.routers.auth import require_admin
 from app.routers.devices import get_device_or_404
 from app.schemas import (
@@ -18,6 +18,7 @@ from app.schemas import (
     LabCommandRead,
     LabCommandFilter,
     NmapTcpScanRequest,
+    NmapUdpScanRequest,
     TestConnectionPortRequest,
     ArpScanRequest,
     NeighborTableRequest,
@@ -33,7 +34,21 @@ from app.services.security_playbook_service import (
     build_playbook_run,
     load_playbook_run,
 )
-from app.services.security_toolbox_service import avahi_browse, arp_scan, curl_request, dig_query, host_network_policy, neighbor_table, nmap_tcp_scan, query_dns, test_connection_ports, trace_registered_device, wireless_adapters
+from app.services.scan_policy import scan_target_rejection_reason
+from app.services.security_toolbox_service import (
+    arp_scan,
+    avahi_browse,
+    curl_request,
+    dig_query,
+    host_network_policy,
+    neighbor_table,
+    nmap_tcp_scan,
+    nmap_udp_scan,
+    query_dns,
+    test_connection_ports,
+    trace_registered_device,
+    wireless_adapters,
+)
 
 
 router = APIRouter(
@@ -41,6 +56,15 @@ router = APIRouter(
     tags=["security analysis"],
     dependencies=[Depends(require_admin)],
 )
+
+
+def ensure_device_scan_target_allowed(device: Device) -> None:
+    rejection = scan_target_rejection_reason(
+        device.ip_address,
+        mac_address=device.mac_address,
+    )
+    if rejection:
+        raise HTTPException(status_code=400, detail=rejection)
 
 
 @router.get("/attack-paths", response_model=AttackPathOverview)
@@ -59,7 +83,10 @@ def create_playbook_run(
 ) -> SecurityPlaybookRun:
     device = get_device_or_404(payload.device_id, db)
     user = getattr(request.state, "user", None)
-    run = build_playbook_run(device, payload.profile, getattr(user, "username", "administrator"))
+    try:
+        run = build_playbook_run(device, payload.profile, getattr(user, "username", "administrator"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.add(run)
     try:
         db.commit()
@@ -149,8 +176,11 @@ def cancel_playbook_run(
 @router.post("/toolbox/traceroute", response_model=TraceRouteRead)
 def traceroute(payload: TraceRouteRequest, db: Session = Depends(get_db)) -> TraceRouteRead:
     device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
     try:
         return trace_registered_device(device)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -179,6 +209,7 @@ def inspect_host_network_policy() -> HostNetworkPolicyRead:
 @router.post("/toolbox/nmap", response_model=LabCommandRead)
 def nmap_scan(payload: NmapTcpScanRequest, db: Session = Depends(get_db)) -> LabCommandRead:
     device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
     try:
         return nmap_tcp_scan(
             device.ip_address,
@@ -189,6 +220,29 @@ def nmap_scan(payload: NmapTcpScanRequest, db: Session = Depends(get_db)) -> Lab
             profile=payload.profile,
             show_reason=payload.show_reason,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/nmap-udp", response_model=LabCommandRead)
+def nmap_udp_scan_endpoint(
+    payload: NmapUdpScanRequest,
+    db: Session = Depends(get_db),
+) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return nmap_udp_scan(
+            device.ip_address,
+            payload.ports,
+            profile=payload.profile,
+            show_reason=payload.show_reason,
+            grep=payload.grep,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -196,6 +250,7 @@ def nmap_scan(payload: NmapTcpScanRequest, db: Session = Depends(get_db)) -> Lab
 @router.post("/toolbox/test-connection", response_model=LabCommandRead)
 def test_connection_scan(payload: TestConnectionPortRequest, db: Session = Depends(get_db)) -> LabCommandRead:
     device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
     try:
         return test_connection_ports(
             device.ip_address,
@@ -203,6 +258,8 @@ def test_connection_scan(payload: TestConnectionPortRequest, db: Session = Depen
             payload.timeout_seconds,
             payload.grep,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

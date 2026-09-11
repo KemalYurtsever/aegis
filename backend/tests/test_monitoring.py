@@ -1,6 +1,7 @@
 import threading
 from types import SimpleNamespace
 
+from app.models import Device
 from app.services.monitoring_service import apply_neighbor_evidence
 from app.services.ping_service import PingResult
 
@@ -45,6 +46,29 @@ def test_manual_offline_check_stores_null_latency(client, monkeypatch):
 
 def test_manual_check_unknown_device_returns_404(client):
     assert client.post("/api/devices/999/check").status_code == 404
+
+
+def test_monitoring_does_not_probe_legacy_broadcast_inventory_target(client, monkeypatch):
+    with client.app.state.session_factory() as db:
+        device = Device(
+            name="Legacy broadcast entry",
+            ip_address="198.19.7.255",
+            mac_address="FF:FF:FF:FF:FF:FF",
+            inventory_source="DISCOVERY",
+        )
+        db.add(device)
+        db.commit()
+        device_id = device.id
+
+    monkeypatch.setattr(
+        "app.services.monitoring_service.check_ip",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("invalid target was probed")),
+    )
+
+    response = client.post(f"/api/devices/{device_id}/check")
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "OFFLINE"
 
 
 def test_check_all_checks_only_active_devices(client, monkeypatch):

@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.models import Device
 from app.schemas import DeviceRead, DiscoveryNetwork, DiscoveryResult
 from app.services.mac_vendor_service import lookup_mac_vendor
+from app.services.scan_policy import is_host_in_network, mac_target_rejection_reason
 
 
 @dataclass(frozen=True)
@@ -189,7 +190,9 @@ def read_windows_arp_table() -> dict[str, str]:
     for line in completed.stdout.splitlines():
         match = pattern.match(line)
         if match:
-            entries[match.group(1)] = match.group(2).upper().replace("-", ":")
+            normalized_mac = match.group(2).upper().replace("-", ":")
+            if mac_target_rejection_reason(normalized_mac) is None:
+                entries[match.group(1)] = normalized_mac
     return entries
 
 
@@ -239,7 +242,7 @@ def discover_responsive_hosts(network: LocalNetwork) -> list[tuple[str, str | No
     responsive = ping_sweep()
     arp_entries = read_windows_arp_table()
     discovered = set(responsive)
-    discovered.update(address for address in arp_entries if ipaddress.ip_address(address) in subnet)
+    discovered.update(address for address in arp_entries if is_host_in_network(address, subnet))
     return [(address, arp_entries.get(address)) for address in sorted(discovered, key=ipaddress.ip_address)]
 
 
@@ -259,11 +262,15 @@ def discover_and_import_devices(db: Session) -> DiscoveryResult:
             network,
             get_settings().discovery_mdns_timeout_seconds,
         )
-        responsive_by_ip = dict(responsive_future.result())
+        responsive_by_ip = {
+            address: mac_address
+            for address, mac_address in responsive_future.result()
+            if is_host_in_network(address, network.network)
+        }
         mdns = mdns_future.result()
     subnet = ipaddress.ip_network(network.network)
     for address in mdns:
-        if ipaddress.ip_address(address) in subnet:
+        if is_host_in_network(address, subnet):
             responsive_by_ip.setdefault(address, None)
     responsive = sorted(responsive_by_ip.items(), key=lambda item: ipaddress.ip_address(item[0]))
     existing = {device.ip_address: device for device in db.scalars(select(Device))}

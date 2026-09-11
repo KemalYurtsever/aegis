@@ -132,6 +132,30 @@ def test_playbook_validates_registered_device_and_profile(client, admin_headers,
     assert runner.submitted == []
 
 
+def test_playbook_rejects_legacy_broadcast_inventory_target(client, admin_headers, monkeypatch):
+    runner = install_fake_runner(client, monkeypatch)
+    with client.app.state.session_factory() as db:
+        device = Device(
+            name="Legacy broadcast entry",
+            ip_address="198.19.7.255",
+            mac_address="FF:FF:FF:FF:FF:FF",
+            inventory_source="DISCOVERY",
+        )
+        db.add(device)
+        db.commit()
+        device_id = device.id
+
+    response = client.post(
+        "/api/security/playbooks/runs",
+        headers=admin_headers,
+        json={"device_id": device_id, "profile": "FAST"},
+    )
+
+    assert response.status_code == 400
+    assert "broadcast MAC address" in response.json()["detail"]
+    assert runner.submitted == []
+
+
 def test_playbook_history_supports_device_filter_and_get(client, admin_headers, monkeypatch):
     runner = install_fake_runner(client, monkeypatch)
     first = create_device(client, admin_headers)

@@ -10,15 +10,16 @@ from app.routers.auth import require_admin
 from app.schemas import DeviceFingerprintRead, FingerprintBatchResponse, PortScanResponse, ServiceCheckCreate, ServiceCheckRead, ServiceOverview, ServiceOverviewItem, ServiceResultRead, ServiceStatistics
 from app.services.fingerprint_service import FingerprintEvidence, fingerprint_target
 from app.services.port_scan_service import scan_nmap_top_tcp_ports
-from app.services.scan_policy import scan_target_allowed
+from app.services.scan_policy import scan_target_rejection_reason
 from app.services.service_check_service import run_and_store_service_check
 
 router = APIRouter(prefix="/api", tags=["services"])
 
 
-def ensure_scan_target_allowed(address: str) -> None:
-    if not scan_target_allowed(address):
-        raise HTTPException(status_code=400, detail="Scanning is restricted to the connected authorized LAN")
+def ensure_scan_target_allowed(address: str, mac_address: str | None = None) -> None:
+    reason = scan_target_rejection_reason(address, mac_address=mac_address)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
 
 
 def store_fingerprint(device, evidence: FingerprintEvidence, db: Session) -> DeviceFingerprintRead:
@@ -148,7 +149,7 @@ def scan_device_ports(device_id: int, db: Session = Depends(get_db)) -> PortScan
     # The endpoint already limits targets to registered AEGIS devices. When
     # public-LAN discovery is enabled, also permit addresses inside the bounded
     # network of the active physical adapter (for example, 198.19.4.0/24).
-    ensure_scan_target_allowed(device.ip_address)
+    ensure_scan_target_allowed(device.ip_address, device.mac_address)
     try:
         result = scan_nmap_top_tcp_ports(device.ip_address)
     except (RuntimeError, ValueError) as exc:
@@ -167,7 +168,7 @@ def scan_device_ports(device_id: int, db: Session = Depends(get_db)) -> PortScan
 @router.post("/devices/{device_id}/fingerprint", response_model=DeviceFingerprintRead, dependencies=[Depends(require_admin)])
 def fingerprint_device(device_id: int, db: Session = Depends(get_db)) -> DeviceFingerprintRead:
     device = get_device_or_404(device_id, db)
-    ensure_scan_target_allowed(device.ip_address)
+    ensure_scan_target_allowed(device.ip_address, device.mac_address)
     evidence = fingerprint_target(device.ip_address, device.manufacturer, device.discovered_services)
     return store_fingerprint(device, evidence, db)
 
@@ -178,7 +179,7 @@ def fingerprint_all_devices(db: Session = Depends(get_db)) -> FingerprintBatchRe
     allowed = []
     for device in devices:
         try:
-            ensure_scan_target_allowed(device.ip_address)
+            ensure_scan_target_allowed(device.ip_address, device.mac_address)
             allowed.append(device)
         except HTTPException:
             continue

@@ -29,6 +29,7 @@ from app.services.port_scan_service import (
     nmap_command_prefix,
     scan_nmap_top_tcp_ports,
 )
+from app.services.scan_policy import scan_target_rejection_reason
 
 
 _WIRELESS_NAME = re.compile(r"wi[ -]?fi|wlan|wireless|802\.11", re.I)
@@ -40,7 +41,30 @@ _HOSTNAME = re.compile(
 _ADDRESS_TOKEN = re.compile(r"(?<![0-9a-f:.])(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]{2,})(?![0-9a-f:.])", re.I)
 _LATENCY_TOKEN = re.compile(r"<?(\d+(?:\.\d+)?)\s*ms", re.I)
 _MAX_TOOL_OUTPUT = 100_000
-_DOCKER_TOOLBOX_COMMANDS = {"nmap", "arp-scan", "avahi-browse", "curl", "dig"}
+_DOCKER_TOOLBOX_COMMANDS = {"nmap", "nmap-udp", "arp-scan", "avahi-browse", "curl", "dig"}
+
+COMMON_UDP_PORTS = (
+    53,
+    67,
+    69,
+    123,
+    137,
+    161,
+    500,
+    514,
+    520,
+    623,
+    1434,
+    1900,
+    4500,
+    5060,
+    5353,
+    5683,
+    10001,
+    11211,
+    20000,
+    47808,
+)
 
 
 def _filter_output(output: str, grep: str | None) -> str:
@@ -106,6 +130,9 @@ def nmap_tcp_scan(
     profile: str = "FAST",
     show_reason: bool = False,
 ) -> LabCommandRead:
+    rejection = scan_target_rejection_reason(address)
+    if rejection:
+        raise ValueError(rejection)
     profiles = {"FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"}
     if profile not in profiles:
         raise ValueError("Unknown Nmap scan profile")
@@ -177,12 +204,70 @@ def nmap_tcp_scan(
     )
 
 
+def nmap_udp_scan(
+    address: str,
+    ports: list[int] | None = None,
+    profile: str = "FAST",
+    show_reason: bool = True,
+    grep: str | None = None,
+) -> LabCommandRead:
+    rejection = scan_target_rejection_reason(address)
+    if rejection:
+        raise ValueError(rejection)
+    target = str(ipaddress.ip_address(address))
+    normalized_ports = list(dict.fromkeys(ports or COMMON_UDP_PORTS))
+    if not normalized_ports or len(normalized_ports) > 64:
+        raise ValueError("UDP scanning accepts between 1 and 64 ports")
+    if any(port < 1 or port > 65535 for port in normalized_ports):
+        raise ValueError("Ports must be between 1 and 65535")
+
+    options = {
+        "FAST": {"retries": "0", "host_timeout": "15s", "timeout": 25, "version": ()},
+        "DETAILED": {
+            "retries": "1",
+            "host_timeout": "60s",
+            "timeout": 70,
+            "version": ("-sV", "--version-light"),
+        },
+        "AGGRESSIVE": {
+            "retries": "2",
+            "host_timeout": "120s",
+            "timeout": 130,
+            "version": ("-sV", "--version-all"),
+        },
+    }.get(profile.upper())
+    if options is None:
+        raise ValueError("Unknown UDP scan profile")
+
+    command = [
+        "nmap", "-Pn", "-sU", "-n", "-T4", "--max-retries", options["retries"],
+        "--host-timeout", options["host_timeout"], "--open", "-p",
+        ",".join(map(str, normalized_ports)), *options["version"],
+    ]
+    if show_reason:
+        command.append("--reason")
+    if ipaddress.ip_address(target).version == 6:
+        command.append("-6")
+    command.append(target)
+    return _run_lab_tool(
+        "nmap-udp",
+        command,
+        target=target,
+        grep=grep,
+        timeout=options["timeout"],
+        scanned_port_count=len(normalized_ports),
+    )
+
+
 def test_connection_ports(
     address: str,
     ports: list[int],
     timeout_seconds: int = 2,
     grep: str | None = None,
 ) -> LabCommandRead:
+    rejection = scan_target_rejection_reason(address)
+    if rejection:
+        raise ValueError(rejection)
     target = str(ipaddress.ip_address(address))
     normalized_ports = list(dict.fromkeys(ports))
     if not normalized_ports or len(normalized_ports) > 128:
@@ -375,6 +460,9 @@ def parse_traceroute(output: str) -> list[TraceRouteHop]:
 
 
 def trace_registered_device(device: Device) -> TraceRouteRead:
+    rejection = scan_target_rejection_reason(device.ip_address)
+    if rejection:
+        raise ValueError(rejection)
     is_windows = platform.system() == "Windows"
     executable = "tracert" if is_windows else "traceroute"
     if shutil.which(executable) is None:

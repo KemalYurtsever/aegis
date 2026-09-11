@@ -222,6 +222,9 @@ export function getHostNetworkPolicy() {
 export function runNmapScan(payload) {
   return jsonRequest("/api/security/toolbox/nmap", "POST", payload);
 }
+export function runNmapUdpScan(payload) {
+  return jsonRequest("/api/security/toolbox/nmap-udp", "POST", payload);
+}
 export function runTestConnectionPorts(payload) {
   return jsonRequest("/api/security/toolbox/test-connection", "POST", payload);
 }

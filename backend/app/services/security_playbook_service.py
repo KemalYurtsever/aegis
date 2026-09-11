@@ -25,6 +25,7 @@ from app.services.security_toolbox_service import (
     test_connection_ports,
     trace_registered_device,
 )
+from app.services.scan_policy import scan_target_rejection_reason
 from app.services.vulnerability_service import run_vulnerability_scan
 
 
@@ -57,6 +58,9 @@ def build_playbook_run(
     normalized_profile = profile.upper()
     if normalized_profile not in {"FAST", "DETAILED", "AGGRESSIVE"}:
         raise ValueError("Unknown security playbook profile")
+    rejection = scan_target_rejection_reason(device.ip_address, mac_address=device.mac_address)
+    if rejection:
+        raise ValueError(rejection)
     return SecurityPlaybookRun(
         device_id=device.id,
         target_name=device.name,
@@ -383,6 +387,12 @@ class SecurityPlaybookRunner:
                 raise RuntimeError(
                     "The registered target IP changed after this assessment was queued; start a new run"
                 )
+            rejection = scan_target_rejection_reason(
+                device.ip_address,
+                mac_address=device.mac_address,
+            )
+            if rejection:
+                raise RuntimeError(rejection)
 
     def _cancellation_requested(self, run_id: int) -> bool:
         if self._stop_requested.is_set():
@@ -432,6 +442,9 @@ class SecurityPlaybookRunner:
             )
 
     def _run_step(self, target: PlaybookTarget, step_key: str) -> object:
+        rejection = scan_target_rejection_reason(target.target_ip)
+        if rejection:
+            raise RuntimeError(rejection)
         if step_key == "powershell_tcp":
             port_counts = {"FAST": 8, "DETAILED": 24, "AGGRESSIVE": 64}
             timeouts = {"FAST": 1, "DETAILED": 2, "AGGRESSIVE": 3}
