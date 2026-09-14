@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import get_settings
-from app.database import Base, SessionLocal, engine, ensure_performance_indexes, get_db, migrate_agent_monitoring_columns, migrate_automation_columns, migrate_device_inventory_columns, migrate_notification_tables, migrate_security_playbook_columns, migrate_vulnerability_columns
+from app.database import Base, SessionLocal, engine, ensure_performance_indexes, get_db, migrate_agent_monitoring_columns, migrate_automation_columns, migrate_device_inventory_columns, migrate_diagnostic_job_types, migrate_notification_tables, migrate_security_playbook_columns, migrate_vulnerability_columns
 from app.models import AuditEvent
 from app.routers.alerts import router as alerts_router
 from app.routers.dashboard import build_dashboard, router as dashboard_router
@@ -45,6 +45,7 @@ async def lifespan(application: FastAPI):
     migrate_vulnerability_columns(engine)
     migrate_security_playbook_columns(engine)
     migrate_agent_monitoring_columns(engine)
+    migrate_diagnostic_job_types(engine)
     migrate_automation_columns(engine)
     ensure_performance_indexes(engine)
     settings = get_settings()

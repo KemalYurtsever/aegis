@@ -7,5 +7,6 @@ def test_agent_ingress_exposes_only_agent_protocol_routes():
         "/api/agent/health",
         "/api/agent/metrics",
         "/api/agent/jobs/next",
+        "/api/agent/jobs/{job_id}/validation-callback",
         "/api/agent/jobs/{job_id}/result",
     }

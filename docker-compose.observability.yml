@@ -10,7 +10,10 @@ services:
     tmpfs:
       - /tmp
       - /run/dbus
-      - /run/avahi-daemon:uid=101,gid=102,mode=0755
+      # Debian bookworm assigns avahi uid 102 and gid 103. The daemon cannot
+      # create its PID/socket files when this read-only-container tmpfs is
+      # owned by the former hard-coded IDs.
+      - /run/avahi-daemon:uid=102,gid=103,mode=0755
     environment:
       HOME: /
       XDG_CONFIG_HOME: /tmp/xdg/config
@@ -53,7 +56,8 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./deploy/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3000:3000"

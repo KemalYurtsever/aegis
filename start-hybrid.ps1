@@ -23,6 +23,23 @@ function Wait-HttpEndpoint {
     throw "$Name did not become ready at $Url. Review the logs in $logDirectory."
 }
 
+function Wait-DockerContainerHealthy {
+    param([string]$Name, [string]$Container, [int]$TimeoutSeconds = 45)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $state = docker inspect --format "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}" $Container 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $parts = $state -split '\|', 2
+            if ($parts[0] -in "exited", "dead") {
+                throw "$Name exited before becoming healthy. Review its Docker logs."
+            }
+            if ($parts[0] -eq "running" -and $parts[1] -eq "healthy") { return }
+        }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+    throw "$Name did not become healthy within $TimeoutSeconds seconds. Review its Docker logs."
+}
+
 function Remove-StaleComposeContainers {
     param([string]$WorkingDirectory)
 
@@ -119,8 +136,7 @@ Assert-LoopbackListener -Port 5173 -Service "AEGIS frontend"
 Assert-LoopbackListener -Port $backendPort -Service "AEGIS API"
 Assert-LoopbackListener -Port $agentPort -Service "AEGIS agent ingress"
 if ($dockerAvailable) {
-    $toolboxRunning = docker inspect -f "{{.State.Running}}" $networkToolbox 2>$null
-    if ($LASTEXITCODE -ne 0 -or $toolboxRunning -ne "true") { throw "The AEGIS network toolbox container is not running." }
+    Wait-DockerContainerHealthy -Name "AEGIS network toolbox" -Container $networkToolbox
     Wait-HttpEndpoint -Name "Grafana" -Url "http://127.0.0.1:3000/api/health"
     Wait-HttpEndpoint -Name "Prometheus" -Url "http://127.0.0.1:9090/-/ready"
     Assert-LoopbackListener -Port 3000 -Service "Grafana"

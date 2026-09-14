@@ -12,6 +12,18 @@ const JOB_TYPES = [
   ["SERVICE_SCAN", "Local service scan", "Nmap service and version detection against the agent host only"],
   ["PACKET_CAPTURE", "Packet metadata", "Bounded non-promiscuous packet metadata capture without payloads"],
   ["SUID_AUDIT", "SUID audit", "Privileged-file inventory on Unix-like hosts"],
+  ["VALIDATION_SIMULATION", "Safe defensive validation", "Generated temporary artifacts, signed callbacks, policy inspection, or a registered-device segmentation probe"],
+];
+
+const SIMULATION_TYPES = [
+  ["CALLBACK_CANARY", "Signed callback canary", "Proves that the enrolled agent can make an authenticated, nonce-bound callback to Aegis without opening a shell."],
+  ["SYNTHETIC_CREDENTIAL", "Synthetic honey credential", "Creates an explicitly fake credential artifact in an isolated temporary directory, hashes it, and removes it."],
+  ["PASSWORD_POLICY_AUDIT", "Password policy audit", "Reads password-policy settings without accessing passwords, hashes, or credential material."],
+  ["TEMPORARY_MARKER", "Temporary marker", "Creates, verifies, hashes, and automatically removes one generated marker file."],
+  ["SAFE_FILE_ACTIVITY", "Safe file-activity simulation", "Creates and renames generated files only, performs no encryption, then verifies cleanup."],
+  ["DETECTION_VARIATION", "Detection variation", "Creates several benign, clearly labelled indicators in an isolated temporary directory and removes them."],
+  ["SEGMENTATION_PROBE", "Segmentation probe", "Attempts one TCP connection to another registered device without sending application data."],
+  ["SIGNED_CANARY_ARTIFACT", "Signed canary artifact", "Creates a non-executable HMAC-signed canary, verifies it locally, and removes it."],
 ];
 
 const LABELS = Object.fromEntries(JOB_TYPES.map(([value, label]) => [value, label]));
@@ -34,11 +46,15 @@ function JobResult({ job }) {
   );
 }
 
-export default function RemoteDiagnosticsPanel({ deviceId, agent }) {
+export default function RemoteDiagnosticsPanel({ deviceId, agent, devices = [] }) {
   const [jobs, setJobs] = useState([]);
   const [jobType, setJobType] = useState("NETWORK_CONNECTIONS");
   const [maxRecords, setMaxRecords] = useState(100);
   const [durationSeconds, setDurationSeconds] = useState(10);
+  const [simulationType, setSimulationType] = useState("CALLBACK_CANARY");
+  const [targetDeviceId, setTargetDeviceId] = useState("");
+  const [targetPort, setTargetPort] = useState(443);
+  const [authorizationPhrase, setAuthorizationPhrase] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -51,6 +67,11 @@ export default function RemoteDiagnosticsPanel({ deviceId, agent }) {
       setError(requestError.message);
     }
   }, [agent, deviceId]);
+
+  useEffect(() => {
+    setTargetDeviceId("");
+    setAuthorizationPhrase("");
+  }, [deviceId]);
 
   useEffect(() => { load(); }, [load]);
   const activeJobs = useMemo(
@@ -65,15 +86,30 @@ export default function RemoteDiagnosticsPanel({ deviceId, agent }) {
 
   async function createJob() {
     const label = LABELS[jobType];
-    if (!window.confirm(`Run ${label} on this enrolled host?`)) return;
+    const simulationLabel = SIMULATION_TYPES.find(([value]) => value === simulationType)?.[1];
+    const actionLabel = jobType === "VALIDATION_SIMULATION" ? `${label}: ${simulationLabel}` : label;
+    const confirmation = jobType === "VALIDATION_SIMULATION"
+      ? `Run ${actionLabel} on this enrolled host? Generated validation data will be cleaned up automatically.`
+      : `Run ${actionLabel} on this enrolled host?`;
+    if (!window.confirm(confirmation)) return;
     setBusy(true);
     setError("");
     try {
-      await createDiagnosticJob(deviceId, {
+      const payload = {
         job_type: jobType,
         max_records: Number(maxRecords),
         duration_seconds: Number(durationSeconds),
-      });
+      };
+      if (jobType === "VALIDATION_SIMULATION") {
+        payload.simulation_type = simulationType;
+        payload.authorization_phrase = authorizationPhrase;
+        if (simulationType === "SEGMENTATION_PROBE") {
+          payload.target_device_id = Number(targetDeviceId);
+          payload.target_port = Number(targetPort);
+        }
+      }
+      await createDiagnosticJob(deviceId, payload);
+      if (jobType === "VALIDATION_SIMULATION") setAuthorizationPhrase("");
       await load();
     } catch (requestError) {
       setError(requestError.message);
@@ -112,9 +148,15 @@ export default function RemoteDiagnosticsPanel({ deviceId, agent }) {
             <label>Diagnostic<select value={jobType} onChange={(event) => setJobType(event.target.value)}>{JOB_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
             <label>Maximum records<input type="number" min="10" max="500" value={maxRecords} onChange={(event) => setMaxRecords(event.target.value)} /></label>
             {jobType === "PACKET_CAPTURE" && <label>Seconds<input type="number" min="1" max="30" value={durationSeconds} onChange={(event) => setDurationSeconds(event.target.value)} /></label>}
-            <button className="button button--primary" onClick={createJob} disabled={busy || agent.health_status === "OFFLINE"}>{busy ? "Working…" : "Queue diagnostic"}</button>
+            {jobType === "VALIDATION_SIMULATION" && <label>Simulation<select value={simulationType} onChange={(event) => setSimulationType(event.target.value)}>{SIMULATION_TYPES.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
+            {jobType === "VALIDATION_SIMULATION" && simulationType === "SEGMENTATION_PROBE" && <>
+              <label>Registered destination<select value={targetDeviceId} onChange={(event) => setTargetDeviceId(event.target.value)} required><option value="">Select a device</option>{devices.filter((device) => Number(device.id) !== Number(deviceId)).map((device) => <option value={device.id} key={device.id}>{device.name} · {device.ip_address}</option>)}</select></label>
+              <label>Destination TCP port<input type="number" min="1" max="65535" value={targetPort} onChange={(event) => setTargetPort(event.target.value)} /></label>
+            </>}
+            {jobType === "VALIDATION_SIMULATION" && <label>Authorization phrase<input value={authorizationPhrase} onChange={(event) => setAuthorizationPhrase(event.target.value)} placeholder="RUN SAFE VALIDATION" autoComplete="off" /></label>}
+            <button className="button button--primary" onClick={createJob} disabled={busy || agent.health_status === "OFFLINE" || (jobType === "VALIDATION_SIMULATION" && (authorizationPhrase !== "RUN SAFE VALIDATION" || (simulationType === "SEGMENTATION_PROBE" && !targetDeviceId)))}>{busy ? "Working…" : jobType === "VALIDATION_SIMULATION" ? "Queue validation" : "Queue diagnostic"}</button>
           </div>
-          <p className="diagnostic-description">{JOB_TYPES.find(([value]) => value === jobType)?.[2]}</p>
+          <p className="diagnostic-description">{jobType === "VALIDATION_SIMULATION" ? SIMULATION_TYPES.find(([value]) => value === simulationType)?.[2] : JOB_TYPES.find(([value]) => value === jobType)?.[2]}</p>
         </>
       )}
       {error && <div className="form-error user-error" role="alert">{error}</div>}

@@ -195,6 +195,33 @@ export function runCurlRequest(payload) {
 export function runDigQuery(payload) {
   return jsonRequest("/api/security/toolbox/dig", "POST", payload);
 }
+export function runTlsScan(payload) {
+  return jsonRequest("/api/security/toolbox/sslscan", "POST", payload);
+}
+export function runOpenSslProbe(payload) {
+  return jsonRequest("/api/security/toolbox/openssl", "POST", payload);
+}
+export function runFpingProbe(payload) {
+  return jsonRequest("/api/security/toolbox/fping", "POST", payload);
+}
+export function runWhatWebScan(payload) {
+  return jsonRequest("/api/security/toolbox/whatweb", "POST", payload);
+}
+export function runNiktoScan(payload) {
+  return jsonRequest("/api/security/toolbox/nikto", "POST", payload);
+}
+export function runSmbClientScan(payload) {
+  return jsonRequest("/api/security/toolbox/smbclient", "POST", payload);
+}
+export function runSmbPostureScan(payload) {
+  return jsonRequest("/api/security/toolbox/smb-audit", "POST", payload);
+}
+export function runHostQuery(payload) {
+  return jsonRequest("/api/security/toolbox/host", "POST", payload);
+}
+export function runDnsRecon(payload) {
+  return jsonRequest("/api/security/toolbox/dnsrecon", "POST", payload);
+}
 
 export function createSecurityPlaybookRun(payload) {
   return jsonRequest("/api/security/playbooks/runs", "POST", payload);

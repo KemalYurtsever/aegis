@@ -319,6 +319,60 @@ def migrate_agent_monitoring_columns(engine) -> None:
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
 
 
+def migrate_diagnostic_job_types(engine) -> None:
+    """Expand the SQLite diagnostic allowlist without losing queued job history."""
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.connect() as connection:
+        tables = set(inspect(connection).get_table_names())
+        if "diagnostic_jobs" not in tables and "diagnostic_jobs_legacy" not in tables:
+            return
+        definition = ""
+        if "diagnostic_jobs" in tables:
+            definition = connection.execute(text(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='diagnostic_jobs'"
+            )).scalar() or ""
+        migration_started = "diagnostic_jobs_legacy" in tables
+        if "VALIDATION_SIMULATION" in definition and not migration_started:
+            return
+
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        if not migration_started:
+            connection.execute(text("ALTER TABLE diagnostic_jobs RENAME TO diagnostic_jobs_legacy"))
+        for index_name in (
+            "ix_diagnostic_jobs_device_id",
+            "ix_diagnostic_jobs_job_type",
+            "ix_diagnostic_jobs_status",
+        ):
+            connection.execute(text(f"DROP INDEX IF EXISTS {index_name}"))
+        connection.commit()
+
+    Base.metadata.create_all(bind=engine)
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        tables = set(inspect(connection).get_table_names())
+        if "diagnostic_jobs_legacy" in tables:
+            connection.execute(text(
+                "INSERT OR IGNORE INTO diagnostic_jobs "
+                "(id, device_id, job_type, status, requested_by, parameters_json, result_json, error, "
+                "created_at, claimed_at, completed_at, expires_at) "
+                "SELECT id, device_id, job_type, status, requested_by, parameters_json, result_json, error, "
+                "created_at, claimed_at, completed_at, expires_at FROM diagnostic_jobs_legacy"
+            ))
+            connection.execute(text("DROP TABLE diagnostic_jobs_legacy"))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_diagnostic_jobs_device_id ON diagnostic_jobs (device_id)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_diagnostic_jobs_job_type ON diagnostic_jobs (job_type)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_diagnostic_jobs_status ON diagnostic_jobs (status)"
+        ))
+        connection.commit()
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+
 def migrate_automation_columns(engine) -> None:
     """Keep local automation and incident data compatible during upgrades."""
     if engine.dialect.name != "sqlite":

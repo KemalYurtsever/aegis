@@ -31,10 +31,14 @@ def test_docker_published_ports_are_loopback_only():
 
 
 def test_toolbox_avahi_browses_without_advertising_aegis():
+    launcher = (PROJECT_ROOT / "start-hybrid.ps1").read_text(encoding="utf-8")
     dockerfile = (PROJECT_ROOT / "deploy" / "network-toolbox" / "Dockerfile").read_text(encoding="utf-8")
     configuration = (PROJECT_ROOT / "deploy" / "network-toolbox" / "avahi-daemon.conf").read_text(encoding="utf-8")
 
     assert "avahi-utils" in dockerfile
     assert "avahi-daemon" in dockerfile
+    assert "libnss-mdns" in dockerfile
+    assert "HEALTHCHECK" in dockerfile
+    assert 'Wait-DockerContainerHealthy -Name "AEGIS network toolbox"' in launcher
     assert "disable-publishing=yes" in configuration
     assert "enable-reflector=no" in configuration

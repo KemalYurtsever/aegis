@@ -4120,6 +4120,7 @@ function DeviceAttachmentsPanel({ deviceId, attachments, onChanged, canWrite }) 
 
 function DeviceDetail({
   deviceId,
+  devices = [],
   onBack,
   backLabel = "Back to dashboard",
   onEdit,
@@ -4491,7 +4492,7 @@ function DeviceDetail({
       />
       {isAdmin && (
         <Suspense fallback={<LazyPanelFallback label="remote diagnostics" />}>
-          <RemoteDiagnosticsPanel deviceId={device.id} agent={details.agent} />
+          <RemoteDiagnosticsPanel deviceId={device.id} agent={details.agent} devices={devices} />
         </Suspense>
       )}
       <SnmpPanel
@@ -6904,6 +6905,7 @@ export default function App() {
         {selectedId ? (
           <DeviceDetail
             deviceId={selectedId}
+            devices={data.devices}
             onBack={navigateBackFromDevice}
             backLabel={
               detailOrigin === "security-workbench"

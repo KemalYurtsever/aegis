@@ -1,4 +1,7 @@
 import json
+import hashlib
+import hmac
+import secrets
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
@@ -16,12 +19,23 @@ from app.schemas import (
     DiagnosticJobRead,
     DiagnosticJobResultSubmission,
 )
+from app.services.scan_policy import scan_target_rejection_reason
 
 router = APIRouter(prefix="/api", tags=["remote diagnostics"])
 ingest_router = APIRouter(prefix="/api", tags=["agent diagnostics"])
 
 MAX_RESULT_BYTES = 50_000
 ACTIVE_STATUSES = ("PENDING", "RUNNING")
+VALIDATION_SIMULATIONS = {
+    "CALLBACK_CANARY",
+    "SYNTHETIC_CREDENTIAL",
+    "PASSWORD_POLICY_AUDIT",
+    "TEMPORARY_MARKER",
+    "SAFE_FILE_ACTIVITY",
+    "DETECTION_VARIATION",
+    "SEGMENTATION_PROBE",
+    "SIGNED_CANARY_ARTIFACT",
+}
 
 
 def serialize_job(job: DiagnosticJob) -> DiagnosticJobRead:
@@ -87,8 +101,53 @@ def create_diagnostic_job(
     if queued >= 5:
         raise HTTPException(status_code=409, detail="This agent already has five active diagnostic jobs")
 
-    parameters = {"max_records": payload.max_records}
-    if payload.job_type == "PACKET_CAPTURE":
+    parameters: dict[str, int | str] = {"max_records": payload.max_records}
+    if payload.job_type == "VALIDATION_SIMULATION":
+        if payload.authorization_phrase != "RUN SAFE VALIDATION":
+            raise HTTPException(status_code=422, detail="Enter RUN SAFE VALIDATION to authorize this simulation")
+        active_validation = db.scalar(
+            select(func.count(DiagnosticJob.id)).where(
+                DiagnosticJob.device_id == device_id,
+                DiagnosticJob.job_type == "VALIDATION_SIMULATION",
+                DiagnosticJob.status.in_(ACTIVE_STATUSES),
+            )
+        ) or 0
+        if active_validation:
+            raise HTTPException(status_code=409, detail="This agent already has an active validation simulation")
+        if payload.simulation_type not in VALIDATION_SIMULATIONS:
+            raise HTTPException(status_code=422, detail="Select an approved validation simulation")
+        parameters = {
+            "simulation_type": payload.simulation_type,
+            "nonce": secrets.token_urlsafe(18),
+            "max_records": min(payload.max_records, 25),
+        }
+        if payload.simulation_type == "SEGMENTATION_PROBE":
+            if payload.target_device_id is None or payload.target_port is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Segmentation validation requires a registered destination and TCP port",
+                )
+            if payload.target_device_id == device_id:
+                raise HTTPException(status_code=422, detail="Segmentation validation requires another device")
+            target = get_device_or_404(payload.target_device_id, db)
+            rejection = scan_target_rejection_reason(target.ip_address, mac_address=target.mac_address)
+            if rejection:
+                raise HTTPException(status_code=400, detail=rejection)
+            parameters.update({
+                "target_device_id": target.id,
+                "target_address": target.ip_address,
+                "target_port": payload.target_port,
+            })
+        elif payload.target_device_id is not None or payload.target_port is not None:
+            raise HTTPException(status_code=422, detail="A destination is accepted only for segmentation validation")
+    elif (
+        payload.simulation_type is not None
+        or payload.target_device_id is not None
+        or payload.target_port is not None
+        or payload.authorization_phrase is not None
+    ):
+        raise HTTPException(status_code=422, detail="Validation parameters require a validation simulation job")
+    elif payload.job_type == "PACKET_CAPTURE":
         parameters["duration_seconds"] = payload.duration_seconds
     job = DiagnosticJob(
         device_id=device_id,
@@ -169,6 +228,34 @@ def next_diagnostic_job(
     )
 
 
+@ingest_router.post("/agent/jobs/{job_id}/validation-callback", status_code=204)
+def submit_validation_callback(
+    job_id: int,
+    x_agent_token: str = Header(min_length=20),
+    x_aegis_validation_signature: str = Header(min_length=64, max_length=64),
+    db: Session = Depends(get_db),
+) -> Response:
+    enrollment = authenticated_enrollment(x_agent_token, db)
+    expire_jobs(db, enrollment.device_id)
+    job = db.get(DiagnosticJob, job_id)
+    if job is None or job.device_id != enrollment.device_id:
+        raise HTTPException(status_code=404, detail="Diagnostic job not found")
+    if job.job_type != "VALIDATION_SIMULATION" or job.status != "RUNNING":
+        raise HTTPException(status_code=409, detail="The validation callback is not active")
+    parameters = json.loads(job.parameters_json)
+    if parameters.get("simulation_type") != "CALLBACK_CANARY":
+        raise HTTPException(status_code=409, detail="This job does not accept a callback canary")
+    nonce = str(parameters.get("nonce", ""))
+    expected = hmac.new(x_agent_token.encode("utf-8"), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, x_aegis_validation_signature.lower()):
+        raise HTTPException(status_code=401, detail="Invalid validation callback signature")
+    current = json.loads(job.result_json) if job.result_json else {}
+    current["callback"] = {"verified": True, "received_at": utc_now().isoformat()}
+    job.result_json = json.dumps(current, separators=(",", ":"))
+    db.commit()
+    return Response(status_code=204)
+
+
 @ingest_router.post("/agent/jobs/{job_id}/result", response_model=DiagnosticJobRead)
 def submit_diagnostic_result(
     job_id: int,
@@ -177,6 +264,7 @@ def submit_diagnostic_result(
     db: Session = Depends(get_db),
 ) -> DiagnosticJobRead:
     enrollment = authenticated_enrollment(x_agent_token, db)
+    expire_jobs(db, enrollment.device_id)
     job = db.get(DiagnosticJob, job_id)
     if job is None or job.device_id != enrollment.device_id:
         raise HTTPException(status_code=404, detail="Diagnostic job not found")
@@ -186,8 +274,15 @@ def submit_diagnostic_result(
         raise HTTPException(status_code=409, detail=f"Diagnostic job is {job.status.lower()}")
 
     encoded_result = None
-    if payload.result is not None:
-        encoded_result = json.dumps(payload.result, ensure_ascii=False, separators=(",", ":"))
+    merged_result = payload.result
+    if job.result_json:
+        existing = json.loads(job.result_json)
+        if isinstance(existing, dict):
+            # Server-verified callback evidence is authoritative and cannot
+            # be replaced or erased by the reporting agent's result payload.
+            merged_result = {**payload.result, **existing} if isinstance(payload.result, dict) else existing
+    if merged_result is not None:
+        encoded_result = json.dumps(merged_result, ensure_ascii=False, separators=(",", ":"))
         if len(encoded_result.encode("utf-8")) > MAX_RESULT_BYTES:
             raise HTTPException(status_code=413, detail="Diagnostic result is too large")
     job.status = payload.status

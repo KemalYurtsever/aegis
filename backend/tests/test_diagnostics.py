@@ -1,3 +1,13 @@
+import hashlib
+import hmac
+from datetime import timedelta
+
+from sqlalchemy import create_engine, text
+
+from app.database import migrate_diagnostic_job_types
+from app.models import DiagnosticJob, utc_now
+
+
 def authenticate_admin(client):
     created = client.post(
         "/api/auth/setup",
@@ -148,3 +158,277 @@ def test_diagnostic_result_size_is_bounded(client):
         json={"status": "COMPLETED", "result": {"output": "x" * 51_000}, "error": None},
     )
     assert oversized.status_code == 413
+
+
+def test_safe_validation_callback_is_nonce_bound_and_preserved(client):
+    headers = authenticate_admin(client)
+    device, token = create_enrolled_device(client, headers)
+    created = client.post(
+        f"/api/devices/{device['id']}/diagnostic-jobs",
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "CALLBACK_CANARY",
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["parameters"]["simulation_type"] == "CALLBACK_CANARY"
+    job_id = created.json()["id"]
+    nonce = created.json()["parameters"]["nonce"]
+
+    claimed = client.get("/api/agent/jobs/next", headers={"X-Agent-Token": token})
+    assert claimed.status_code == 200
+    assert claimed.json()["parameters"]["nonce"] == nonce
+
+    invalid = client.post(
+        f"/api/agent/jobs/{job_id}/validation-callback",
+        headers={
+            "X-Agent-Token": token,
+            "X-Aegis-Validation-Signature": "0" * 64,
+        },
+    )
+    assert invalid.status_code == 401
+
+    signature = hmac.new(token.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    callback = client.post(
+        f"/api/agent/jobs/{job_id}/validation-callback",
+        headers={
+            "X-Agent-Token": token,
+            "X-Aegis-Validation-Signature": signature,
+        },
+    )
+    assert callback.status_code == 204
+
+    completed = client.post(
+        f"/api/agent/jobs/{job_id}/result",
+        headers={"X-Agent-Token": token},
+        json={"status": "COMPLETED", "result": {"callback_submitted": True}},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["result"]["callback_submitted"] is True
+    assert completed.json()["result"]["callback"]["verified"] is True
+
+
+def test_claimed_diagnostic_rejects_callbacks_and_results_after_expiry(client):
+    headers = authenticate_admin(client)
+    device, token = create_enrolled_device(client, headers)
+    created = client.post(
+        f"/api/devices/{device['id']}/diagnostic-jobs",
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "CALLBACK_CANARY",
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    ).json()
+    client.get("/api/agent/jobs/next", headers={"X-Agent-Token": token})
+
+    with client.app.state.session_factory() as db:
+        job = db.get(DiagnosticJob, created["id"])
+        job.expires_at = utc_now() - timedelta(seconds=1)
+        db.commit()
+
+    signature = hmac.new(
+        token.encode(),
+        created["parameters"]["nonce"].encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    callback = client.post(
+        f"/api/agent/jobs/{created['id']}/validation-callback",
+        headers={
+            "X-Agent-Token": token,
+            "X-Aegis-Validation-Signature": signature,
+        },
+    )
+    result = client.post(
+        f"/api/agent/jobs/{created['id']}/result",
+        headers={"X-Agent-Token": token},
+        json={"status": "COMPLETED", "result": {"late": True}},
+    )
+    listed = client.get(
+        f"/api/devices/{device['id']}/diagnostic-jobs",
+        headers=headers,
+    ).json()
+
+    assert callback.status_code == 409
+    assert result.status_code == 409
+    assert listed[0]["status"] == "EXPIRED"
+
+
+def test_server_callback_evidence_survives_result_without_payload(client):
+    headers = authenticate_admin(client)
+    device, token = create_enrolled_device(client, headers)
+    created = client.post(
+        f"/api/devices/{device['id']}/diagnostic-jobs",
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "CALLBACK_CANARY",
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    ).json()
+    client.get("/api/agent/jobs/next", headers={"X-Agent-Token": token})
+    signature = hmac.new(
+        token.encode(),
+        created["parameters"]["nonce"].encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    client.post(
+        f"/api/agent/jobs/{created['id']}/validation-callback",
+        headers={
+            "X-Agent-Token": token,
+            "X-Aegis-Validation-Signature": signature,
+        },
+    )
+
+    completed = client.post(
+        f"/api/agent/jobs/{created['id']}/result",
+        headers={"X-Agent-Token": token},
+        json={"status": "COMPLETED", "result": None},
+    )
+
+    assert completed.status_code == 200
+    assert completed.json()["result"]["callback"]["verified"] is True
+
+
+def test_safe_validation_requires_exact_authorization_and_one_active_job(client):
+    headers = authenticate_admin(client)
+    device, _token = create_enrolled_device(client, headers)
+    url = f"/api/devices/{device['id']}/diagnostic-jobs"
+
+    missing_phrase = client.post(
+        url,
+        headers=headers,
+        json={"job_type": "VALIDATION_SIMULATION", "simulation_type": "TEMPORARY_MARKER"},
+    )
+    assert missing_phrase.status_code == 422
+
+    first = client.post(
+        url,
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "TEMPORARY_MARKER",
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        url,
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "SIGNED_CANARY_ARTIFACT",
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    )
+    assert second.status_code == 409
+
+
+def test_segmentation_validation_accepts_only_registered_destination(client):
+    headers = authenticate_admin(client)
+    source, _token = create_enrolled_device(client, headers)
+    destination = client.post(
+        "/api/devices",
+        headers=headers,
+        json={"name": "Validation target", "ip_address": "198.18.56.201", "device_type": "Server"},
+    ).json()
+
+    missing = client.post(
+        f"/api/devices/{source['id']}/diagnostic-jobs",
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "SEGMENTATION_PROBE",
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    )
+    assert missing.status_code == 422
+
+    same_device = client.post(
+        f"/api/devices/{source['id']}/diagnostic-jobs",
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "SEGMENTATION_PROBE",
+            "target_device_id": source["id"],
+            "target_port": 443,
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    )
+    assert same_device.status_code == 422
+
+    created = client.post(
+        f"/api/devices/{source['id']}/diagnostic-jobs",
+        headers=headers,
+        json={
+            "job_type": "VALIDATION_SIMULATION",
+            "simulation_type": "SEGMENTATION_PROBE",
+            "target_device_id": destination["id"],
+            "target_port": 443,
+            "authorization_phrase": "RUN SAFE VALIDATION",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["parameters"] | {} == {
+        "simulation_type": "SEGMENTATION_PROBE",
+        "nonce": created.json()["parameters"]["nonce"],
+        "max_records": 25,
+        "target_device_id": destination["id"],
+        "target_address": "198.18.56.201",
+        "target_port": 443,
+    }
+
+
+def test_validation_parameters_are_rejected_for_other_diagnostics(client):
+    headers = authenticate_admin(client)
+    device, _token = create_enrolled_device(client, headers)
+    response = client.post(
+        f"/api/devices/{device['id']}/diagnostic-jobs",
+        headers=headers,
+        json={"job_type": "TOP_PROCESSES", "simulation_type": "TEMPORARY_MARKER"},
+    )
+    assert response.status_code == 422
+
+
+def test_diagnostic_type_migration_preserves_existing_history(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-diagnostics.db'}")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE devices (id INTEGER PRIMARY KEY)"))
+        connection.execute(text("INSERT INTO devices (id) VALUES (1)"))
+        connection.execute(text("""
+            CREATE TABLE diagnostic_jobs (
+                id INTEGER PRIMARY KEY,
+                device_id INTEGER NOT NULL,
+                job_type VARCHAR(40) NOT NULL CHECK (job_type IN ('TOP_PROCESSES')),
+                status VARCHAR(12) NOT NULL,
+                requested_by VARCHAR(80) NOT NULL,
+                parameters_json TEXT NOT NULL,
+                result_json TEXT,
+                error VARCHAR(1000),
+                created_at DATETIME NOT NULL,
+                claimed_at DATETIME,
+                completed_at DATETIME,
+                expires_at DATETIME NOT NULL,
+                FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+            )
+        """))
+        connection.execute(text("""
+            INSERT INTO diagnostic_jobs
+            (id, device_id, job_type, status, requested_by, parameters_json, created_at, expires_at)
+            VALUES (7, 1, 'TOP_PROCESSES', 'COMPLETED', 'admin', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """))
+
+    migrate_diagnostic_job_types(engine)
+
+    with engine.connect() as connection:
+        definition = connection.execute(text(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='diagnostic_jobs'"
+        )).scalar_one()
+        preserved = connection.execute(text(
+            "SELECT id, job_type, status FROM diagnostic_jobs WHERE id=7"
+        )).one()
+    assert "VALIDATION_SIMULATION" in definition
+    assert preserved == (7, "TOP_PROCESSES", "COMPLETED")

@@ -510,7 +510,7 @@ class DiagnosticJob(Base):
         CheckConstraint(
             "job_type IN ('SERVICE_SCAN', 'PACKET_CAPTURE', 'SECURITY_LOG_SUMMARY', "
             "'NETWORK_CONNECTIONS', 'TOP_PROCESSES', 'SUID_AUDIT', 'LOGIN_HISTORY', "
-            "'LOCAL_ACCOUNTS', 'FIREWALL_RULES')",
+            "'LOCAL_ACCOUNTS', 'FIREWALL_RULES', 'VALIDATION_SIMULATION')",
             name="ck_diagnostic_job_type",
         ),
         CheckConstraint(

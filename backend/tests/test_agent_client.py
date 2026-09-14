@@ -1,4 +1,6 @@
 import importlib.util
+import hashlib
+import hmac
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -100,3 +102,94 @@ def test_agent_processes_only_allowlisted_diagnostic_jobs(monkeypatch):
     )
     assert agent.process_next_diagnostic_job() is True
     assert submitted == [((7, "COMPLETED"), {"result": {"limit": 10}})]
+
+
+def test_safe_validation_file_simulations_cleanup_generated_workspaces(monkeypatch):
+    monkeypatch.setattr(agent, "AGENT_TOKEN", "validation-token-value" * 2)
+    nonce = "safe-validation-nonce-12345"
+    for simulation_type in (
+        "SYNTHETIC_CREDENTIAL",
+        "TEMPORARY_MARKER",
+        "SAFE_FILE_ACTIVITY",
+        "DETECTION_VARIATION",
+        "SIGNED_CANARY_ARTIFACT",
+    ):
+        result = agent.collect_validation_simulation({
+            "_job_id": 10,
+            "simulation_type": simulation_type,
+            "nonce": nonce,
+            "max_records": 12,
+        })
+        assert result["simulation_type"] == simulation_type
+        assert result["cleanup_verified"] is True
+    assert agent.collect_validation_simulation({
+        "_job_id": 10,
+        "simulation_type": "SAFE_FILE_ACTIVITY",
+        "nonce": nonce,
+        "max_records": 12,
+    })["encryption_performed"] is False
+
+
+def test_validation_callback_is_hmac_signed(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(agent, "AGENT_TOKEN", "x" * 32)
+
+    def open_request(request, timeout):
+        captured.update(request=request, timeout=timeout)
+        return FakeResponse(204, {})
+
+    monkeypatch.setattr(agent.urllib.request, "urlopen", open_request)
+    result = agent.submit_validation_callback(17, "nonce-value-long-enough")
+    expected = hmac.new(b"x" * 32, b"nonce-value-long-enough", hashlib.sha256).hexdigest()
+    assert captured["request"].full_url.endswith("/api/agent/jobs/17/validation-callback")
+    assert captured["request"].headers["X-aegis-validation-signature"] == expected
+    assert captured["timeout"] == 10
+    assert result["command_execution"] is False
+
+
+def test_password_policy_audit_uses_only_fixed_policy_command(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(agent.platform, "system", lambda: "Windows")
+
+    def run(arguments, timeout):
+        captured.update(arguments=arguments, timeout=timeout)
+        return "Minimum password age (days): 1"
+
+    monkeypatch.setattr(agent, "run_fixed_command", run)
+    result = agent.collect_validation_simulation({
+        "_job_id": 18,
+        "simulation_type": "PASSWORD_POLICY_AUDIT",
+        "nonce": "password-policy-nonce-12345",
+    })
+
+    assert captured == {"arguments": ["net", "accounts"], "timeout": 15}
+    assert result["simulation_type"] == "PASSWORD_POLICY_AUDIT"
+    assert result["password_material_accessed"] is False
+
+
+def test_segmentation_probe_sends_no_application_data(monkeypatch):
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    captured = {}
+
+    def connect(target, timeout):
+        captured.update(target=target, timeout=timeout)
+        return Connection()
+
+    monkeypatch.setattr(agent.socket, "create_connection", connect)
+    result = agent.collect_validation_simulation({
+        "_job_id": 9,
+        "simulation_type": "SEGMENTATION_PROBE",
+        "nonce": "segmentation-nonce-12345",
+        "target_device_id": 4,
+        "target_address": "198.18.56.201",
+        "target_port": 443,
+    })
+    assert captured == {"target": ("198.18.56.201", 443), "timeout": 3}
+    assert result["connected"] is True
+    assert result["application_data_sent"] is False

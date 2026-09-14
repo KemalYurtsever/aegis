@@ -72,6 +72,38 @@ button {
   font: inherit;
 }
 
+.fatal-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: #eef3f9;
+}
+.fatal-error__card {
+  width: min(560px, 100%);
+  padding: 36px;
+  border: 1px solid #d8e1ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 55px rgba(15, 23, 42, 0.12);
+}
+.fatal-error__eyebrow {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+.fatal-error h1 {
+  margin: 12px 0 10px;
+  color: #172033;
+  font-size: clamp(24px, 5vw, 34px);
+}
+.fatal-error p {
+  margin: 0 0 24px;
+  color: #52627a;
+  line-height: 1.6;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -191,6 +223,9 @@ main {
   gap: 24px;
   align-items: flex-start;
 }
+.page-header {
+  flex-wrap: wrap;
+}
 h1,
 h2,
 p {
@@ -221,10 +256,18 @@ h2 {
 }
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 10px;
+  max-width: 100%;
+  margin-left: auto;
   color: #68758a;
   font-size: 13px;
+}
+.page-header > .header-actions {
+  flex: 1 1 100%;
+  width: 100%;
 }
 .network-context {
   display: inline-flex;
@@ -6781,6 +6824,21 @@ kbd {
 }
 
 /* Theme cursors ---------------------------------------------------------- */
+.tool-coverage {
+  margin-top: 18px;
+}
+.tool-coverage > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.tool-coverage .workbench-table {
+  margin-top: 12px;
+  max-height: 420px;
+  overflow: auto;
+}
+.tool-coverage table {
+  min-width: 860px;
+}
 .lab-cli-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
