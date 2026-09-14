@@ -1,6 +1,9 @@
 """Authenticated AEGIS host-metrics agent with local diagnostics."""
 
 import argparse
+import hashlib
+import hmac
+import ipaddress
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -9,6 +12,7 @@ import platform
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -16,7 +20,7 @@ from pathlib import Path
 
 import psutil
 
-AGENT_VERSION = "0.3.0"
+AGENT_VERSION = "0.4.0"
 LOGGER = logging.getLogger("aegis-agent")
 MAX_RESULT_CHARACTERS = 40_000
 
@@ -93,6 +97,7 @@ def run_fixed_command(arguments: list[str], timeout: int = 20) -> str:
         capture_output=True,
         text=True,
         errors="replace",
+        stdin=subprocess.DEVNULL,
         timeout=timeout,
         check=False,
     )
@@ -301,6 +306,214 @@ def collect_firewall_rules(parameters: dict) -> dict:
     raise RuntimeError("No supported firewall management tool was found")
 
 
+def _generated_workspace(simulation_type: str, nonce: str, action) -> dict:
+    """Run a validation action against generated files and prove automatic cleanup."""
+    workspace_path: Path | None = None
+    result: dict = {}
+    with tempfile.TemporaryDirectory(prefix="aegis-validation-") as workspace:
+        workspace_path = Path(workspace)
+        result = action(workspace_path)
+        result.update({
+            "simulation_type": simulation_type,
+            "scope": "generated temporary data only",
+            "nonce_prefix": nonce[:8],
+        })
+    result["cleanup_verified"] = bool(workspace_path is not None and not workspace_path.exists())
+    return result
+
+
+def _temporary_marker(nonce: str) -> dict:
+    def action(workspace: Path) -> dict:
+        marker = workspace / "aegis-validation-marker.txt"
+        content = f"AEGIS TEMPORARY VALIDATION MARKER\nnonce={nonce}\n"
+        marker.write_text(content, encoding="utf-8")
+        digest = hashlib.sha256(marker.read_bytes()).hexdigest()
+        return {"created": True, "artifact": marker.name, "sha256": digest, "size_bytes": marker.stat().st_size}
+    return _generated_workspace("TEMPORARY_MARKER", nonce, action)
+
+
+def _synthetic_credential(nonce: str) -> dict:
+    def action(workspace: Path) -> dict:
+        artifact = workspace / "synthetic-honey-credential.json"
+        payload = {
+            "synthetic": True,
+            "username": f"aegis-honey-{nonce[:8]}",
+            "password": f"NOT-A-REAL-PASSWORD-{nonce[-8:]}",
+            "purpose": "defensive detection validation",
+        }
+        artifact.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        return {
+            "created": True,
+            "artifact": artifact.name,
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            "contains_real_credentials": False,
+        }
+    return _generated_workspace("SYNTHETIC_CREDENTIAL", nonce, action)
+
+
+def _safe_file_activity(nonce: str, maximum: int) -> dict:
+    count = min(25, max(10, maximum))
+
+    def action(workspace: Path) -> dict:
+        files = []
+        block = (f"AEGIS SAFE FILE ACTIVITY {nonce}\n" * 32).encode("utf-8")[:1024]
+        for index in range(count):
+            path = workspace / f"generated-{index:02d}.txt"
+            path.write_bytes(block)
+            renamed = path.with_suffix(".aegis-simulated")
+            path.rename(renamed)
+            files.append(renamed)
+        total_bytes = sum(path.stat().st_size for path in files)
+        for path in files:
+            path.unlink()
+        return {
+            "files_created": count,
+            "files_renamed": count,
+            "files_removed_before_workspace_cleanup": count,
+            "generated_bytes": total_bytes,
+            "encryption_performed": False,
+        }
+    return _generated_workspace("SAFE_FILE_ACTIVITY", nonce, action)
+
+
+def _detection_variation(nonce: str) -> dict:
+    indicators = (
+        "aegis-network-callback-test",
+        "aegis-temporary-marker-test",
+        "aegis-file-change-test",
+        "aegis-segmentation-test",
+    )
+
+    def action(workspace: Path) -> dict:
+        hashes = []
+        for indicator in indicators:
+            artifact = workspace / f"{indicator}.txt"
+            artifact.write_text(f"BENIGN DETECTION TEST\n{indicator}\n{nonce}\n", encoding="utf-8")
+            hashes.append({"indicator": indicator, "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()})
+        return {"indicators_generated": hashes, "executables_launched": 0}
+    return _generated_workspace("DETECTION_VARIATION", nonce, action)
+
+
+def _signed_canary_artifact(nonce: str) -> dict:
+    def action(workspace: Path) -> dict:
+        payload = json.dumps({
+            "kind": "AEGIS_SIGNED_CANARY",
+            "nonce": nonce,
+            "executable": False,
+        }, sort_keys=True, separators=(",", ":"))
+        signature = hmac.new(AGENT_TOKEN.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        artifact = workspace / "aegis-signed-canary.json"
+        artifact.write_text(json.dumps({"payload": payload, "signature": signature}), encoding="utf-8")
+        verified = hmac.compare_digest(
+            signature,
+            hmac.new(AGENT_TOKEN.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest(),
+        )
+        return {
+            "artifact": artifact.name,
+            "signature": signature,
+            "signature_verified": verified,
+            "executable": False,
+        }
+    return _generated_workspace("SIGNED_CANARY_ARTIFACT", nonce, action)
+
+
+def _password_policy_audit() -> dict:
+    if platform.system() == "Windows":
+        return {
+            "simulation_type": "PASSWORD_POLICY_AUDIT",
+            "source": "Windows net accounts",
+            "output": run_fixed_command(["net", "accounts"], timeout=15),
+            "password_material_accessed": False,
+        }
+    settings = {}
+    login_defs = Path("/etc/login.defs")
+    allowed = {"PASS_MAX_DAYS", "PASS_MIN_DAYS", "PASS_MIN_LEN", "PASS_WARN_AGE", "ENCRYPT_METHOD"}
+    if login_defs.is_file():
+        for line in login_defs.read_text(encoding="utf-8", errors="replace").splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] in allowed:
+                settings[parts[0]] = parts[1]
+    return {
+        "simulation_type": "PASSWORD_POLICY_AUDIT",
+        "source": "/etc/login.defs",
+        "settings": settings,
+        "pam_password_policy_present": Path("/etc/pam.d/common-password").is_file(),
+        "password_material_accessed": False,
+    }
+
+
+def _segmentation_probe(parameters: dict) -> dict:
+    address = str(ipaddress.ip_address(str(parameters["target_address"])))
+    port = int(parameters["target_port"])
+    if ipaddress.ip_address(address).is_multicast or ipaddress.ip_address(address).is_unspecified:
+        raise RuntimeError("Segmentation validation requires a unicast destination")
+    started = time.monotonic()
+    try:
+        with socket.create_connection((address, port), timeout=3):
+            connected = True
+            error = None
+    except OSError as exc:
+        connected = False
+        error = exc.__class__.__name__
+    return {
+        "simulation_type": "SEGMENTATION_PROBE",
+        "target_device_id": int(parameters["target_device_id"]),
+        "target_address": address,
+        "target_port": port,
+        "connected": connected,
+        "duration_ms": round((time.monotonic() - started) * 1000, 2),
+        "application_data_sent": False,
+        "error_type": error,
+    }
+
+
+def submit_validation_callback(job_id: int, nonce: str) -> dict:
+    signature = hmac.new(AGENT_TOKEN.encode("utf-8"), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+    request = urllib.request.Request(
+        f"{SERVER_URL}/api/agent/jobs/{job_id}/validation-callback",
+        data=b"",
+        headers={
+            "X-Agent-Token": AGENT_TOKEN,
+            "X-Aegis-Validation-Signature": signature,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        if response.status != 204:
+            raise RuntimeError(f"Unexpected validation callback response: {response.status}")
+    return {
+        "simulation_type": "CALLBACK_CANARY",
+        "callback_submitted": True,
+        "signature_algorithm": "HMAC-SHA256",
+        "nonce_prefix": nonce[:8],
+        "command_execution": False,
+    }
+
+
+def collect_validation_simulation(parameters: dict) -> dict:
+    simulation_type = str(parameters.get("simulation_type", ""))
+    nonce = str(parameters.get("nonce", ""))
+    if len(nonce) < 16:
+        raise RuntimeError("Validation job did not include a valid nonce")
+    if simulation_type == "CALLBACK_CANARY":
+        return submit_validation_callback(int(parameters["_job_id"]), nonce)
+    if simulation_type == "SYNTHETIC_CREDENTIAL":
+        return _synthetic_credential(nonce)
+    if simulation_type == "PASSWORD_POLICY_AUDIT":
+        return _password_policy_audit()
+    if simulation_type == "TEMPORARY_MARKER":
+        return _temporary_marker(nonce)
+    if simulation_type == "SAFE_FILE_ACTIVITY":
+        return _safe_file_activity(nonce, int(parameters.get("max_records", 10)))
+    if simulation_type == "DETECTION_VARIATION":
+        return _detection_variation(nonce)
+    if simulation_type == "SEGMENTATION_PROBE":
+        return _segmentation_probe(parameters)
+    if simulation_type == "SIGNED_CANARY_ARTIFACT":
+        return _signed_canary_artifact(nonce)
+    raise RuntimeError("Unsupported validation simulation type")
+
+
 DIAGNOSTIC_COLLECTORS = {
     "SERVICE_SCAN": collect_service_scan,
     "PACKET_CAPTURE": collect_packet_metadata,
@@ -311,6 +524,7 @@ DIAGNOSTIC_COLLECTORS = {
     "LOGIN_HISTORY": collect_login_history,
     "LOCAL_ACCOUNTS": collect_local_accounts,
     "FIREWALL_RULES": collect_firewall_rules,
+    "VALIDATION_SIMULATION": collect_validation_simulation,
 }
 
 
@@ -360,7 +574,9 @@ def process_next_diagnostic_job() -> bool:
         return True
     LOGGER.info("Starting diagnostic job %s (%s)", job_id, job_type)
     try:
-        result = collector(job.get("parameters") or {})
+        runtime_parameters = dict(job.get("parameters") or {})
+        runtime_parameters["_job_id"] = job_id
+        result = collector(runtime_parameters)
         submit_diagnostic_result(job_id, "COMPLETED", result=result)
         LOGGER.info("Diagnostic job %s completed", job_id)
     except Exception as exc:

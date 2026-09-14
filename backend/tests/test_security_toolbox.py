@@ -10,13 +10,21 @@ from app.services.security_toolbox_service import (
     arp_scan,
     avahi_browse,
     curl_request,
+    dnsrecon_standard,
     dig_query,
+    fping_probe,
+    host_query,
     host_network_policy,
+    nikto_scan,
     nmap_tcp_scan,
     nmap_udp_scan,
+    openssl_probe,
     parse_traceroute,
     query_dns,
+    smb_posture_scan,
+    smbclient_scan,
     test_connection_ports as run_test_connection_ports,
+    whatweb_scan,
     wireless_adapters,
 )
 
@@ -29,6 +37,103 @@ def admin_headers(client):
     assert response.status_code == 201
     client.app.state.auth_required = True
     return {"Authorization": f"Bearer {response.json()['token']}"}
+
+
+def test_tls_scan_uses_registered_device_and_validates_port(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post("/api/devices", headers=headers, json={
+        "name": "TLS host", "ip_address": "192.168.5.20", "device_type": "Server",
+    }).json()
+    captured = {}
+
+    def fake_run(tool, command, **kwargs):
+        captured.update(tool=tool, command=command, **kwargs)
+        return LabCommandRead(tool=tool, target=kwargs["target"], exit_code=0,
+                              output="TLSv1.3 enabled", duration_ms=1)
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+    response = client.post("/api/security/toolbox/sslscan", headers=headers,
+                           json={"device_id": device["id"], "port": 8443})
+    assert response.status_code == 200
+    assert captured["command"][-1] == "192.168.5.20:8443"
+    assert captured["timeout"] == 60
+    assert "--no-heartbleed" in captured["command"]
+    assert client.post("/api/security/toolbox/sslscan", headers=headers,
+                       json={"device_id": device["id"], "port": 65536}).status_code == 422
+    assert client.post("/api/security/toolbox/sslscan", headers=headers,
+                       json={"device_id": 99999}).status_code == 404
+
+
+def test_extended_defensive_tools_use_fixed_bounded_arguments(monkeypatch):
+    captured = []
+
+    def fake_run(tool, command, **kwargs):
+        captured.append((tool, command, kwargs))
+        return LabCommandRead(
+            tool=tool, target=kwargs.get("target"), exit_code=0, output="ok", duration_ms=1,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    fping_probe("192.168.5.20")
+    whatweb_scan("192.168.5.20", "https", 8443, "/admin")
+    nikto_scan("192.168.5.20", "http", 8080, "/")
+    openssl_probe("2001:db8::20", 443)
+    smbclient_scan("192.168.5.20")
+    smb_posture_scan("192.168.5.20")
+    host_query("server.lab.example")
+    dnsrecon_standard("lab.example")
+
+    by_tool = {tool: (command, kwargs) for tool, command, kwargs in captured}
+    assert by_tool["fping"][0] == ["fping", "-c", "3", "-p", "250", "-t", "1000", "192.168.5.20"]
+    assert by_tool["fping"][1]["timeout"] == 10
+    assert by_tool["whatweb"][0][-1] == "https://192.168.5.20:8443/admin"
+    assert "--aggression=1" in by_tool["whatweb"][0]
+    assert by_tool["nikto"][1]["timeout"] == 55
+    assert by_tool["openssl"][0] == [
+        "openssl", "s_client", "-connect", "[2001:db8::20]:443",
+        "-brief", "-showcerts", "-no_ign_eof",
+    ]
+    assert "-N" in by_tool["smbclient"][0]
+    assert "--script" in by_tool["smb-audit"][0]
+    assert "smb-protocols,smb2-security-mode,smb2-time" in by_tool["smb-audit"][0]
+    assert by_tool["host"][0] == ["host", "-W", "3", "server.lab.example"]
+    assert by_tool["dnsrecon"][0] == [
+        "dnsrecon", "-d", "lab.example", "-t", "std", "--threads", "2", "--lifetime", "3",
+    ]
+
+
+def test_extended_web_tool_endpoint_requires_registered_target(client, monkeypatch):
+    headers = admin_headers(client)
+    device = client.post("/api/devices", headers=headers, json={
+        "name": "Web host", "ip_address": "192.168.5.30", "device_type": "Server",
+    }).json()
+    captured = {}
+
+    def fake_scan(address, scheme, port, path, grep):
+        captured.update(address=address, scheme=scheme, port=port, path=path, grep=grep)
+        return LabCommandRead(
+            tool="whatweb", target=f"{scheme}://{address}:{port}{path}",
+            exit_code=0, output="nginx", duration_ms=1,
+        )
+
+    monkeypatch.setattr("app.routers.security.whatweb_scan", fake_scan)
+    response = client.post("/api/security/toolbox/whatweb", headers=headers, json={
+        "device_id": device["id"], "scheme": "https", "port": 8443,
+        "path": "/admin", "grep": "nginx",
+    })
+
+    assert response.status_code == 200
+    assert captured == {
+        "address": "192.168.5.30", "scheme": "https", "port": 8443,
+        "path": "/admin", "grep": "nginx",
+    }
+    assert client.post("/api/security/toolbox/whatweb", headers=headers, json={
+        "device_id": device["id"], "path": "/bad path",
+    }).status_code == 422
+    assert client.post("/api/security/toolbox/whatweb", headers=headers, json={
+        "device_id": 99999,
+    }).status_code == 404
 
 
 def test_parse_traceroute_handles_responses_and_timeouts():
@@ -110,6 +215,51 @@ def test_nmap_scan_uses_argument_list_and_normalized_options(monkeypatch):
         "timeout": 20,
         "scanned_port_count": 2,
     }
+
+
+def test_nmap_fast_profile_is_ports_only_and_explains_no_open_top_ports(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.nmap_command_prefix",
+        lambda: ["nmap"],
+    )
+
+    def fake_run(tool, command, **kwargs):
+        captured.update(tool=tool, command=command, kwargs=kwargs)
+        return LabCommandRead(
+            tool="nmap",
+            target="192.168.5.1",
+            exit_code=0,
+            output="Nmap done: 1 IP address (1 host up) scanned",
+            duration_ms=1.0,
+            scanned_port_count=1000,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    result = nmap_tcp_scan(
+        "192.168.5.1", [80], False, scan_mode="TOP_1000", profile="FAST"
+    )
+
+    assert "-sV" not in captured["command"]
+    assert "--version-intensity" not in captured["command"]
+    assert result.output.endswith(
+        "No open TCP ports were found among Nmap's top 1,000 ports."
+    )
+
+
+def test_nmap_empty_filtered_output_is_explained(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service._run_lab_tool",
+        lambda *_args, **_kwargs: LabCommandRead(
+            tool="nmap", target="192.168.5.1", exit_code=0,
+            output="", duration_ms=1.0, scanned_port_count=2,
+        ),
+    )
+
+    result = nmap_tcp_scan("192.168.5.1", [80, 443], False, grep="open")
+
+    assert result.output == "No Nmap output matched 'open'."
 
 
 def test_nmap_detailed_and_aggressive_profiles_select_version_depth(monkeypatch):
@@ -290,6 +440,7 @@ def test_windows_arp_scan_uses_bounded_native_fallback(monkeypatch):
 
 def test_avahi_browse_uses_a_fixed_nonpublishing_command(monkeypatch):
     captured = {}
+    monkeypatch.setattr("app.services.security_toolbox_service.platform.system", lambda: "Linux")
 
     def fake_run(tool, command, **kwargs):
         captured.update(tool=tool, command=command, kwargs=kwargs)
@@ -314,6 +465,7 @@ def test_avahi_browse_uses_a_fixed_nonpublishing_command(monkeypatch):
 
 
 def test_avahi_browse_explains_empty_docker_multicast_results(monkeypatch):
+    monkeypatch.setattr("app.services.security_toolbox_service.platform.system", lambda: "Linux")
     monkeypatch.setattr(
         "app.services.security_toolbox_service._run_lab_tool",
         lambda *_args, **_kwargs: LabCommandRead(
@@ -328,6 +480,45 @@ def test_avahi_browse_explains_empty_docker_multicast_results(monkeypatch):
         "No DNS-SD services were visible inside Docker. "
         "Use Discover network for host-interface mDNS discovery."
     )
+
+
+def test_windows_avahi_browse_uses_host_interface_mdns(monkeypatch):
+    monkeypatch.setattr("app.services.security_toolbox_service.platform.system", lambda: "Windows")
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.get_primary_private_network",
+        lambda: LocalNetwork("WiFi", "192.168.5.20", "192.168.5.0/24", "192.168.5.1"),
+    )
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.get_settings",
+        lambda: SimpleNamespace(discovery_mdns_timeout_seconds=2.0),
+    )
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.discover_mdns",
+        lambda _network, _timeout: {
+            "192.168.5.40": {
+                "display_name": "Living Room TV",
+                "model": "Chromecast Ultra",
+                "hostname": "living-room.local",
+                "services": ["googlecast", "http"],
+            },
+            "192.168.6.40": {
+                "display_name": "Outside bounded subnet",
+                "model": "Should not be returned",
+                "hostname": "outside.local",
+                "services": ["googlecast"],
+            },
+        },
+    )
+
+    result = avahi_browse("Chromecast")
+
+    assert result.exit_code == 0
+    assert result.target == "WiFi 192.168.5.0/24"
+    assert result.output == (
+        "192.168.5.40\tLiving Room TV\tChromecast Ultra\t"
+        "living-room.local\tgooglecast,http"
+    )
+    assert "192.168.6.40" not in result.output
 
 
 def test_windows_dig_falls_back_to_nslookup(monkeypatch):

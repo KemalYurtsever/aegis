@@ -28,11 +28,18 @@ The administrator Security Workbench now exposes:
 - The Windows neighbor table through `Get-NetNeighbor`, or `ip neigh show` on Linux.
 - HTTP and HTTPS curl requests, including an opt-in switch for untrusted lab certificates.
 - `dig` queries for a fixed set of DNS record types. Native Windows falls back to `nslookup` when `dig` is absent.
+- Three bounded `fping` probes against one registered device.
+- WhatWeb light-profile fingerprinting and a 45-second non-interactive Nikto assessment against a validated endpoint on one registered device.
+- `sslscan` with Heartbleed probing disabled and an OpenSSL certificate/session inspection with closed stdin.
+- Anonymous-only `smbclient` service listing and fixed Nmap scripts for SMB protocol and signing posture. No credential fields or arbitrary NSE scripts are accepted.
+- `host` lookups and DNSRecon standard-record enumeration. DNSRecon brute force, reverse-range, cache-snooping, and wordlist modes are not exposed.
 - Case-insensitive literal line filtering for every command result, providing grep-like output without invoking a shell.
 
 Commands run as argument arrays with `shell=False`. Inputs are typed and validated, command durations are capped, curl redirects remain HTTP(S)-only, curl transfer rate and size are bounded, and returned output is capped at 100 KB. The expensive-operation rate-limit bucket applies to every Security Workbench command endpoint.
 
-The backend container installs `nmap`, `arp-scan`, `curl`, `dnsutils`, `iproute2`, and `traceroute`. Hybrid mode also starts a read-only network-toolbox sidecar with only the `NET_RAW` capability; the native API delegates a missing Nmap, curl, dig, or arp-scan binary through `docker exec` without invoking a shell. Windows continues to use Npcap/Scapy for physical-LAN ARP discovery because Docker Desktop bridge networking does not expose the physical layer-2 segment reliably. System Status reports whether the combined host and toolbox capabilities are available.
+The backend container installs the core monitoring tools. Hybrid mode also starts a read-only network-toolbox sidecar with only the capabilities needed for raw network discovery; it contains Nmap, Nuclei, arp-scan, Avahi, curl, DNS utilities, DNSRecon, fping, Netdiscover, Nikto, OpenSSL, smbclient, SNMP CLI tools, sslscan, tcpdump, tshark, traceroute, and WhatWeb. The native API delegates an allowlisted missing binary through `docker exec` without invoking a shell. Windows continues to use Npcap/Scapy for physical-LAN ARP discovery because Docker Desktop bridge networking does not expose the physical layer-2 segment reliably.
+
+Continuous Zeek or Suricata collection, OpenVAS or Nessus scanner orchestration, and Lynis or osquery host audits are explicit integration boundaries. They need dedicated sensor/scanner services, credentials and lifecycle management, or a host-agent result model. Aegis does not run them inside the toolbox and misrepresent container results as host findings. NetExec and credentialed SMB enumeration remain outside the product boundary.
 
 ## Infrastructure observations
 

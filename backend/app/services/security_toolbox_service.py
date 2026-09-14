@@ -11,6 +11,7 @@ import time
 
 import psutil
 
+from app.config import get_settings
 from app.models import Device
 from app.schemas import (
     DnsQueryRead,
@@ -24,6 +25,7 @@ from app.schemas import (
     LabCommandRead,
 )
 from app.services.discovery_service import discover_responsive_hosts, get_primary_private_network
+from app.services.mdns_service import discover_mdns
 from app.services.port_scan_service import (
     NMAP_VERSION_ARGUMENTS,
     nmap_command_prefix,
@@ -41,7 +43,10 @@ _HOSTNAME = re.compile(
 _ADDRESS_TOKEN = re.compile(r"(?<![0-9a-f:.])(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]{2,})(?![0-9a-f:.])", re.I)
 _LATENCY_TOKEN = re.compile(r"<?(\d+(?:\.\d+)?)\s*ms", re.I)
 _MAX_TOOL_OUTPUT = 100_000
-_DOCKER_TOOLBOX_COMMANDS = {"nmap", "nmap-udp", "arp-scan", "avahi-browse", "curl", "dig"}
+_DOCKER_TOOLBOX_COMMANDS = {
+    "nmap", "nmap-udp", "arp-scan", "avahi-browse", "curl", "dig", "sslscan",
+    "fping", "whatweb", "nikto", "openssl", "smbclient", "smb-audit", "host", "dnsrecon",
+}
 
 COMMON_UDP_PORTS = (
     53,
@@ -65,6 +70,138 @@ COMMON_UDP_PORTS = (
     20000,
     47808,
 )
+
+
+def tls_scan(address: str, port: int = 443, grep: str | None = None) -> LabCommandRead:
+    rejection = scan_target_rejection_reason(address)
+    if rejection:
+        raise ValueError(rejection)
+    if not 1 <= port <= 65535:
+        raise ValueError("TLS port must be between 1 and 65535")
+    address = str(ipaddress.ip_address(address))
+    target = f"[{address}]:{port}" if ":" in address else f"{address}:{port}"
+    return _run_lab_tool(
+        "sslscan",
+        ["sslscan", "--no-colour", "--no-heartbleed", "--timeout=3", target],
+        target=target, grep=grep, timeout=60,
+    )
+
+
+def _registered_address(address: str) -> str:
+    rejection = scan_target_rejection_reason(address)
+    if rejection:
+        raise ValueError(rejection)
+    return str(ipaddress.ip_address(address))
+
+
+def _host_port(address: str, port: int) -> str:
+    return f"[{address}]:{port}" if ":" in address else f"{address}:{port}"
+
+
+def _http_target(address: str, scheme: str, port: int, path: str) -> str:
+    if scheme not in {"http", "https"}:
+        raise ValueError("Web scheme must be HTTP or HTTPS")
+    if not 1 <= port <= 65535:
+        raise ValueError("Web port must be between 1 and 65535")
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{scheme}://{_host_port(address, port)}{normalized_path}"
+
+
+def fping_probe(address: str, grep: str | None = None) -> LabCommandRead:
+    """Send three bounded ICMP probes to one registered unicast device."""
+    target = _registered_address(address)
+    return _run_lab_tool(
+        "fping", ["fping", "-c", "3", "-p", "250", "-t", "1000", target],
+        target=target, grep=grep, timeout=10,
+    )
+
+
+def whatweb_scan(
+    address: str,
+    scheme: str,
+    port: int,
+    path: str = "/",
+    grep: str | None = None,
+) -> LabCommandRead:
+    """Fingerprint one registered web endpoint with WhatWeb's lightest profile."""
+    target = _http_target(_registered_address(address), scheme, port, path)
+    return _run_lab_tool(
+        "whatweb",
+        [
+            "whatweb", "--aggression=1", "--max-threads=2", "--open-timeout=5",
+            "--read-timeout=10", "--no-errors", "--colour=never", target,
+        ],
+        target=target, grep=grep, timeout=30,
+    )
+
+
+def nikto_scan(
+    address: str,
+    scheme: str,
+    port: int,
+    path: str = "/",
+    grep: str | None = None,
+) -> LabCommandRead:
+    """Run a short, non-interactive Nikto assessment against one registered endpoint."""
+    target = _http_target(_registered_address(address), scheme, port, path)
+    return _run_lab_tool(
+        "nikto",
+        [
+            "nikto", "-host", target, "-maxtime", "45s", "-timeout", "5",
+            "-nointeractive", "-ask", "no",
+        ],
+        target=target, grep=grep, timeout=55,
+    )
+
+
+def openssl_probe(address: str, port: int = 443, grep: str | None = None) -> LabCommandRead:
+    """Inspect the certificate chain and negotiated TLS parameters without sending application data."""
+    target_address = _registered_address(address)
+    if not 1 <= port <= 65535:
+        raise ValueError("TLS port must be between 1 and 65535")
+    target = _host_port(target_address, port)
+    return _run_lab_tool(
+        "openssl",
+        ["openssl", "s_client", "-connect", target, "-brief", "-showcerts", "-no_ign_eof"],
+        target=target, grep=grep, timeout=25,
+    )
+
+
+def smbclient_scan(address: str, grep: str | None = None) -> LabCommandRead:
+    """List SMB services using an anonymous session; credentials are never accepted."""
+    target = _registered_address(address)
+    return _run_lab_tool(
+        "smbclient",
+        ["smbclient", "-L", f"//{target}", "-N", "-g", "--option=client min protocol=SMB2"],
+        target=target, grep=grep, timeout=30,
+    )
+
+
+def smb_posture_scan(address: str, grep: str | None = None) -> LabCommandRead:
+    """Read SMB protocol and signing posture with non-credentialed Nmap scripts."""
+    target = _registered_address(address)
+    command = [
+        "nmap", "-Pn", "-n", "-p", "445", "--host-timeout", "45s",
+        "--script", "smb-protocols,smb2-security-mode,smb2-time", target,
+    ]
+    if ipaddress.ip_address(target).version == 6:
+        command.insert(-1, "-6")
+    return _run_lab_tool("smb-audit", command, target=target, grep=grep, timeout=55)
+
+
+def host_query(query: str, grep: str | None = None) -> LabCommandRead:
+    return _run_lab_tool(
+        "host", ["host", "-W", "3", query], target=query, grep=grep, timeout=10,
+    )
+
+
+def dnsrecon_standard(query: str, grep: str | None = None) -> LabCommandRead:
+    """Run only DNSRecon's standard record enumeration; brute force and reverse ranges are unavailable."""
+    return _run_lab_tool(
+        "dnsrecon",
+        ["dnsrecon", "-d", query, "-t", "std", "--threads", "2", "--lifetime", "3"],
+        target=query, grep=grep, timeout=45,
+    )
 
 
 def _filter_output(output: str, grep: str | None) -> str:
@@ -99,6 +236,7 @@ def _run_lab_tool(
             completed = subprocess.run(
                 [executable, *command[1:]], stdout=output_file, stderr=subprocess.STDOUT,
                 timeout=timeout, shell=False, check=False,
+                stdin=subprocess.DEVNULL,
                 env={**os.environ, **(environment or {})},
             )
             exit_code = completed.returncode
@@ -193,15 +331,29 @@ def nmap_tcp_scan(
         scanned_port_count = len(ports)
     if ipaddress.ip_address(address).version == 6:
         command.append("-6")
-    if profile in NMAP_VERSION_ARGUMENTS:
+    # FAST is the UI's ports-only profile. Keep the legacy service_detection
+    # switch compatible by promoting it to FAST_VERSION above, but do not run
+    # version probes for an ordinary FAST scan.
+    if profile != "FAST":
         command.extend(["-sV", *NMAP_VERSION_ARGUMENTS[profile]])
     if show_reason:
         command.append("--reason")
     command.append(address)
-    return _run_lab_tool(
+    result = _run_lab_tool(
         "nmap", command, target=address, grep=grep, timeout=timeout,
         scanned_port_count=scanned_port_count,
     )
+    if result.exit_code == 0 and grep and not result.output:
+        return result.model_copy(update={"output": f"No Nmap output matched {grep!r}."})
+    if (
+        result.exit_code == 0
+        and top_1000
+        and not grep
+        and not re.search(r"(?m)^\d+/tcp\s+open\b", result.output)
+    ):
+        summary = "No open TCP ports were found among Nmap's top 1,000 ports."
+        return result.model_copy(update={"output": f"{result.output}\n\n{summary}".strip()})
+    return result
 
 
 def nmap_udp_scan(
@@ -377,7 +529,49 @@ def arp_scan(interface_name: str | None = None, grep: str | None = None) -> LabC
 
 
 def avahi_browse(grep: str | None = None) -> LabCommandRead:
-    """Show the bounded DNS-SD cache without publishing an Aegis service."""
+    """Browse bounded DNS-SD records without publishing an Aegis service."""
+    if platform.system() == "Windows":
+        started = time.monotonic()
+        network = get_primary_private_network()
+        records = discover_mdns(
+            network,
+            get_settings().discovery_mdns_timeout_seconds,
+        )
+        subnet = ipaddress.ip_network(network.network, strict=True)
+        rows = []
+        for address, details in sorted(records.items(), key=lambda item: ipaddress.ip_address(item[0])):
+            if ipaddress.ip_address(address) not in subnet:
+                continue
+            rows.append("\t".join([
+                address,
+                details.get("display_name") or "-",
+                details.get("model") or "-",
+                details.get("hostname") or "-",
+                ",".join(details.get("services") or []) or "-",
+            ]))
+        if grep:
+            output = _filter_output("\n".join(rows), grep)
+            if not output:
+                output = f"No host-interface mDNS records matched {grep!r}."
+        elif rows:
+            output = "\n".join([
+                f"Interface: {network.interface_name} ({network.local_ip})",
+                "ADDRESS\tNAME\tMODEL\tHOSTNAME\tSERVICES",
+                *rows,
+            ])
+        else:
+            output = (
+                f"No DNS-SD services were observed on {network.interface_name} "
+                f"({network.local_ip}) during the bounded host-interface browse."
+            )
+        return LabCommandRead(
+            tool="avahi-browse",
+            target=f"{network.interface_name} {network.network}",
+            exit_code=0,
+            output=output,
+            duration_ms=round((time.monotonic() - started) * 1000, 2),
+        )
+
     result = _run_lab_tool(
         "avahi-browse",
         [

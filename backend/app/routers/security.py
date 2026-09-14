@@ -17,6 +17,10 @@ from app.schemas import (
     WirelessAdapterRead,
     LabCommandRead,
     LabCommandFilter,
+    TlsScanRequest,
+    RegisteredHostToolRequest,
+    WebEndpointAuditRequest,
+    DnsEnumerationRequest,
     NmapTcpScanRequest,
     NmapUdpScanRequest,
     TestConnectionPortRequest,
@@ -37,16 +41,25 @@ from app.services.security_playbook_service import (
 from app.services.scan_policy import scan_target_rejection_reason
 from app.services.security_toolbox_service import (
     arp_scan,
+    tls_scan,
     avahi_browse,
     curl_request,
+    dnsrecon_standard,
     dig_query,
+    fping_probe,
+    host_query,
     host_network_policy,
     neighbor_table,
+    nikto_scan,
     nmap_tcp_scan,
     nmap_udp_scan,
+    openssl_probe,
     query_dns,
+    smb_posture_scan,
+    smbclient_scan,
     test_connection_ports,
     trace_registered_device,
+    whatweb_scan,
     wireless_adapters,
 )
 
@@ -260,6 +273,106 @@ def test_connection_scan(payload: TestConnectionPortRequest, db: Session = Depen
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/sslscan", response_model=LabCommandRead)
+def run_tls_scan(payload: TlsScanRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return tls_scan(device.ip_address, payload.port, payload.grep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/openssl", response_model=LabCommandRead)
+def run_openssl_probe(payload: TlsScanRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return openssl_probe(device.ip_address, payload.port, payload.grep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/fping", response_model=LabCommandRead)
+def run_fping(payload: RegisteredHostToolRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return fping_probe(device.ip_address, payload.grep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/whatweb", response_model=LabCommandRead)
+def run_whatweb(payload: WebEndpointAuditRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return whatweb_scan(device.ip_address, payload.scheme, payload.port, payload.path, payload.grep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/nikto", response_model=LabCommandRead)
+def run_nikto(payload: WebEndpointAuditRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return nikto_scan(device.ip_address, payload.scheme, payload.port, payload.path, payload.grep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/smbclient", response_model=LabCommandRead)
+def run_smbclient(payload: RegisteredHostToolRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return smbclient_scan(device.ip_address, payload.grep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/smb-audit", response_model=LabCommandRead)
+def run_smb_audit(payload: RegisteredHostToolRequest, db: Session = Depends(get_db)) -> LabCommandRead:
+    device = get_device_or_404(payload.device_id, db)
+    ensure_device_scan_target_allowed(device)
+    try:
+        return smb_posture_scan(device.ip_address, payload.grep)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/host", response_model=LabCommandRead)
+def run_host_query(payload: DnsEnumerationRequest) -> LabCommandRead:
+    try:
+        return host_query(payload.query, payload.grep)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/dnsrecon", response_model=LabCommandRead)
+def run_dnsrecon(payload: DnsEnumerationRequest) -> LabCommandRead:
+    try:
+        return dnsrecon_standard(payload.query, payload.grep)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

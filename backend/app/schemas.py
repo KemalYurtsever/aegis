@@ -716,6 +716,18 @@ DiagnosticJobType = Literal[
     "LOGIN_HISTORY",
     "LOCAL_ACCOUNTS",
     "FIREWALL_RULES",
+    "VALIDATION_SIMULATION",
+]
+
+ValidationSimulationType = Literal[
+    "CALLBACK_CANARY",
+    "SYNTHETIC_CREDENTIAL",
+    "PASSWORD_POLICY_AUDIT",
+    "TEMPORARY_MARKER",
+    "SAFE_FILE_ACTIVITY",
+    "DETECTION_VARIATION",
+    "SEGMENTATION_PROBE",
+    "SIGNED_CANARY_ARTIFACT",
 ]
 
 
@@ -723,6 +735,10 @@ class DiagnosticJobCreate(BaseModel):
     job_type: DiagnosticJobType
     max_records: int = Field(default=100, ge=10, le=500)
     duration_seconds: int = Field(default=10, ge=1, le=30)
+    simulation_type: ValidationSimulationType | None = None
+    target_device_id: int | None = Field(default=None, gt=0)
+    target_port: int | None = Field(default=None, ge=1, le=65535)
+    authorization_phrase: str | None = Field(default=None, max_length=40)
 
 
 class DiagnosticJobRead(BaseModel):
@@ -731,7 +747,7 @@ class DiagnosticJobRead(BaseModel):
     job_type: DiagnosticJobType
     status: Literal["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "EXPIRED"]
     requested_by: str
-    parameters: dict[str, int]
+    parameters: dict[str, int | str]
     result: Any | None
     error: str | None
     created_at: datetime
@@ -743,7 +759,7 @@ class DiagnosticJobRead(BaseModel):
 class DiagnosticJobAgentRead(BaseModel):
     id: int
     job_type: DiagnosticJobType
-    parameters: dict[str, int]
+    parameters: dict[str, int | str]
 
 
 class DiagnosticJobResultSubmission(BaseModel):
@@ -982,7 +998,11 @@ class DnsQueryRead(BaseModel):
 
 
 class LabCommandRead(BaseModel):
-    tool: Literal["nmap", "nmap-udp", "arp-scan", "avahi-browse", "ip-neigh", "curl", "dig", "test-connection"]
+    tool: Literal[
+        "nmap", "nmap-udp", "arp-scan", "avahi-browse", "ip-neigh", "curl", "dig",
+        "test-connection", "sslscan", "fping", "whatweb", "nikto", "openssl",
+        "smbclient", "smb-audit", "host", "dnsrecon",
+    ]
     target: str | None = None
     exit_code: int
     output: str
@@ -993,6 +1013,34 @@ class LabCommandRead(BaseModel):
 
 class LabCommandFilter(BaseModel):
     grep: str | None = Field(default=None, max_length=120)
+
+
+class TlsScanRequest(LabCommandFilter):
+    device_id: int = Field(ge=1)
+    port: int = Field(default=443, ge=1, le=65535)
+
+
+class RegisteredHostToolRequest(LabCommandFilter):
+    device_id: int = Field(ge=1)
+
+
+class WebEndpointAuditRequest(RegisteredHostToolRequest):
+    scheme: Literal["http", "https"] = "http"
+    port: int = Field(default=80, ge=1, le=65535)
+    path: str = Field(
+        default="/",
+        min_length=1,
+        max_length=512,
+        pattern=r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$",
+    )
+
+
+class DnsEnumerationRequest(LabCommandFilter):
+    query: str = Field(
+        min_length=1,
+        max_length=253,
+        pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$",
+    )
 
 
 class NmapTcpScanRequest(LabCommandFilter):

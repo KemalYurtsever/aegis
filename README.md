@@ -25,6 +25,10 @@ Aegis keeps operational data under the operator's control. The standard installa
 | Command palette | Opens devices and operational panels from a keyboard-searchable menu using `Ctrl+K` or `Cmd+K`. |
 | Responsive navigation | Provides mobile navigation, fixed desktop navigation, collapsible sections, light and dark themes, readable typography, and keyboard focus states. |
 
+![Aegis operations dashboard with infrastructure health, alerts, and prioritized actions](docs/screenshots/01-dashboard-overview.png)
+
+*Operations dashboard with synthetic prototype data.*
+
 The dashboard refreshes every 15 seconds. **Check all** runs an immediate reachability check for every active device and stores the results through the same alert and history pipeline used by scheduled monitoring.
 
 ### Asset inventory and device records
@@ -42,6 +46,14 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 | CSV export | Exports the complete filtered and sorted inventory as UTF-8 CSV, independent of the current page. |
 | Excel export | Creates a formatted `.xlsx` workbook with typed values, filters, frozen headers, and a formula-driven summary sheet. The Excel library loads only when requested. |
 | Shareable device URLs | Gives every device a direct URL such as `/devices/1` and supports normal browser Back and Forward navigation. |
+
+![Filterable Aegis device inventory and recent monitoring events](docs/screenshots/02-device-inventory.png)
+
+*Filterable inventory, topology context, and recent monitoring activity.*
+
+![Aegis device profile showing health and asset information](docs/screenshots/03-device-profile.png)
+
+*Device profile combining live health with the registered asset record.*
 
 ### Availability, services, and alerts
 
@@ -83,14 +95,22 @@ Anomaly results are operational indicators, not diagnoses. Aegis performs this a
 | Assessment comparison | Compares the two latest assessments, calculates a capped 0–100 exposure score, and separates new, persistent, and resolved findings. Informational evidence does not increase the score. |
 | Passive attack paths | Correlates stored assessment results with groups, subnets, criticality, and remote-access services to prioritize possible paths between registered assets. It sends no additional traffic. |
 | Controlled packet capture | Captures packet metadata for 1–30 seconds and 1–1000 packets. It stores timestamps, addresses, protocol, ports, and length—never packet payloads or PCAP files. |
-| Remote diagnostics | Dispatches only fixed, administrator-approved diagnostic job types to explicitly enabled agents. Jobs are device-bound, parameter-bounded, expire after 15 minutes, and cannot contain arbitrary commands. |
+| Remote diagnostics and safe validation | Dispatches only fixed, administrator-approved job types to explicitly enabled agents. Safe simulations include signed callbacks, synthetic credential canaries, password-policy inspection, temporary markers, generated-file activity, benign detection variations, registered-device segmentation probes, and signed non-executable artifacts. Jobs are device-bound, parameter-bounded, expire after 15 minutes, clean up generated data, and cannot contain arbitrary commands. |
 | Wireless status | Reports the local Aegis host's wireless-adapter state without collecting Wi-Fi keys or handshakes. |
+
+![Aegis remote diagnostics panel for bounded agent-side checks](docs/screenshots/04-remote-diagnostics.png)
+
+*Remote diagnostics expose only the fixed, bounded job set enabled for the selected agent.*
 
 Attack-surface findings and passive attack paths are prioritization evidence, not proof of exploitability. Confirm important results against firewall policy, network design, patch records, and approved validation procedures.
 
 ### Security workbench
 
 The administrator-only **Security workbench** consolidates defensive investigation tools without turning Aegis into a credential or interception suite. Active tools accept registered unicast hosts; network, broadcast, multicast, and unspecified addresses are rejected as single-device targets.
+
+![Aegis security workbench overview with available defensive tools and live evidence](docs/screenshots/05-security-workbench.png)
+
+*Security workbench overview and live evidence from registered assets.*
 
 | Tool | What it does |
 |---|---|
@@ -103,11 +123,26 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
 | Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
 | DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
-| Network CLI | Runs administrator-only Nmap TCP scans and a separate bounded scan of up to 64 UDP ports against registered devices. Both provide Fast, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) depth where applicable. It also provides local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, and DNS queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, and capped output without invoking a shell. |
+| TLS inspection | Runs `sslscan` or an OpenSSL certificate/session inspection against a registered device and selected TLS port. Execution is capped, application data is not sent, and Heartbleed probing is disabled. |
+| Web technology and exposure checks | Runs WhatWeb's light fingerprint profile or a non-interactive Nikto assessment against one HTTP(S) endpoint on a registered device. Operators choose the scheme, port, and validated path; Nikto is capped at 45 seconds. |
+| SMB posture | Lists services through an anonymous `smbclient` session or runs fixed Nmap scripts for SMB protocol, signing, and time posture. The API does not accept usernames, passwords, hashes, domains, or arbitrary scripts. |
+| Network CLI | Runs administrator-only Nmap TCP scans and a separate bounded scan of up to 64 UDP ports against registered devices. Both provide Fast, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) depth where applicable. It also provides registered-host `fping`, local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, WhatWeb, Nikto, `sslscan`, OpenSSL, anonymous `smbclient`, a fixed Nmap SMB posture check, and `dig`, `host`, or standard-record DNSRecon queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, capped output, and closed stdin without invoking a shell. |
 | PowerShell TCP test | Tests up to 128 TCP ports concurrently on one registered device. PowerShell 7 uses `Test-Connection -TcpPort`; Windows PowerShell uses bounded .NET TCP socket probes. Results distinguish open ports, refused connections, unanswered probes, and errors, while targets and ports are passed as validated data rather than command text. |
 | Assessment playbooks | Queues a persistent four-step assessment for one registered target: PowerShell TCP reachability, traceroute, Nmap top-1,000 attack-surface and CVE correlation, then DNS identity. Fast, Detailed, and Aggressive profiles control probe depth. The workbench shows durable per-step progress and output, and cancellation takes effect after the active command finishes. |
 
-Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, payload capture, exploit execution, brute force, or arbitrary remote command execution.
+![Aegis network toolbox configured for an Nmap TCP scan against a registered target](docs/screenshots/06-network-toolbox.png)
+
+*Typed network-tool commands restrict execution to registered targets and bounded profiles.*
+
+![Aegis host assessment playbook configuration and run history](docs/screenshots/07-assessment-playbooks.png)
+
+*Persistent host-assessment playbooks with target and depth controls.*
+
+![Aegis packet observation summary containing metadata but no payload data](docs/screenshots/08-packet-observation.png)
+
+*Controlled packet observation stores metadata summaries without payloads or credentials.*
+
+Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, payload capture, exploit execution, brute force, or arbitrary remote command execution. NetExec and credentialed SMB enumeration are deliberately excluded. OpenVAS, Nessus, Zeek, and Suricata require separately operated scanners or sensors; Lynis and osquery require a future host-agent result model rather than misleadingly auditing the toolbox container.
 
 ### Reports and observability
 
@@ -172,7 +207,7 @@ SQLite is appropriate for a single Aegis application instance. The Kubernetes ma
 - Docker Desktop for Prometheus, Grafana, or the complete container stack
 - Npcap for Windows packet metadata capture
 - Nmap is optional for TCP top-port discovery, which has a host-side socket fallback. Nmap is required for UDP exposure checks, Fast (`-sV --version-intensity 0`), Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) fingerprints, and high-confidence CPE-based CVE correlation.
-- `arp-scan`, `curl`, `dig` (`dnsutils`), `iproute2`, and `traceroute` when running the backend directly on Linux; the backend container installs these packages
+- `arp-scan`, `curl`, `dig` (`dnsutils`), `fping`, `host`, `iproute2`, Nmap, Nikto, OpenSSL, `smbclient`, `sslscan`, `traceroute`, and WhatWeb when running the corresponding workbench tools directly on Linux. The network-toolbox image installs these utilities together with DNSRecon, Netdiscover, SNMP CLI tools, tcpdump, and tshark.
 
 ## Installation
 
@@ -212,6 +247,14 @@ Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics
 ```
 
 The launcher verifies the frontend, API, agent ingress, network toolbox, Grafana, and Prometheus before returning. If Docker Desktop is unavailable, it starts the core Aegis services without the toolbox or observability containers. Runtime logs are written to `logs/`.
+
+Before the first prototype session, run the reproducible readiness gate from the repository root. It checks Python and Node dependencies, compiles the backend, verifies the live SQLite database, runs the backend suite, builds the production frontend, validates both Compose definitions, and confirms the Docker daemon:
+
+```powershell
+.\verify-prototype.ps1
+```
+
+Use `-SkipTests` only for a quick repeat check after the full gate has already passed.
 
 Stop the stack without deleting data:
 

@@ -16,6 +16,15 @@ import {
   runArpScan,
   runCurlRequest,
   runDigQuery,
+  runDnsRecon,
+  runFpingProbe,
+  runHostQuery,
+  runNiktoScan,
+  runOpenSslProbe,
+  runSmbClientScan,
+  runSmbPostureScan,
+  runTlsScan,
+  runWhatWebScan,
   runNmapScan,
   runNmapUdpScan,
   runTestConnectionPorts,
@@ -53,6 +62,23 @@ const DEFAULT_UDP_PORTS = [
   53, 67, 69, 123, 137, 161, 500, 514, 520, 623,
   1434, 1900, 4500, 5060, 5353, 5683, 10001, 11211, 20000, 47808,
 ].join(",");
+const REGISTERED_CLI_TOOLS = new Set([
+  "nmap", "nmap-udp", "sslscan", "openssl", "fping", "whatweb", "nikto", "smbclient", "smb-audit",
+]);
+const INVESTIGATION_COVERAGE = [
+  ["Host discovery", "Built in", "Discovery, arp-scan, fping", "Netdiscover is packaged for approved toolbox use; Aegis discovery remains limited to the confirmed local /24."],
+  ["Port and service mapping", "Built in", "Nmap, PowerShell TCP", "RustScan is intentionally not duplicated; Nmap top-1,000 and bounded custom scans use the same inventory controls."],
+  ["mDNS / Bonjour", "Built in", "Avahi and native mDNS", "Equivalent to dns-sd for the services Aegis records."],
+  ["Packet analysis", "Built in", "Controlled metadata capture", "Scapy stores headers and flow metadata only; tcpdump and tshark payload output is not exposed."],
+  ["Web services", "Available", "curl, WhatWeb, Nikto", "WhatWeb uses its light profile; Nikto has a 45-second target budget."],
+  ["TLS", "Available", "sslscan, OpenSSL", "Heartbleed probing is disabled and application data is not sent."],
+  ["Windows / SMB", "Available", "smbclient, Nmap SMB posture", "Anonymous sessions only. Credentials, NetExec, and user enumeration are not accepted."],
+  ["SNMP", "Built in", "Typed SNMP poller", "Community data stays in server environment variables rather than command input."],
+  ["DNS", "Available", "dig, host, DNSRecon standard", "Brute-force, cache snooping, and reverse-range modes are unavailable."],
+  ["Vulnerability assessment", "Built in", "Nmap, Nuclei, NVD, KEV, EPSS", "OpenVAS and Nessus require separately operated scanners and are not embedded."],
+  ["Passive monitoring", "Integration boundary", "Prometheus and controlled capture", "Continuous Zeek or Suricata monitoring requires a dedicated sensor and retention pipeline."],
+  ["Local host audit", "Integration boundary", "Agent telemetry", "Lynis and osquery need a host-agent execution and result model; running them inside the toolbox would only audit the container."],
+];
 
 function parsePortList(value, label, maximum) {
   const tokens = value.split(",").map((token) => token.trim()).filter(Boolean);
@@ -1071,6 +1097,10 @@ function LabCliTool({ devices }) {
   const [scanMode, setScanMode] = useState("TOP_1000");
   const [target, setTarget] = useState("");
   const [recordType, setRecordType] = useState("A");
+  const [tlsPort, setTlsPort] = useState(443);
+  const [webScheme, setWebScheme] = useState("http");
+  const [webPort, setWebPort] = useState(80);
+  const [webPath, setWebPath] = useState("/");
   const [interfaceName, setInterfaceName] = useState("");
   const [grep, setGrep] = useState("");
   const [nmapProfile, setNmapProfile] = useState("FAST");
@@ -1108,6 +1138,25 @@ function LabCliTool({ devices }) {
           show_reason: showUdpReason,
           ...common,
         });
+      } else if (tool === "sslscan") {
+        response = await runTlsScan({ device_id: Number(deviceId), port: Number(tlsPort), ...common });
+      } else if (tool === "openssl") {
+        response = await runOpenSslProbe({ device_id: Number(deviceId), port: Number(tlsPort), ...common });
+      } else if (tool === "fping") {
+        response = await runFpingProbe({ device_id: Number(deviceId), ...common });
+      } else if (tool === "whatweb" || tool === "nikto") {
+        const payload = {
+          device_id: Number(deviceId),
+          scheme: webScheme,
+          port: Number(webPort),
+          path: webPath.trim() || "/",
+          ...common,
+        };
+        response = tool === "whatweb" ? await runWhatWebScan(payload) : await runNiktoScan(payload);
+      } else if (tool === "smbclient") {
+        response = await runSmbClientScan({ device_id: Number(deviceId), ...common });
+      } else if (tool === "smb-audit") {
+        response = await runSmbPostureScan({ device_id: Number(deviceId), ...common });
       } else if (tool === "arp-scan") {
         response = await runArpScan({ interface_name: interfaceName.trim() || null, ...common });
       } else if (tool === "ip-neigh") {
@@ -1116,6 +1165,10 @@ function LabCliTool({ devices }) {
         response = await runAvahiBrowse(common);
       } else if (tool === "curl") {
         response = await runCurlRequest({ url: target.trim(), method: "GET", insecure, ...common });
+      } else if (tool === "host") {
+        response = await runHostQuery({ query: target.trim(), ...common });
+      } else if (tool === "dnsrecon") {
+        response = await runDnsRecon({ query: target.trim(), ...common });
       } else {
         response = await runDigQuery({ query: target.trim(), record_type: recordType, ...common });
       }
@@ -1132,21 +1185,49 @@ function LabCliTool({ devices }) {
       <header>
         <p className="eyebrow">Administrator learning lab</p>
         <h3>Network command tools</h3>
-        <span>Bounded TCP and UDP Nmap checks, ARP discovery, Avahi, neighbor tables, curl and dig run as typed commands without a shell.</span>
+        <span>Bounded discovery, service, web, TLS, SMB and DNS checks run as typed commands without a shell or credentials.</span>
       </header>
+      <details className="tool-coverage">
+        <summary>Coverage of the recommended investigation areas</summary>
+        <div className="workbench-table">
+          <table>
+            <thead><tr><th>Area</th><th>Status</th><th>Aegis capability</th><th>Boundary</th></tr></thead>
+            <tbody>{INVESTIGATION_COVERAGE.map(([area, status, capability, boundary]) => (
+              <tr key={area}>
+                <td><strong>{area}</strong></td>
+                <td>{status}</td>
+                <td>{capability}</td>
+                <td>{boundary}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </details>
       <form className="lab-cli-form" onSubmit={run}>
         <label>Tool
           <select value={tool} onChange={(event) => { setTool(event.target.value); setResult(null); }}>
             <option value="nmap">Nmap TCP scan</option>
             <option value="nmap-udp">Nmap UDP exposure scan</option>
             <option value="arp-scan">arp-scan local network</option>
-            <option value="avahi-browse">avahi-browse names and models</option>
+            <option value="avahi-browse">mDNS names and models (host LAN)</option>
             <option value="ip-neigh">ip neigh show</option>
             <option value="curl">curl HTTP GET</option>
             <option value="dig">dig DNS query</option>
+            <option value="sslscan">sslscan TLS protocols and ciphers</option>
+            <option value="fping">fping registered host</option>
+            <option value="whatweb">WhatWeb technology fingerprint</option>
+            <option value="nikto">Nikto bounded web assessment</option>
+            <option value="openssl">OpenSSL certificate and TLS session</option>
+            <option value="smbclient">smbclient anonymous service listing</option>
+            <option value="smb-audit">Nmap SMB protocol and signing posture</option>
+            <option value="host">host DNS lookup</option>
+            <option value="dnsrecon">DNSRecon standard records</option>
           </select>
         </label>
-        {(tool === "nmap" || tool === "nmap-udp") && <label>Registered target
+        {(tool === "sslscan" || tool === "openssl") && <label>TLS port
+          <input type="number" min="1" max="65535" required value={tlsPort} onChange={(event) => setTlsPort(event.target.value)} />
+        </label>}
+        {REGISTERED_CLI_TOOLS.has(tool) && <label>Registered target
           <select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} required>
             <option value="">Select a device</option>
             {devices.map((device) => <option key={device.id} value={device.id}>{device.name} · {device.ip_address}</option>)}
@@ -1199,10 +1280,28 @@ function LabCliTool({ devices }) {
             With reason (--reason)
           </label>
         </>}
+        {(tool === "whatweb" || tool === "nikto") && <>
+          <label>Web scheme
+            <select value={webScheme} onChange={(event) => {
+              const scheme = event.target.value;
+              setWebScheme(scheme);
+              if (webPort === 80 || webPort === 443) setWebPort(scheme === "https" ? 443 : 80);
+            }}>
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+            </select>
+          </label>
+          <label>Web port
+            <input type="number" min="1" max="65535" required value={webPort} onChange={(event) => setWebPort(Number(event.target.value))} />
+          </label>
+          <label>URL path
+            <input value={webPath} onChange={(event) => setWebPath(event.target.value)} placeholder="/" required />
+          </label>
+        </>}
         {tool === "arp-scan" && <label>Interface (optional)
           <input value={interfaceName} onChange={(event) => setInterfaceName(event.target.value)} placeholder="eth0" />
         </label>}
-        {(tool === "curl" || tool === "dig") && <label>{tool === "curl" ? "HTTP(S) URL" : "DNS name or address"}
+        {(tool === "curl" || tool === "dig" || tool === "host" || tool === "dnsrecon") && <label>{tool === "curl" ? "HTTP(S) URL" : tool === "dnsrecon" ? "DNS domain" : "DNS name or address"}
           <input value={target} onChange={(event) => setTarget(event.target.value)} required />
         </label>}
         {tool === "curl" && <label className="checkbox-label"><input type="checkbox" checked={insecure} onChange={(event) => setInsecure(event.target.checked)} /> Allow an untrusted lab certificate</label>}
@@ -1214,7 +1313,7 @@ function LabCliTool({ devices }) {
         <label>Grep output (optional text)
           <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="open, tcp, 192.168..." />
         </label>
-        <button className="button button--primary" disabled={busy || (["nmap", "nmap-udp"].includes(tool) && !deviceId)}>{busy ? "Running…" : tool === "nmap" && scanMode === "TOP_1000" ? "Scan 1,000 ports" : tool === "nmap-udp" ? "Scan UDP exposure" : "Run tool"}</button>
+        <button className="button button--primary" disabled={busy || (REGISTERED_CLI_TOOLS.has(tool) && !deviceId) || (["curl", "dig", "host", "dnsrecon"].includes(tool) && !target.trim())}>{busy ? "Running…" : tool === "nmap" && scanMode === "TOP_1000" ? "Scan 1,000 ports" : tool === "nmap-udp" ? "Scan UDP exposure" : "Run tool"}</button>
       </form>
       {tool === "nmap-udp" && (
         <p className="panel-help">UDP results marked open are responsive. Open|filtered is inconclusive because UDP services often stay silent and firewalls may drop the probe.</p>
@@ -1887,8 +1986,11 @@ export default function SecurityWorkbenchModal({
   const loadedEvidence = useRef(new Set());
   const evidenceRequests = useRef(0);
   const mounted = useRef(true);
-  useEffect(() => () => {
-    mounted.current = false;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
   useEffect(() => {
     const required = tab === "overview"
