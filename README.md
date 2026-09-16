@@ -4,6 +4,8 @@ Aegis is a self-hosted infrastructure monitoring and defensive operations consol
 
 Aegis keeps operational data under the operator's control. The standard installation uses SQLite for application data, Prometheus for time-series scraping, and Grafana for long-range visualization. It does not require a cloud service.
 
+Public examples and screenshots use synthetic demonstration data, not an operator's network. Runtime inventory, captures, logs, credentials and machine-specific validation reports must stay local. [Publication privacy and pre-push checks](docs/REPOSITORY_PRIVACY.md).
+
 > Aegis is intended for systems and networks you own or are explicitly authorized to assess. Its discovery, capture, diagnostic, and assessment tools are deliberately bounded and are not a substitute for authorization or change control.
 
 ## Product capabilities

@@ -22,7 +22,20 @@ backups/
 attachments/
 logs/
 reports/
+local-validation/
+private-data/
+privacy-cleanup/
+*.bundle
+*.patch
+*.tar
+*.tgz
+*.har
+*.evtx
+*.etl
 *.log
+*.pcap
+*.pcapng
+*.cap
 
 # Environment files and credentials. Keep sanitized examples versionable.
 .env

@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+if [ -n "${AEGIS_PRIVACY_PYTHON:-}" ] && [ -x "$AEGIS_PRIVACY_PYTHON" ]; then
+  exec "$AEGIS_PRIVACY_PYTHON" tools/repository_privacy.py "$@"
+elif [ -x backend/.venv/Scripts/python.exe ]; then
+  exec backend/.venv/Scripts/python.exe tools/repository_privacy.py "$@"
+elif [ -x backend/.venv/bin/python ]; then
+  exec backend/.venv/bin/python tools/repository_privacy.py "$@"
+elif command -v python3 >/dev/null 2>&1; then
+  exec python3 tools/repository_privacy.py "$@"
+elif command -v py >/dev/null 2>&1; then
+  exec py -3 tools/repository_privacy.py "$@"
+elif command -v python >/dev/null 2>&1; then
+  exec python tools/repository_privacy.py "$@"
+else
+  echo "Privacy check needs Python 3. Set AEGIS_PRIVACY_PYTHON to a working interpreter." >&2
+  exit 1
+fi
