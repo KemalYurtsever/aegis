@@ -3,19 +3,42 @@ from __future__ import annotations
 import json
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from app.database import create_database_engine, migrate_security_playbook_columns
-from app.models import Device, SecurityPlaybookRun, VulnerabilityScan, utc_now
+from app.models import Device, SecurityPlaybookRun, VulnerabilityFinding, VulnerabilityScan, VulnerabilityToolRun, utc_now
 from app.schemas import DnsQueryRead, LabCommandRead, TraceRouteRead
 from app.services.security_playbook_service import (
     SecurityPlaybookRunner,
+    _compact_finding,
+    _compact_tool_run,
+    _fit_attack_surface_output,
+    _mdns_enrichment,
     build_playbook_run,
     load_playbook_run,
 )
+
+
+def test_compact_tool_evidence_preserves_counts_without_large_raw_output():
+    run = VulnerabilityToolRun(tool="sslscan", port=8443, status="COMPLETED", duration_ms=10,
+                              details_json=json.dumps({"raw_output": "raw" * 1000, "evidence": {"ciphers": ["cipher"] * 50}}))
+    compact = _compact_tool_run(run)
+    assert "raw_output" not in compact["details"]
+    assert compact["details"]["evidence"]["ciphers_total"] == 50
+    assert len(compact["details"]["evidence"]["ciphers"]) == 20
+
+
+def test_large_attack_surface_report_remains_valid_bounded_json():
+    report = _fit_attack_surface_output({"findings": [{"description": "é" * 1000}] * 70,
+                                        "tool_runs": [{"tool": "sslscan", "details": {"evidence": "x" * 15000}}] * 10})
+    rendered = json.dumps(report, ensure_ascii=False, indent=2)
+    assert len(rendered.encode("utf-8")) <= 100000
+    assert json.loads(rendered)["omitted_finding_count"] == 70
+    assert report["omitted_tool_run_count"] > 0
 
 
 DEVICE = {
@@ -31,6 +54,36 @@ EXPECTED_STEPS = [
     "attack_surface",
     "dns_identity",
 ]
+
+
+def test_playbook_finding_output_omits_unknown_optional_fields():
+    finding = SimpleNamespace(
+        severity="INFO",
+        category="CVE_CORRELATION",
+        title="CVE correlation skipped: missing version evidence",
+        description="The service did not disclose a version.",
+        recommendation="Collect authenticated software inventory.",
+        port=445,
+        cve_id=None,
+        cvss_score=None,
+        match_confidence=None,
+        epss_score=None,
+        validation_tool=None,
+        validation_check_id=None,
+        validation_target=None,
+        service_product="Microsoft Windows SMB",
+        service_version=None,
+        service_cpe=None,
+        known_exploited=False,
+    )
+
+    rendered = _compact_finding(finding)
+
+    assert rendered["port"] == 445
+    assert rendered["service_product"] == "Microsoft Windows SMB"
+    assert all(value is not None for value in rendered.values())
+    assert "service_version" not in rendered
+    assert "cve_id" not in rendered
 
 
 @dataclass
@@ -367,6 +420,15 @@ def test_runner_completes_all_steps_forwards_profile_and_bounds_output(
         )
         db.add(scan)
         db.commit()
+        db.add(VulnerabilityFinding(
+            scan_id=scan.id, severity="INFO", category="SCAN_PROVENANCE",
+            title="Nmap execution context recorded",
+            description=json.dumps({"engine_version": "7.991", "tcp_scan_type": "-sS"}),
+            recommendation="Match the scanner context for comparison.",
+        ))
+        db.add(VulnerabilityToolRun(scan_id=scan.id, tool="whatweb", port=8080, status="COMPLETED", duration_ms=100,
+                                   details_json=json.dumps({"evidence": {"technologies": [{"technology": "nginx", "versions": []}]}})))
+        db.commit()
         db.refresh(scan)
         return scan
 
@@ -380,6 +442,19 @@ def test_runner_completes_all_steps_forwards_profile_and_bounds_output(
     monkeypatch.setattr(
         "app.services.security_playbook_service.run_vulnerability_scan",
         vulnerability_result,
+    )
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.avahi_browse",
+        lambda grep: LabCommandRead(
+            tool="avahi-browse",
+            target="Ethernet 198.18.77.0/24",
+            exit_code=0,
+            output=(
+                f"{grep}\tOffice printer\tLaserJet Pro\tprinter.local"
+                "\tipp,printer"
+            ),
+            duration_ms=125.5,
+        ),
     )
     monkeypatch.setattr(
         "app.services.security_playbook_service.query_dns",
@@ -404,12 +479,57 @@ def test_runner_completes_all_steps_forwards_profile_and_bounds_output(
         assert tcp_step.output.endswith("\n[stored output truncated]")
         attack_step = next(step for step in stored.steps if step.step_key == "attack_surface")
         attack_output = json.loads(attack_step.output)
+        assert attack_output["output_schema_version"] == 2
         assert attack_output["profile"] == "AGGRESSIVE"
+        assert attack_output["scan_provenance"] == {"engine_version": "7.991", "tcp_scan_type": "-sS"}
+        assert attack_output["tool_runs"][0]["tool"] == "whatweb"
+        assert attack_output["cve_evidence"] == {
+            "open_services": 0,
+            "cve_ready_services": 0,
+            "exact_cpe_services": 0,
+            "unresolved_ports": [],
+            "coverage_percent": 0,
+        }
+        assert attack_output["mdns_enrichment"] == {
+            "status": "MATCHED",
+            "tool": "avahi-browse",
+            "target": device_data["ip_address"],
+            "duration_ms": 125.5,
+            "records": [{
+                "address": device_data["ip_address"],
+                "display_name": "Office printer",
+                "model": "LaserJet Pro",
+                "hostname": "printer.local",
+                "services": ["ipp", "printer"],
+            }],
+            "raw_output": (
+                f"{device_data['ip_address']}\tOffice printer\tLaserJet Pro"
+                "\tprinter.local\tipp,printer"
+            ),
+        }
         assert stored.summary["vulnerability_scan_id"] == attack_output["scan_id"]
+        assert stored.summary["mdns_status"] == "MATCHED"
 
     assert calls == {
         "tcp": (device_data["ip_address"], 64, 3),
         "vulnerability": (device_data["ip_address"], "AGGRESSIVE"),
+    }
+
+
+def test_mdns_enrichment_is_nonfatal_when_browse_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.security_playbook_service.avahi_browse",
+        lambda grep: (_ for _ in ()).throw(RuntimeError(f"mDNS unavailable for {grep}")),
+    )
+
+    result = _mdns_enrichment("198.18.77.25")
+
+    assert result == {
+        "status": "UNAVAILABLE",
+        "tool": "avahi-browse",
+        "target": "198.18.77.25",
+        "records": [],
+        "error": "mDNS unavailable for 198.18.77.25",
     }
 
 

@@ -21,6 +21,7 @@ async function request(path, options = {}) {
       networkError = null;
       break;
     } catch (error) {
+      if (error.name === "AbortError") throw error;
       networkError = error;
       if (attempt + 1 < attempts)
         await new Promise((resolve) => window.setTimeout(resolve, 150));
@@ -129,8 +130,8 @@ export function startPacketCapture(payload) {
   return jsonRequest("/api/packet-captures", "POST", payload);
 }
 
-export function getDashboardRefresh() {
-  return request("/api/dashboard/refresh");
+export function getDashboardRefresh(options = {}) {
+  return request("/api/dashboard/refresh", options);
 }
 
 export function listAlerts(activeOnly = false, limit = 500) {
@@ -173,6 +174,29 @@ export function getHostNetworkPolicy() {
 
 export function runNmapScan(payload) {
   return jsonRequest("/api/security/toolbox/nmap", "POST", payload);
+}
+export function createNmapScanJob(payload) {
+  return jsonRequest("/api/security/toolbox/nmap/jobs", "POST", payload);
+}
+export function getNmapScanJob(jobId) {
+  return request(`/api/security/toolbox/nmap/jobs/${jobId}`);
+}
+export function listNmapScanJobs(deviceId, limit = 10) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (deviceId) query.set("device_id", String(deviceId));
+  return request(`/api/security/toolbox/nmap/jobs?${query}`);
+}
+export function cancelNmapScanJob(jobId) {
+  return request(`/api/security/toolbox/nmap/jobs/${jobId}/cancel`, { method: "POST" });
+}
+export function getCveMirrorStatus() {
+  return request("/api/security/cve-mirror/status");
+}
+export function startCveMirrorSync(payload) {
+  return jsonRequest("/api/security/cve-mirror/sync", "POST", payload);
+}
+export function cancelCveMirrorSync() {
+  return request("/api/security/cve-mirror/cancel", { method: "POST" });
 }
 export function runNmapUdpScan(payload) {
   return jsonRequest("/api/security/toolbox/nmap-udp", "POST", payload);

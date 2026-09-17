@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.nmap_top_ports import NMAP_TOP_1000_TCP_PORTS
 from app.services.port_scan_service import (
     OpenPort,
@@ -11,7 +13,7 @@ from app.services.port_scan_service import (
 
 
 NMAP_XML = """<?xml version="1.0"?>
-<nmaprun>
+<nmaprun version="7.991">
   <scaninfo type="connect" protocol="tcp" numservices="5" services="1-3,5,80" />
   <host>
     <ports>
@@ -41,7 +43,7 @@ def test_parse_nmap_port_scan_expands_ports_and_keeps_only_open_results():
     assert [(item.port, item.service) for item in open_ports] == [(80, "http")]
 
 
-def test_nmap_top_1000_scan_uses_docker_compatible_connect_scan(monkeypatch):
+def test_nmap_top_1000_scan_uses_managed_docker_syn_scan(monkeypatch):
     captured = {}
     xml = NMAP_XML.replace(
         'numservices="5" services="1-3,5,80"',
@@ -65,7 +67,12 @@ def test_nmap_top_1000_scan_uses_docker_compatible_connect_scan(monkeypatch):
     assert [item.port for item in result.open_ports] == [80]
     assert captured["command"][:4] == ["docker", "exec", "aegis-network-tools", "nmap"]
     assert "-Pn" in captured["command"]
-    assert "-sT" in captured["command"]
+    assert "-sS" in captured["command"]
+    assert "-sT" not in captured["command"]
+    assert result.provenance["tcp_scan_type"] == "-sS"
+    assert "Docker toolbox aegis-network-tools" in result.provenance["execution_context"]
+    assert "--top-ports 1000" in result.provenance["command"]
+    assert result.provenance["engine_version"] == "7.991"
     assert captured["command"][captured["command"].index("--top-ports") + 1] == "1000"
     assert captured["kwargs"]["timeout"] == 20
     assert captured["command"][captured["command"].index("--min-rate") + 1] == "500"
@@ -106,6 +113,29 @@ def test_parse_nmap_service_scan_keeps_product_version_and_cpe():
     assert services[0].cpes == ("cpe:/a:apache:http_server:2.4.58",)
 
 
+def test_nmap_success_exit_with_xml_host_timeout_is_incomplete_evidence():
+    xml = '<nmaprun><host timedout="true"><status state="up"/></host><runstats><finished exit="success"/></runstats></nmaprun>'
+
+    with pytest.raises(RuntimeError, match="open-port discovery is incomplete"):
+        parse_nmap_port_scan(xml)
+    with pytest.raises(RuntimeError, match="service-version evidence is incomplete"):
+        parse_nmap_service_scan(xml)
+
+
+def test_parse_nmap_service_scan_recovers_identity_from_application_cpe():
+    xml = """<nmaprun><host><ports><port protocol="tcp" portid="443">
+      <state state="open"/><service name="https">
+        <cpe>cpe:/a:nginx:nginx:1.24.0</cpe>
+      </service>
+    </port></ports></host></nmaprun>"""
+
+    services = parse_nmap_service_scan(xml)
+
+    assert services[0].product == "nginx"
+    assert services[0].version == "1.24.0"
+    assert services[0].cpes == ("cpe:/a:nginx:nginx:1.24.0",)
+
+
 def test_service_detection_uses_fast_version_probe_on_open_ports(monkeypatch):
     captured = {}
 
@@ -123,6 +153,8 @@ def test_service_detection_uses_fast_version_probe_on_open_ports(monkeypatch):
 
     assert services[0].product == "Apache httpd"
     assert "-sV" in captured["command"]
+    assert "-sT" in captured["command"]
+    assert "-sS" not in captured["command"]
     assert captured["command"][captured["command"].index("--version-intensity") + 1] == "0"
     assert captured["command"][captured["command"].index("--host-timeout") + 1] == "5s"
     assert captured["command"][captured["command"].index("-p") + 1] == "80,443"
@@ -144,10 +176,16 @@ def test_service_detection_profiles_control_probe_depth(monkeypatch):
 
     scan_nmap_service_versions("198.18.1.10", [80], "DETAILED")
     scan_nmap_service_versions("198.18.1.10", [80], "AGGRESSIVE")
+    scan_nmap_service_versions("198.18.1.10", [80], "ADAPTIVE")
 
     detailed_command, detailed_options = calls[0]
     aggressive_command, aggressive_options = calls[1]
     assert "--version-light" in detailed_command
+    assert "-sT" in detailed_command
     assert detailed_options["timeout"] == 100
     assert "--version-all" in aggressive_command
     assert aggressive_options["timeout"] == 200
+    adaptive_command, adaptive_options = calls[2]
+    assert "--version-light" in adaptive_command
+    assert adaptive_command[adaptive_command.index("--host-timeout") + 1] == "20s"
+    assert adaptive_options["timeout"] == 25

@@ -6,6 +6,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 
 from app.models import AlertEvent, Device, HostMetric, MonitorResult, ServiceCheck, ServiceResult
+from app.services.statistics_service import load_device_monitor_snapshot
 
 router = APIRouter(tags=["observability"])
 
@@ -27,6 +28,42 @@ def _label(value) -> str:
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
+def _service_result_snapshot(db):
+    latest_result_id = (
+        select(ServiceResult.id)
+        .where(ServiceResult.service_check_id == ServiceCheck.id)
+        .order_by(ServiceResult.timestamp.desc(), ServiceResult.id.desc())
+        .limit(1)
+        .correlate(ServiceCheck)
+        .scalar_subquery()
+    )
+    return list(db.execute(
+        select(ServiceCheck, ServiceResult)
+        .outerjoin(ServiceResult, ServiceResult.id == latest_result_id)
+        .order_by(ServiceCheck.id)
+    ))
+
+
+def _host_metric_snapshot(db):
+    latest_metric_id = (
+        select(HostMetric.id)
+        .where(HostMetric.device_id == Device.id)
+        .order_by(HostMetric.timestamp.desc(), HostMetric.id.desc())
+        .limit(1)
+        .correlate(Device)
+        .scalar_subquery()
+    )
+    return {
+        device_id: metric
+        for device_id, metric in db.execute(
+            select(Device.id, HostMetric)
+            .outerjoin(HostMetric, HostMetric.id == latest_metric_id)
+            .order_by(Device.id)
+        )
+        if metric is not None
+    }
+
+
 @router.get("/metrics", response_class=PlainTextResponse)
 def prometheus_metrics(request: Request, authorization: str | None = Header(default=None)) -> PlainTextResponse:
     expected = _expected_token()
@@ -41,12 +78,12 @@ def prometheus_metrics(request: Request, authorization: str | None = Header(defa
         "# TYPE aegis_devices_total gauge",
     ]
     with request.app.state.session_factory() as db:
-        devices = list(db.scalars(select(Device).order_by(Device.id)))
+        device_results = load_device_monitor_snapshot(db)
+        devices = [device for device, _result in device_results]
         lines.append(f"aegis_devices_total {len(devices)}")
         lines.extend(["# HELP aegis_device_status Device status (1 online, 0 offline, -1 unknown).", "# TYPE aegis_device_status gauge"])
         lines.extend(["# HELP aegis_device_latency_milliseconds Latest device latency.", "# TYPE aegis_device_latency_milliseconds gauge"])
-        for device in devices:
-            result = db.scalar(select(MonitorResult).where(MonitorResult.device_id == device.id).order_by(MonitorResult.timestamp.desc(), MonitorResult.id.desc()).limit(1))
+        for device, result in device_results:
             labels = f'device_id="{device.id}",device_name="{_label(device.name)}",ip_address="{_label(device.ip_address)}"'
             status = -1 if result is None else (1 if result.status == "ONLINE" else 0)
             lines.append(f"aegis_device_status{{{labels}}} {status}")
@@ -55,13 +92,13 @@ def prometheus_metrics(request: Request, authorization: str | None = Header(defa
         active_alerts = db.scalar(select(func.count(AlertEvent.id)).where(AlertEvent.resolved_at.is_(None))) or 0
         lines.extend(["# HELP aegis_active_alerts Number of unresolved alerts.", "# TYPE aegis_active_alerts gauge", f"aegis_active_alerts {active_alerts}"])
         lines.extend(["# HELP aegis_service_status Latest service status (1 up, 0 down, -1 unknown).", "# TYPE aegis_service_status gauge"])
-        for check in db.scalars(select(ServiceCheck).order_by(ServiceCheck.id)):
-            result = db.scalar(select(ServiceResult).where(ServiceResult.service_check_id == check.id).order_by(ServiceResult.timestamp.desc(), ServiceResult.id.desc()).limit(1))
+        for check, result in _service_result_snapshot(db):
             labels = f'service_id="{check.id}",service_name="{_label(check.name)}",device_id="{check.device_id}"'
             lines.append(f"aegis_service_status{{{labels}}} {-1 if result is None else (1 if result.status == 'UP' else 0)}")
         lines.extend(["# HELP aegis_host_resource_percent Latest host resource utilization.", "# TYPE aegis_host_resource_percent gauge"])
+        metrics_by_device = _host_metric_snapshot(db)
         for device in devices:
-            metric = db.scalar(select(HostMetric).where(HostMetric.device_id == device.id).order_by(HostMetric.timestamp.desc(), HostMetric.id.desc()).limit(1))
+            metric = metrics_by_device.get(device.id)
             if metric:
                 for resource, value in (("cpu", metric.cpu_percent), ("memory", metric.memory_percent), ("disk", metric.disk_percent)):
                     lines.append(f'aegis_host_resource_percent{{device_id="{device.id}",device_name="{_label(device.name)}",resource="{resource}"}} {value}')

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, ensure_performance_indexes, get_db, migrate_agent_monitoring_columns, migrate_automation_columns, migrate_device_inventory_columns, migrate_diagnostic_job_types, migrate_notification_tables, migrate_security_playbook_columns, migrate_vulnerability_columns
 from app.models import AuditEvent
@@ -34,7 +35,10 @@ from app.services.auth_service import session_user
 from app.security import InMemoryRateLimiter, RequestBodyLimitMiddleware, rate_limit_for, request_identity
 from app.services.backup_service import BackupService, PeriodicBackup
 from app.services.security_playbook_service import SecurityPlaybookRunner
+from app.services.nmap_scan_job_service import NmapScanJobRunner
+from app.services.cve_mirror_service import CveMirrorRunner
 from app.services.statistics_service import load_device_monitor_snapshot
+from app.services.vulnerability_service import recover_interrupted_vulnerability_scans
 
 
 @asynccontextmanager
@@ -52,12 +56,19 @@ async def lifespan(application: FastAPI):
     session_factory = getattr(application.state, "session_factory", SessionLocal)
     application.state.session_factory = session_factory
     application.state.auth_required = getattr(application.state, "auth_required", True)
+    recover_interrupted_vulnerability_scans(session_factory)
     # A fresh limiter per application lifespan prevents stale counters after a
     # development reload and keeps test/application instances isolated.
     application.state.rate_limiter = InMemoryRateLimiter()
     playbook_runner = SecurityPlaybookRunner(session_factory)
     application.state.playbook_runner = playbook_runner
     playbook_runner.start()
+    nmap_scan_runner = NmapScanJobRunner(session_factory)
+    application.state.nmap_scan_runner = nmap_scan_runner
+    nmap_scan_runner.start()
+    cve_mirror_runner = CveMirrorRunner(session_factory)
+    application.state.cve_mirror_runner = cve_mirror_runner
+    cve_mirror_runner.start()
     scheduler_enabled = getattr(application.state, "scheduler_enabled", settings.scheduler_enabled)
     scheduler = PeriodicMonitor(
         session_factory,
@@ -69,7 +80,12 @@ async def lifespan(application: FastAPI):
     backup_service = getattr(
         application.state,
         "backup_service",
-        BackupService(settings.database_url, settings.backup_directory, settings.backup_keep_count),
+        BackupService(
+            settings.database_url,
+            settings.backup_directory,
+            settings.backup_keep_count,
+            include_cve_mirror=settings.backup_include_cve_mirror,
+        ),
     )
     backup_enabled = getattr(application.state, "backup_enabled", settings.backup_enabled)
     backup_scheduler = PeriodicBackup(backup_service, settings.backup_interval_hours, enabled=backup_enabled)
@@ -81,6 +97,8 @@ async def lifespan(application: FastAPI):
     finally:
         await backup_scheduler.stop()
         await scheduler.stop()
+        await asyncio.to_thread(cve_mirror_runner.shutdown)
+        await asyncio.to_thread(nmap_scan_runner.shutdown)
         await asyncio.to_thread(playbook_runner.shutdown)
 
 
@@ -91,6 +109,7 @@ app.add_middleware(
     max_body_size=1_048_576,
     path_limits={r"/api/devices/\d+/attachments": 7_200_000},
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

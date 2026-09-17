@@ -1,11 +1,20 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 
 from sqlalchemy import func, select
 
-from app.models import AnomalyEvent, Device, HostMetric, MonitorResult
+from app.models import (
+    AnomalyEvent,
+    CveMirrorState,
+    Device,
+    HostMetric,
+    LocalCveCpeMatch,
+    LocalCveRecord,
+    MonitorResult,
+)
 
 
 def admin_headers(client):
@@ -41,6 +50,10 @@ def test_backup_create_verify_list_and_download(client):
     verified = client.post(f"/api/backups/{backup['filename']}/verify", headers=headers)
     assert verified.status_code == 200
     assert verified.json()["valid"] is True
+    backup_path = client.app.state.backup_service.download_path(backup["filename"])
+    assert not Path(f"{backup_path}-wal").exists()
+    assert not Path(f"{backup_path}-shm").exists()
+    assert client.app.state.backup_service.seconds_until_due(24) > 23 * 3600
 
     downloaded = client.get(f"/api/backups/{backup['filename']}/download", headers=headers)
     assert downloaded.status_code == 200
@@ -50,6 +63,35 @@ def test_backup_create_verify_list_and_download(client):
         assert client.post("/api/backups", headers=headers).status_code == 201
     retained = client.get("/api/backups", headers=headers).json()
     assert len(retained) == 3
+
+
+def test_core_backup_excludes_rebuildable_cve_rows(client):
+    headers = admin_headers(client)
+    with client.app.state.session_factory() as db:
+        db.add(LocalCveRecord(cve_id="CVE-2026-99999", description="Rebuildable"))
+        db.flush()
+        db.add(LocalCveCpeMatch(
+            cve_id="CVE-2026-99999",
+            criteria="cpe:2.3:a:example:server:*:*:*:*:*:*:*:*",
+            vulnerable=True,
+            part="a",
+            vendor="example",
+            product="server",
+            criteria_version="*",
+        ))
+        state = db.get(CveMirrorState, 1)
+        assert state is not None
+        state.status = "READY"
+        state.baseline_complete = True
+        db.commit()
+
+    created = client.post("/api/backups", headers=headers)
+    assert created.status_code == 201
+    backup_path = client.app.state.backup_service.download_path(created.json()["filename"])
+    with sqlite3.connect(backup_path) as backup:
+        assert backup.execute("SELECT COUNT(*) FROM local_cve_records").fetchone()[0] == 0
+        assert backup.execute("SELECT COUNT(*) FROM local_cve_cpe_matches").fetchone()[0] == 0
+        assert backup.execute("SELECT COUNT(*) FROM cve_mirror_state").fetchone()[0] == 0
 
 
 def test_backup_routes_require_admin_and_reject_unknown_names(client):

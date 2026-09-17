@@ -911,6 +911,15 @@ class VulnerabilityFindingRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class VulnerabilityToolRunRead(BaseModel):
+    tool: str
+    port: int
+    status: str
+    duration_ms: float
+    details: dict
+    model_config = ConfigDict(from_attributes=True)
+
+
 class VulnerabilityScanRead(BaseModel):
     id: int
     device_id: int
@@ -919,6 +928,7 @@ class VulnerabilityScanRead(BaseModel):
     status: Literal["RUNNING", "COMPLETED", "FAILED"]
     profile: Literal["FAST", "DETAILED", "AGGRESSIVE"]
     findings: list[VulnerabilityFindingRead]
+    tool_runs: list[VulnerabilityToolRunRead] = Field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -1009,6 +1019,8 @@ class LabCommandRead(BaseModel):
     duration_ms: float
     truncated: bool = False
     scanned_port_count: int | None = None
+    command: list[str] | None = None
+    execution_context: str | None = None
 
 
 class LabCommandFilter(BaseModel):
@@ -1050,6 +1062,7 @@ class NmapTcpScanRequest(LabCommandFilter):
     profile: Literal["FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"] = "FAST"
     service_detection: bool = False
     show_reason: bool = False
+    traffic_policy: Literal["IDS_FRIENDLY", "FAST"] = "IDS_FRIENDLY"
 
     @field_validator("ports")
     @classmethod
@@ -1057,6 +1070,61 @@ class NmapTcpScanRequest(LabCommandFilter):
         if any(port < 1 or port > 65535 for port in values):
             raise ValueError("Ports must be between 1 and 65535")
         return list(dict.fromkeys(values))
+
+
+class NmapScanJobRead(BaseModel):
+    id: int
+    device_id: int
+    target_name: str
+    target_ip: str
+    requested_by: str
+    client_ip: str | None
+    scan_mode: Literal["CUSTOM", "TOP_1000"]
+    profile: Literal["FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"]
+    traffic_policy: Literal["IDS_FRIENDLY", "FAST"]
+    show_reason: bool
+    ports: list[int]
+    open_ports: list[int]
+    status: Literal["QUEUED", "RUNNING", "COMPLETED", "PARTIAL", "FAILED", "CANCELLED"]
+    phase: str
+    progress_percent: int
+    cancel_requested: bool
+    cache_hit: bool
+    cached_closed_count: int
+    ban_signal: bool
+    ban_reason: str | None
+    output: str | None
+    scanned_port_count: int | None
+    duration_ms: float | None
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CveMirrorSyncRequest(BaseModel):
+    mode: Literal["MODIFIED", "RECENT", "YEAR", "FULL"] = "MODIFIED"
+    year: int | None = Field(default=None, ge=2002, le=2100)
+
+
+class CveMirrorStateRead(BaseModel):
+    id: int
+    status: Literal["IDLE", "SYNCING", "READY", "FAILED", "CANCELLED"]
+    mode: str | None
+    current_feed: str | None
+    feeds_completed: int
+    feeds_total: int
+    progress_percent: int
+    record_count: int
+    cpe_match_count: int
+    baseline_complete: bool
+    cancel_requested: bool
+    source_last_modified: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    error: str | None
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NmapUdpScanRequest(LabCommandFilter):

@@ -185,6 +185,25 @@ def test_missing_tool_is_delegated_to_docker_without_a_shell(monkeypatch):
     ]
     assert captured["kwargs"]["shell"] is False
     assert result.output == "22/tcp open ssh"
+    assert result.command == captured["command"]
+    assert result.execution_context == "Docker toolbox aegis-network-tools"
+
+
+def test_automatic_docker_tool_has_inner_timeout_and_certificate_stdin(monkeypatch):
+    captured = {}
+    monkeypatch.setenv("AEGIS_NETWORK_TOOLBOX_CONTAINER", "aegis-network-tools")
+    monkeypatch.setattr("app.services.security_toolbox_service.shutil.which", lambda name: "docker.exe" if name == "docker" else None)
+
+    def fake_run(command, **kwargs):
+        captured.update(command=command, kwargs=kwargs)
+        kwargs["stdout"].write(b"subject=CN = fixture\n")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("app.services.security_toolbox_service.subprocess.run", fake_run)
+    _run_lab_tool("openssl", ["openssl", "x509", "-noout", "-subject"], input_text="PUBLIC CERTIFICATE", timeout=10, contain_timeout=True)
+    assert captured["command"] == ["docker.exe", "exec", "-i", "aegis-network-tools", "timeout", "--kill-after=2", "7s", "openssl", "x509", "-noout", "-subject"]
+    assert captured["kwargs"]["input"] == b"PUBLIC CERTIFICATE"
+    assert "stdin" not in captured["kwargs"] and captured["kwargs"]["shell"] is False
 
 
 def test_nmap_scan_uses_argument_list_and_normalized_options(monkeypatch):
@@ -197,7 +216,8 @@ def test_nmap_scan_uses_argument_list_and_normalized_options(monkeypatch):
     monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
 
     result = nmap_tcp_scan(
-        "198.18.5.1", [443, 22], True, "open", show_reason=True
+        "198.18.5.1", [443, 22], True, "open", show_reason=True,
+        traffic_policy="FAST",
     )
 
     assert result.exit_code == 0
@@ -215,6 +235,48 @@ def test_nmap_scan_uses_argument_list_and_normalized_options(monkeypatch):
         "timeout": 20,
         "scanned_port_count": 2,
     }
+
+
+def test_nmap_ids_friendly_policy_caps_probe_rate(monkeypatch):
+    captured = {}
+
+    def fake_run(_tool, command, **_kwargs):
+        captured["command"] = command
+        return LabCommandRead(
+            tool="nmap", target="198.18.5.1", exit_code=0,
+            output="80/tcp open http", duration_ms=1.0,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    nmap_tcp_scan("198.18.5.1", [80], False)
+
+    assert captured["command"][captured["command"].index("--max-rate") + 1] == "100"
+    assert captured["command"][captured["command"].index("--scan-delay") + 1] == "10ms"
+    assert captured["command"][captured["command"].index("--host-timeout") + 1] == "15s"
+    assert "--min-rate" not in captured["command"]
+
+
+def test_nmap_async_discovery_uses_requested_depth_without_version_probes(monkeypatch):
+    captured = {}
+
+    def fake_run(_tool, command, **kwargs):
+        captured.update(command=command, kwargs=kwargs)
+        return LabCommandRead(
+            tool="nmap", target="198.18.5.1", exit_code=0,
+            output="80/tcp open http", duration_ms=1.0,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+    nmap_tcp_scan(
+        "198.18.5.1", [80, 445], False,
+        profile="FAST", discovery_profile="AGGRESSIVE",
+    )
+
+    assert "-sV" not in captured["command"]
+    assert captured["command"][captured["command"].index("--max-retries") + 1] == "2"
+    assert captured["command"][captured["command"].index("--host-timeout") + 1] == "45s"
+    assert captured["kwargs"]["timeout"] == 55
 
 
 def test_nmap_fast_profile_is_ports_only_and_explains_no_open_top_ports(monkeypatch):
@@ -248,6 +310,135 @@ def test_nmap_fast_profile_is_ports_only_and_explains_no_open_top_ports(monkeypa
     )
 
 
+def test_nmap_top_1000_aggressive_discovers_then_fingerprints_open_ports(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.nmap_command_prefix",
+        lambda: ["docker", "exec", "aegis-network-tools", "nmap"],
+    )
+
+    def fake_run(_tool, command, **kwargs):
+        calls.append((command, kwargs))
+        if len(calls) == 1:
+            return LabCommandRead(
+                tool="nmap", target="198.18.5.1", exit_code=0,
+                output="80/tcp open http\n443/tcp open https",
+                duration_ms=12.0, scanned_port_count=1000,
+            )
+        return LabCommandRead(
+            tool="nmap", target="198.18.5.1", exit_code=0,
+            output="80/tcp open http Apache\n443/tcp open ssl/http nginx",
+            duration_ms=8.0, scanned_port_count=2,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    result = nmap_tcp_scan(
+        "198.18.5.1", [80], False, scan_mode="TOP_1000",
+        profile="AGGRESSIVE", show_reason=True,
+    )
+
+    discovery, fingerprint = calls
+    assert "--top-ports" in discovery[0]
+    assert "-sS" in discovery[0]
+    assert "-sV" not in discovery[0]
+    assert discovery[1]["grep"] is None
+    assert "--top-ports" not in fingerprint[0]
+    assert fingerprint[0][fingerprint[0].index("-p") + 1] == "80,443"
+    assert "-sV" in fingerprint[0]
+    assert "-sT" in fingerprint[0]
+    assert "-sS" not in fingerprint[0]
+    assert "--version-all" in fingerprint[0]
+    assert "--reason" in fingerprint[0]
+    assert discovery[0][discovery[0].index("--host-timeout") + 1] == "45s"
+    assert discovery[0][discovery[0].index("--max-retries") + 1] == "2"
+    assert discovery[1]["timeout"] == 55
+    assert fingerprint[0][fingerprint[0].index("--host-timeout") + 1] == "180s"
+    assert fingerprint[1]["timeout"] == 200
+    assert "Command 1:" in result.output
+    assert "Command 2:" in result.output
+    assert "TCP scan: -sS → -sT" in result.output
+    assert result.duration_ms == 20.0
+    assert result.scanned_port_count == 1000
+    assert "Phase 1 - fast top-1,000 port discovery" in result.output
+    assert "Phase 2 - Aggressive service detection on 2 open ports" in result.output
+
+
+def test_nmap_top_1000_timeout_is_reported_as_incomplete(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.nmap_command_prefix",
+        lambda: ["nmap"],
+    )
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service._run_lab_tool",
+        lambda *_args, **_kwargs: LabCommandRead(
+            tool="nmap", target="198.18.5.1", exit_code=0,
+            output="Skipping host 198.18.5.1 due to host timeout",
+            duration_ms=10_000.0, scanned_port_count=1000,
+        ),
+    )
+
+    result = nmap_tcp_scan(
+        "198.18.5.1", [80], False, scan_mode="TOP_1000",
+        profile="AGGRESSIVE",
+    )
+
+    assert "open-port status is incomplete" in result.output
+    assert "No open TCP ports were found" not in result.output
+    assert result.scanned_port_count is None
+
+
+def test_nmap_custom_host_timeout_is_not_presented_as_complete(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service._run_lab_tool",
+        lambda *_args, **_kwargs: LabCommandRead(
+            tool="nmap", target="198.18.5.1", exit_code=0,
+            output="Skipping host 198.18.5.1 due to host timeout",
+            duration_ms=30_000.0, scanned_port_count=1,
+        ),
+    )
+
+    result = nmap_tcp_scan("198.18.5.1", [7070], False, profile="AGGRESSIVE")
+
+    assert "port and version evidence is incomplete" in result.output
+    assert result.scanned_port_count is None
+    assert "No open TCP ports" not in result.output
+
+
+def test_nmap_top_1000_keeps_discovery_when_fingerprinting_times_out(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.nmap_command_prefix",
+        lambda: ["nmap"],
+    )
+
+    def fake_run(_tool, _command, **_kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return LabCommandRead(
+                tool="nmap", target="198.18.5.1", exit_code=0,
+                output="62078/tcp open iphone-sync", duration_ms=2.0,
+                scanned_port_count=1000,
+            )
+        return LabCommandRead(
+            tool="nmap", target="198.18.5.1", exit_code=0,
+            output="Skipping host 198.18.5.1 due to host timeout",
+            duration_ms=45_000.0, scanned_port_count=1,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    result = nmap_tcp_scan(
+        "198.18.5.1", [80], False, scan_mode="TOP_1000",
+        profile="AGGRESSIVE",
+    )
+
+    assert "62078/tcp open iphone-sync" in result.output
+    assert "service details may be incomplete" in result.output
+    assert "No open TCP ports were found" not in result.output
+    assert result.scanned_port_count == 1000
+
+
 def test_nmap_empty_filtered_output_is_explained(monkeypatch):
     monkeypatch.setattr(
         "app.services.security_toolbox_service._run_lab_tool",
@@ -276,9 +467,44 @@ def test_nmap_detailed_and_aggressive_profiles_select_version_depth(monkeypatch)
 
     detailed, aggressive = commands
     assert detailed[0][-3:-1] == ["-sV", "--version-light"]
+    assert "90s" in detailed[0]
     assert detailed[1]["timeout"] == 100
     assert aggressive[0][-3:-1] == ["-sV", "--version-all"]
+    assert aggressive[0][aggressive[0].index("--max-retries") + 1] == "2"
+    assert "180s" in aggressive[0]
     assert aggressive[1]["timeout"] == 200
+
+
+def test_nmap_managed_docker_keeps_syn_discovery_but_uses_connect_for_version_probes(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "app.services.security_toolbox_service.nmap_command_prefix",
+        lambda: ["C:/Docker/docker.exe", "exec", "aegis-network-tools", "nmap"],
+    )
+
+    def fake_run(_tool, command, **_kwargs):
+        commands.append(command)
+        return LabCommandRead(
+            tool="nmap", target="198.18.5.1", exit_code=0,
+            output="Starting Nmap 7.991 ( https://nmap.org )\n80/tcp open http nginx 1.24.0",
+            duration_ms=1.0,
+        )
+
+    monkeypatch.setattr("app.services.security_toolbox_service._run_lab_tool", fake_run)
+
+    result = nmap_tcp_scan("198.18.5.1", [80], False, profile="AGGRESSIVE")
+
+    assert "-sT" in commands[0]
+    assert "-sS" not in commands[0]
+    assert "Engine: Nmap 7.991" in result.output
+    assert "Execution: Docker toolbox aegis-network-tools" in result.output
+    assert "Command 1: C:/Docker/docker.exe exec aegis-network-tools nmap" in result.output
+    assert "--host-timeout 180s" in result.output
+    assert "-sV --version-all" in result.output
+    assert "TCP scan: -sT" in result.output
+    nmap_tcp_scan("198.18.5.1", [80], False, profile="FAST")
+    assert "-sS" in commands[1]
+    assert "-sV" not in commands[1]
 
 
 def test_nmap_udp_scan_is_bounded_and_uses_profile_specific_version_depth(monkeypatch):
@@ -695,7 +921,8 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
     captured = {}
 
     def fake_scan(
-        address, ports, service_detection, *, grep, scan_mode, profile, show_reason
+        address, ports, service_detection, *, grep, scan_mode, profile,
+        show_reason, traffic_policy
     ):
         captured.update(
             address=address,
@@ -705,6 +932,7 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
             scan_mode=scan_mode,
             profile=profile,
             show_reason=show_reason,
+            traffic_policy=traffic_policy,
         )
         return LabCommandRead(tool="nmap", target=address, exit_code=0, output="22/tcp open ssh", duration_ms=3.5)
 
@@ -727,7 +955,7 @@ def test_nmap_endpoint_resolves_registered_device(client, monkeypatch):
     assert captured == {
         "address": "198.18.5.20", "ports": [22, 443], "service_detection": True,
         "grep": "open", "scan_mode": "CUSTOM", "profile": "FAST",
-        "show_reason": True,
+        "show_reason": True, "traffic_policy": "IDS_FRIENDLY",
     }
 
 

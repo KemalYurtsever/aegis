@@ -53,7 +53,7 @@ try {
 Push-Location $frontend
 try {
     Invoke-PrototypeCheck "Frontend dependency tree" { & npm.cmd ls --depth=0 }
-    Invoke-PrototypeCheck "Frontend production build" { & npm.cmd run build }
+    Invoke-PrototypeCheck "Frontend tests and production build" { & npm.cmd run check }
 } finally {
     Pop-Location
 }

@@ -1,4 +1,5 @@
 import ipaddress
+import logging
 import os
 import platform
 import re
@@ -27,8 +28,11 @@ from app.schemas import (
 from app.services.discovery_service import discover_responsive_hosts, get_primary_private_network
 from app.services.mdns_service import discover_mdns
 from app.services.port_scan_service import (
+    NMAP_SERVICE_OPTIONS,
     NMAP_VERSION_ARGUMENTS,
     nmap_command_prefix,
+    nmap_scan_provenance,
+    nmap_tcp_scan_type,
     scan_nmap_top_tcp_ports,
 )
 from app.services.scan_policy import scan_target_rejection_reason
@@ -43,6 +47,7 @@ _HOSTNAME = re.compile(
 _ADDRESS_TOKEN = re.compile(r"(?<![0-9a-f:.])(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]{2,})(?![0-9a-f:.])", re.I)
 _LATENCY_TOKEN = re.compile(r"<?(\d+(?:\.\d+)?)\s*ms", re.I)
 _MAX_TOOL_OUTPUT = 100_000
+logger = logging.getLogger(__name__)
 _DOCKER_TOOLBOX_COMMANDS = {
     "nmap", "nmap-udp", "arp-scan", "avahi-browse", "curl", "dig", "sslscan",
     "fping", "whatweb", "nikto", "openssl", "smbclient", "smb-audit", "host", "dnsrecon",
@@ -220,23 +225,30 @@ def _run_lab_tool(
     timeout: int = 60,
     scanned_port_count: int | None = None,
     environment: dict[str, str] | None = None,
+    input_text: str | None = None,
+    contain_timeout: bool = False,
 ) -> LabCommandRead:
     executable = shutil.which(command[0])
+    execution_context = "Host-local executable"
     if executable is None:
         container = os.getenv("AEGIS_NETWORK_TOOLBOX_CONTAINER", "").strip()
         docker = shutil.which("docker")
         if tool not in _DOCKER_TOOLBOX_COMMANDS or not container or docker is None:
             raise RuntimeError(f"{command[0]} is not installed on the AEGIS host and no Docker toolbox is available")
-        command = [docker, "exec", container, *command]
+        inner_command = (["timeout", "--kill-after=2", f"{max(1, timeout - 3)}s", *command]
+                         if contain_timeout else command)
+        command = [docker, "exec", *(["-i"] if input_text is not None else []), container, *inner_command]
         executable = command[0]
+        execution_context = f"Docker toolbox {container}"
+    executed_command = [executable, *command[1:]]
     started = time.monotonic()
     timed_out = False
     with tempfile.TemporaryFile() as output_file:
         try:
             completed = subprocess.run(
-                [executable, *command[1:]], stdout=output_file, stderr=subprocess.STDOUT,
+                executed_command, stdout=output_file, stderr=subprocess.STDOUT,
                 timeout=timeout, shell=False, check=False,
-                stdin=subprocess.DEVNULL,
+                **({"stdin": subprocess.DEVNULL} if input_text is None else {"input": input_text.encode("ascii")}),
                 env={**os.environ, **(environment or {})},
             )
             exit_code = completed.returncode
@@ -252,11 +264,53 @@ def _run_lab_tool(
     if truncated:
         output += "\n[output truncated]"
     output = _filter_output(output, grep)
+    duration_ms = round((time.monotonic() - started) * 1000, 2)
+    logger.info(
+        "Network tool completed tool=%s target=%s exit_code=%s duration_ms=%s timed_out=%s",
+        tool,
+        target,
+        exit_code,
+        duration_ms,
+        timed_out,
+    )
     return LabCommandRead(
         tool=tool, target=target, exit_code=exit_code, output=output,
-        duration_ms=round((time.monotonic() - started) * 1000, 2), truncated=truncated,
+        duration_ms=duration_ms, truncated=truncated,
         scanned_port_count=scanned_port_count if exit_code == 0 else None,
+        command=executed_command, execution_context=execution_context,
     )
+
+
+def _nmap_result_output(
+    output: str,
+    prefix: list[str] | None,
+    commands: list[list[str]],
+    grep: str | None,
+) -> str:
+    if not grep:
+        version = re.search(r"Starting Nmap (\S+)", output)
+        provenance = nmap_scan_provenance(
+            prefix, [*(prefix or ["nmap"]), *commands[0][1:]],
+            version.group(1) if version else None,
+        )
+        lines = [
+            "Scan provenance",
+            f"Execution: {provenance['execution_context']}",
+            "TCP scan: " + " → ".join(dict.fromkeys(
+                nmap_scan_provenance(prefix, command)["tcp_scan_type"]
+                for command in commands
+            )),
+        ]
+        if "engine_version" in provenance:
+            lines.append(f"Engine: Nmap {provenance['engine_version']}")
+        for index, command in enumerate(commands, 1):
+            actual = [*(prefix or ["nmap"]), *command[1:]]
+            caption = nmap_scan_provenance(prefix, actual)["command"]
+            lines.append(f"Command {index}: {caption}")
+        header = "\n".join(lines)
+        output = f"{header}\n\n{output}".strip()
+    output = _filter_output(output, grep)
+    return output or (f"No Nmap output matched {grep!r}." if grep else output)
 
 
 def nmap_tcp_scan(
@@ -267,6 +321,8 @@ def nmap_tcp_scan(
     scan_mode: str = "CUSTOM",
     profile: str = "FAST",
     show_reason: bool = False,
+    traffic_policy: str = "IDS_FRIENDLY",
+    discovery_profile: str | None = None,
 ) -> LabCommandRead:
     rejection = scan_target_rejection_reason(address)
     if rejection:
@@ -274,10 +330,29 @@ def nmap_tcp_scan(
     profiles = {"FAST", "FAST_VERSION", "DETAILED", "AGGRESSIVE"}
     if profile not in profiles:
         raise ValueError("Unknown Nmap scan profile")
+    if traffic_policy not in {"IDS_FRIENDLY", "FAST"}:
+        raise ValueError("Unknown Nmap traffic policy")
+    if discovery_profile is not None and discovery_profile not in profiles:
+        raise ValueError("Unknown Nmap discovery profile")
+    traffic_arguments = (
+        ["--max-rate", "100", "--scan-delay", "10ms"]
+        if traffic_policy == "IDS_FRIENDLY"
+        else ["--min-rate", "500"]
+    )
+    discovery_host_timeout = "15s" if traffic_policy == "IDS_FRIENDLY" else "10s"
+    discovery_process_timeout = 25 if traffic_policy == "IDS_FRIENDLY" else 20
+    discovery_retry = "0"
+    discovery_depth = discovery_profile or profile
+    if discovery_depth in {"DETAILED", "AGGRESSIVE"}:
+        discovery_retry = "1" if discovery_depth == "DETAILED" else "2"
+        discovery_host_timeout = "30s" if discovery_depth == "DETAILED" else "45s"
+        discovery_process_timeout = 40 if discovery_depth == "DETAILED" else 55
     if service_detection and profile == "FAST":
         profile = "FAST_VERSION"
+    prefix = nmap_command_prefix()
+    scan_type = nmap_tcp_scan_type(prefix)
     top_1000 = scan_mode == "TOP_1000"
-    if top_1000 and nmap_command_prefix() is None:
+    if top_1000 and prefix is None:
         result = scan_nmap_top_tcp_ports(address)
         lines = [
             "Nmap-ranked TCP connect scan",
@@ -303,25 +378,128 @@ def nmap_tcp_scan(
             scanned_port_count=len(result.scanned_ports),
         )
 
+    # Version detection is disproportionately expensive when Nmap runs it over
+    # every candidate port. Discover open ports first, then fingerprint only the
+    # ports that answered. This also preserves useful discovery results if the
+    # fingerprinting phase reaches its time limit.
+    if top_1000 and profile != "FAST":
+        discovery_command = [
+            "nmap", "-Pn", scan_type, "-n", "-T4", "--max-retries", discovery_retry,
+            *traffic_arguments, "--initial-rtt-timeout", "100ms",
+            "--max-rtt-timeout", "500ms", "--host-timeout", discovery_host_timeout,
+            "--top-ports", "1000", "--open",
+        ]
+        if ipaddress.ip_address(address).version == 6:
+            discovery_command.append("-6")
+        if show_reason:
+            discovery_command.append("--reason")
+        discovery_command.append(address)
+        discovery = _run_lab_tool(
+            "nmap", discovery_command, target=address, grep=None,
+            timeout=discovery_process_timeout,
+            scanned_port_count=1000,
+        )
+        discovery_incomplete = (
+            discovery.exit_code != 0
+            or re.search(
+                r"(?im)(skipping host .* due to host timeout|command timed out after)",
+                discovery.output,
+            )
+            is not None
+        )
+        if discovery_incomplete:
+            output = (
+                f"Phase 1 - fast top-1,000 port discovery\n{discovery.output}\n\n"
+                "Discovery did not complete; open-port status is incomplete."
+            ).strip()
+            output = _nmap_result_output(output, prefix, [discovery_command], grep)
+            return discovery.model_copy(
+                update={"output": output, "scanned_port_count": None}
+            )
+
+        open_ports = sorted(
+            {
+                int(match)
+                for match in re.findall(
+                    r"(?m)^(\d+)/tcp\s+open\b", discovery.output
+                )
+            }
+        )
+        if not open_ports:
+            output = (
+                f"Phase 1 - fast top-1,000 port discovery\n{discovery.output}\n\n"
+                "No open TCP ports were found among Nmap's top 1,000 ports."
+            ).strip()
+            output = _nmap_result_output(output, prefix, [discovery_command], grep)
+            return discovery.model_copy(update={"output": output})
+
+        selected = NMAP_SERVICE_OPTIONS[profile]
+        fingerprint_command = [
+            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", selected["retry"],
+            "--host-timeout", selected["host_timeout"],
+        ]
+        fingerprint_timeout = selected["process_timeout"]
+        fingerprint_command.extend(
+            [*traffic_arguments, "-p", ",".join(map(str, open_ports)), "--open"]
+        )
+        if ipaddress.ip_address(address).version == 6:
+            fingerprint_command.append("-6")
+        fingerprint_command.extend(["-sV", *NMAP_VERSION_ARGUMENTS[profile]])
+        if show_reason:
+            fingerprint_command.append("--reason")
+        fingerprint_command.append(address)
+        fingerprint = _run_lab_tool(
+            "nmap", fingerprint_command, target=address, grep=None,
+            timeout=fingerprint_timeout, scanned_port_count=len(open_ports),
+        )
+        fingerprint_incomplete = (
+            fingerprint.exit_code != 0
+            or re.search(
+                r"(?im)(skipping host .* due to host timeout|command timed out after)",
+                fingerprint.output,
+            )
+            is not None
+        )
+        fingerprint_note = (
+            "\n\nService detection reached its time limit; Phase 1 open-port "
+            "results remain valid, but service details may be incomplete."
+            if fingerprint_incomplete
+            else ""
+        )
+        output = (
+            f"Phase 1 - fast top-1,000 port discovery\n{discovery.output}\n\n"
+            f"Phase 2 - {profile.replace('_', ' ').title()} service detection "
+            f"on {len(open_ports)} open port{'s' if len(open_ports) != 1 else ''}\n"
+            f"{fingerprint.output}{fingerprint_note}"
+        ).strip()
+        output = _nmap_result_output(
+            output, prefix, [discovery_command, fingerprint_command], grep,
+        )
+        return fingerprint.model_copy(
+            update={
+                "output": output,
+                "duration_ms": round(
+                    discovery.duration_ms + fingerprint.duration_ms, 2
+                ),
+                "truncated": discovery.truncated or fingerprint.truncated,
+                "scanned_port_count": 1000,
+            }
+        )
+
     if profile in {"FAST", "FAST_VERSION"}:
         command = [
-            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", "0",
-            "--min-rate", "500", "--initial-rtt-timeout", "100ms",
-            "--max-rtt-timeout", "500ms", "--host-timeout", "10s",
+            "nmap", "-Pn", scan_type if profile == "FAST" else "-sT", "-n", "-T4", "--max-retries", discovery_retry,
+            *traffic_arguments, "--initial-rtt-timeout", "100ms",
+            "--max-rtt-timeout", "500ms", "--host-timeout", discovery_host_timeout,
         ]
-        timeout = 20
-    elif profile == "DETAILED":
-        command = [
-            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", "1",
-            "--host-timeout", "90s",
-        ]
-        timeout = 100
+        timeout = discovery_process_timeout
     else:
+        selected = NMAP_SERVICE_OPTIONS[profile]
         command = [
-            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", "2",
-            "--host-timeout", "180s",
+            "nmap", "-Pn", "-sT", "-n", "-T4", "--max-retries", selected["retry"],
+            *traffic_arguments, "--host-timeout", selected["host_timeout"],
         ]
-        timeout = 200
+        timeout = selected["process_timeout"]
 
     if top_1000:
         command.extend(["--top-ports", "1000", "--open"])
@@ -343,12 +521,38 @@ def nmap_tcp_scan(
         "nmap", command, target=address, grep=grep, timeout=timeout,
         scanned_port_count=scanned_port_count,
     )
+    if not grep:
+        result = result.model_copy(update={
+            "output": _nmap_result_output(result.output, prefix, [command], None),
+        })
+    if (
+        not grep
+        and re.search(
+            r"(?im)(skipping host .* due to host timeout|command timed out after)",
+            result.output,
+        )
+    ):
+        incomplete_note = (
+            "Discovery did not complete; open-port status is incomplete."
+            if profile == "FAST"
+            else "Service detection did not complete; port and version evidence is incomplete."
+        )
+        return result.model_copy(
+            update={
+                "output": f"{result.output}\n\n{incomplete_note}".strip(),
+                "scanned_port_count": None,
+            }
+        )
     if result.exit_code == 0 and grep and not result.output:
         return result.model_copy(update={"output": f"No Nmap output matched {grep!r}."})
     if (
         result.exit_code == 0
         and top_1000
         and not grep
+        and not re.search(
+            r"(?im)(skipping host .* due to host timeout|command timed out after)",
+            result.output,
+        )
         and not re.search(r"(?m)^\d+/tcp\s+open\b", result.output)
     ):
         summary = "No open TCP ports were found among Nmap's top 1,000 ports."

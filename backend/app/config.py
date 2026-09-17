@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     backup_interval_hours: int = Field(default=24, ge=1, le=720, validation_alias="AEGIS_BACKUP_INTERVAL_HOURS")
     backup_keep_count: int = Field(default=14, ge=1, le=365, validation_alias="AEGIS_BACKUP_KEEP_COUNT")
     backup_directory: str = Field(default="./backups", validation_alias="AEGIS_BACKUP_DIRECTORY")
+    backup_include_cve_mirror: bool = Field(
+        default=False,
+        validation_alias="AEGIS_BACKUP_INCLUDE_CVE_MIRROR",
+    )
     report_directory: str = Field(default="./reports", validation_alias="AEGIS_REPORT_DIRECTORY")
     attachment_directory: str = Field(default="./attachments", validation_alias="AEGIS_ATTACHMENT_DIRECTORY")
     foundry_local_url: str | None = Field(default=None, validation_alias="AEGIS_FOUNDRY_LOCAL_URL")

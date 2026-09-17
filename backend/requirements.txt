@@ -2,6 +2,7 @@ fastapi==0.116.1
 uvicorn[standard]==0.35.0
 sqlalchemy==2.0.42
 pydantic-settings==2.10.1
+packaging>=24.2,<27
 pytest==8.4.1
 httpx==0.28.1
 psutil==7.1.3

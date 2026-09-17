@@ -1,6 +1,7 @@
 import concurrent.futures
 import ipaddress
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -35,8 +36,21 @@ COMMON_TCP_PORTS = {
 NMAP_VERSION_ARGUMENTS = {
     "FAST": ("--version-intensity", "0"),
     "FAST_VERSION": ("--version-intensity", "0"),
+    # Internal bounded follow-up for ports that remain anonymous after the
+    # fast pass and protocol-specific banner checks.
+    "ADAPTIVE": ("--version-light",),
     "DETAILED": ("--version-light",),
     "AGGRESSIVE": ("--version-all",),
+}
+
+# Keep CLI and assessment budgets aligned: full version probes often need
+# considerably longer than a ports-only pass, especially through Docker NAT.
+NMAP_SERVICE_OPTIONS = {
+    "FAST": {"retry": "0", "host_timeout": "5s", "process_timeout": 6},
+    "FAST_VERSION": {"retry": "0", "host_timeout": "10s", "process_timeout": 20},
+    "ADAPTIVE": {"retry": "1", "host_timeout": "20s", "process_timeout": 25},
+    "DETAILED": {"retry": "1", "host_timeout": "90s", "process_timeout": 100},
+    "AGGRESSIVE": {"retry": "2", "host_timeout": "180s", "process_timeout": 200},
 }
 
 
@@ -53,6 +67,7 @@ class PortScanResult:
     open_ports: list[OpenPort]
     scanner: str
     duration_ms: float
+    provenance: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +78,7 @@ class DetectedService:
     version: str | None
     extra_info: str | None
     cpes: tuple[str, ...]
+    tunnel: str | None = None
 
 
 def expand_nmap_port_spec(specification: str) -> list[int]:
@@ -89,6 +105,8 @@ def parse_nmap_port_scan(xml_output: str) -> tuple[list[int], list[OpenPort]]:
         root = ET.fromstring(xml_output)
     except ET.ParseError as exc:
         raise RuntimeError("Nmap returned an unreadable scan result") from exc
+    if root.find(".//host[@timedout='true']") is not None:
+        raise RuntimeError("Nmap host timed out; open-port discovery is incomplete")
 
     scan_info = root.find("./scaninfo[@protocol='tcp']")
     scanned_ports = expand_nmap_port_spec(scan_info.get("services", "")) if scan_info is not None else []
@@ -109,6 +127,8 @@ def parse_nmap_service_scan(xml_output: str) -> list[DetectedService]:
         root = ET.fromstring(xml_output)
     except ET.ParseError as exc:
         raise RuntimeError("Nmap returned unreadable service-detection output") from exc
+    if root.find(".//host[@timedout='true']") is not None:
+        raise RuntimeError("Nmap host timed out; service-version evidence is incomplete")
     services = []
     for element in root.findall(".//host/ports/port[@protocol='tcp']"):
         state = element.find("state")
@@ -117,17 +137,39 @@ def parse_nmap_service_scan(xml_output: str) -> list[DetectedService]:
         service = element.find("service")
         if service is None:
             continue
+        cpes = tuple(
+            value
+            for value in (node.text.strip() if node.text else "" for node in service.findall("cpe"))
+            if value
+        )
+        product = service.get("product") or None
+        version = service.get("version") or None
+        # Nmap can emit an application CPE even when the human-readable
+        # product/version attributes are absent. Preserve that usable identity
+        # instead of discarding an otherwise exact local-mirror lookup key.
+        if product is None or version is None:
+            for cpe in cpes:
+                components = (
+                    cpe[7:].split(":")
+                    if cpe.startswith("cpe:/a:")
+                    else cpe[10:].split(":")
+                    if cpe.startswith("cpe:2.3:a:")
+                    else []
+                )
+                if len(components) < 3:
+                    continue
+                product = product or components[1].replace("_", " ")
+                if components[2] not in {"", "*", "-"}:
+                    version = version or components[2]
+                break
         services.append(DetectedService(
             port=int(element.get("portid", "0")),
             name=service.get("name", "unknown"),
-            product=service.get("product") or None,
-            version=service.get("version") or None,
+            product=product,
+            version=version,
             extra_info=service.get("extrainfo") or None,
-            cpes=tuple(
-                value
-                for value in (node.text.strip() if node.text else "" for node in service.findall("cpe"))
-                if value
-            ),
+            cpes=cpes,
+            tunnel=service.get("tunnel") or None,
         ))
     return sorted(services, key=lambda item: item.port)
 
@@ -141,6 +183,42 @@ def nmap_command_prefix() -> list[str] | None:
     if container and docker:
         return [docker, "exec", container, "nmap"]
     return None
+
+
+def _nmap_uses_docker(prefix: list[str] | None) -> bool:
+    return (
+        prefix is not None
+        and len(prefix) >= 4
+        and os.path.basename(prefix[0].replace("\\", "/")).lower() in {"docker", "docker.exe"}
+        and prefix[1] == "exec"
+    )
+
+
+def nmap_tcp_scan_type(prefix: list[str] | None) -> str:
+    """Use managed NET_RAW for discovery, not for application fingerprints."""
+    return "-sS" if _nmap_uses_docker(prefix) else "-sT"
+
+
+def nmap_scan_provenance(
+    prefix: list[str] | None,
+    command: list[str],
+    engine_version: str | None = None,
+) -> dict[str, str]:
+    docker = _nmap_uses_docker(prefix)
+    result = {
+        "execution_context": (
+            f"Docker toolbox {prefix[2]}; Docker-managed interface, host routing/NAT may apply"
+            if docker else "AEGIS host interface"
+        ),
+        "tcp_scan_type": next(
+            (argument for argument in command if argument in {"-sS", "-sT"}),
+            nmap_tcp_scan_type(prefix),
+        ),
+        "command": shlex.join(command),
+    }
+    if engine_version:
+        result["engine_version"] = engine_version
+    return result
 
 
 def scan_nmap_top_tcp_ports(target_ip: str, top_ports: int = 1000) -> PortScanResult:
@@ -162,7 +240,7 @@ def scan_nmap_top_tcp_ports(target_ip: str, top_ports: int = 1000) -> PortScanRe
     command = [
         *prefix,
         "-Pn",
-        "-sT",
+        nmap_tcp_scan_type(prefix),
         "-n",
         "-T4",
         "--max-retries",
@@ -210,6 +288,9 @@ def scan_nmap_top_tcp_ports(target_ip: str, top_ports: int = 1000) -> PortScanRe
         open_ports=open_ports,
         scanner="Nmap top ports",
         duration_ms=round((time.monotonic() - started) * 1000, 2),
+        provenance=nmap_scan_provenance(
+            prefix, command, ET.fromstring(completed.stdout).get("version"),
+        ),
     )
 
 
@@ -228,27 +309,14 @@ def scan_nmap_service_versions(
     if prefix is None:
         return []
     normalized_profile = profile.upper()
-    profile_options = {
-        "FAST": {
-            "retry": "0",
-            "host_timeout": "5s",
-            "process_timeout": 6,
-        },
-        "DETAILED": {
-            "retry": "1",
-            "host_timeout": "90s",
-            "process_timeout": 100,
-        },
-        "AGGRESSIVE": {
-            "retry": "2",
-            "host_timeout": "180s",
-            "process_timeout": 200,
-        },
-    }
-    selected = profile_options.get(normalized_profile)
+    selected = NMAP_SERVICE_OPTIONS.get(normalized_profile)
     if selected is None:
         raise ValueError("Unknown service-detection profile")
     command = [
+        # SYN + version detection can bind and reuse a source port across
+        # application probes. In Docker this produced local EADDRNOTAVAIL
+        # (99), aborting fingerprints after the first probe. Connect mode lets
+        # the kernel select a fresh source port for each connection.
         *prefix, "-Pn", "-sT", "-n", "-T4", "--max-retries", selected["retry"],
         "--host-timeout", selected["host_timeout"], "-sV",
         *NMAP_VERSION_ARGUMENTS[normalized_profile], "--open",

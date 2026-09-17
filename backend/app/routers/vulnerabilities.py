@@ -27,7 +27,7 @@ def create_scan(device_id: int, db: Session = Depends(get_db)) -> VulnerabilityS
 @router.get("", response_model=list[VulnerabilityScanRead])
 def list_scans(device_id: int, limit: int = Query(default=10, ge=1, le=100), db: Session = Depends(get_db)) -> list[VulnerabilityScan]:
     get_device_or_404(device_id, db)
-    return list(db.scalars(select(VulnerabilityScan).options(selectinload(VulnerabilityScan.findings)).where(VulnerabilityScan.device_id == device_id).order_by(VulnerabilityScan.started_at.desc()).limit(limit)))
+    return list(db.scalars(select(VulnerabilityScan).options(selectinload(VulnerabilityScan.findings), selectinload(VulnerabilityScan.tool_runs)).where(VulnerabilityScan.device_id == device_id).order_by(VulnerabilityScan.started_at.desc()).limit(limit)))
 
 
 @router.get("/comparison", response_model=AttackSurfaceComparison)

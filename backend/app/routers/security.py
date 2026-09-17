@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import get_db
-from app.models import Device, SecurityPlaybookRun, utc_now
+from app.models import CveMirrorState, Device, NmapScanJob, SecurityPlaybookRun, utc_now
 from app.routers.auth import require_admin
 from app.routers.devices import get_device_or_404
 from app.schemas import (
@@ -22,6 +22,9 @@ from app.schemas import (
     WebEndpointAuditRequest,
     DnsEnumerationRequest,
     NmapTcpScanRequest,
+    NmapScanJobRead,
+    CveMirrorStateRead,
+    CveMirrorSyncRequest,
     NmapUdpScanRequest,
     TestConnectionPortRequest,
     ArpScanRequest,
@@ -37,6 +40,11 @@ from app.services.security_playbook_service import (
     TERMINAL_RUN_STATUSES,
     build_playbook_run,
     load_playbook_run,
+)
+from app.services.nmap_scan_job_service import (
+    TERMINAL_STATUSES as NMAP_JOB_TERMINAL_STATUSES,
+    build_nmap_scan_job,
+    load_nmap_scan_job,
 )
 from app.services.scan_policy import scan_target_rejection_reason
 from app.services.security_toolbox_service import (
@@ -232,11 +240,152 @@ def nmap_scan(payload: NmapTcpScanRequest, db: Session = Depends(get_db)) -> Lab
             scan_mode=payload.scan_mode,
             profile=payload.profile,
             show_reason=payload.show_reason,
+            traffic_policy=payload.traffic_policy,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/toolbox/nmap/jobs", response_model=NmapScanJobRead, status_code=202)
+def create_nmap_scan_job(
+    payload: NmapTcpScanRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> NmapScanJob:
+    device = get_device_or_404(payload.device_id, db)
+    user = getattr(request.state, "user", None)
+    try:
+        job = build_nmap_scan_job(
+            device,
+            ports=payload.ports,
+            scan_mode=payload.scan_mode,
+            profile=payload.profile,
+            traffic_policy=payload.traffic_policy,
+            service_detection=payload.service_detection,
+            show_reason=payload.show_reason,
+            grep=payload.grep,
+            requested_by=getattr(user, "username", "administrator"),
+            client_ip=request.client.host if request.client else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.add(job)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This target already has an active Nmap scan",
+        ) from exc
+    db.refresh(job)
+    runner = getattr(request.app.state, "nmap_scan_runner", None)
+    if runner is None or not runner.submit(job.id):
+        job.status = "FAILED"
+        job.phase = "FAILED"
+        job.active_slot = None
+        job.progress_percent = 100
+        job.completed_at = utc_now()
+        job.error = "The Nmap scan queue is unavailable"
+        db.commit()
+        raise HTTPException(status_code=503, detail=job.error)
+    return job
+
+
+@router.get("/toolbox/nmap/jobs", response_model=list[NmapScanJobRead])
+def list_nmap_scan_jobs(
+    device_id: int | None = Query(default=None, gt=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[NmapScanJob]:
+    statement = (
+        select(NmapScanJob)
+        .order_by(NmapScanJob.created_at.desc(), NmapScanJob.id.desc())
+        .limit(limit)
+    )
+    if device_id is not None:
+        get_device_or_404(device_id, db)
+        statement = statement.where(NmapScanJob.device_id == device_id)
+    return list(db.scalars(statement))
+
+
+@router.get("/toolbox/nmap/jobs/{job_id}", response_model=NmapScanJobRead)
+def get_nmap_scan_job(job_id: int, db: Session = Depends(get_db)) -> NmapScanJob:
+    job = load_nmap_scan_job(job_id, db)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Nmap scan job not found")
+    return job
+
+
+@router.post("/toolbox/nmap/jobs/{job_id}/cancel", response_model=NmapScanJobRead)
+def cancel_nmap_scan_job(
+    job_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> NmapScanJob:
+    job = load_nmap_scan_job(job_id, db)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Nmap scan job not found")
+    if job.status in NMAP_JOB_TERMINAL_STATUSES:
+        raise HTTPException(status_code=409, detail="This Nmap scan has already finished")
+    runner = getattr(request.app.state, "nmap_scan_runner", None)
+    if runner is None or not runner.cancel(job_id):
+        raise HTTPException(status_code=409, detail="This Nmap scan can no longer be cancelled")
+    db.expire_all()
+    updated = load_nmap_scan_job(job_id, db)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Nmap scan job not found")
+    return updated
+
+
+@router.get("/cve-mirror/status", response_model=CveMirrorStateRead)
+def get_cve_mirror_status(db: Session = Depends(get_db)) -> CveMirrorState:
+    state = db.get(CveMirrorState, 1)
+    if state is None:
+        state = CveMirrorState(id=1)
+        db.add(state)
+        db.commit()
+        db.refresh(state)
+    return state
+
+
+@router.post("/cve-mirror/sync", response_model=CveMirrorStateRead, status_code=202)
+def start_cve_mirror_sync(
+    payload: CveMirrorSyncRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> CveMirrorState:
+    runner = getattr(request.app.state, "cve_mirror_runner", None)
+    if runner is None:
+        raise HTTPException(status_code=503, detail="The CVE mirror service is unavailable")
+    try:
+        started = runner.sync(payload.mode, payload.year)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not started:
+        raise HTTPException(status_code=409, detail="A CVE mirror synchronization is already running")
+    db.expire_all()
+    state = db.get(CveMirrorState, 1)
+    if state is None:
+        raise HTTPException(status_code=500, detail="CVE mirror status was not created")
+    return state
+
+
+@router.post("/cve-mirror/cancel", response_model=CveMirrorStateRead)
+def cancel_cve_mirror_sync(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> CveMirrorState:
+    runner = getattr(request.app.state, "cve_mirror_runner", None)
+    if runner is None or not runner.cancel():
+        raise HTTPException(status_code=409, detail="No CVE mirror synchronization is running")
+    db.expire_all()
+    state = db.get(CveMirrorState, 1)
+    if state is None:
+        raise HTTPException(status_code=404, detail="CVE mirror status not found")
+    return state
 
 
 @router.post("/toolbox/nmap-udp", response_model=LabCommandRead)

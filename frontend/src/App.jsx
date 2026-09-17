@@ -7,8 +7,8 @@ import {
   useRef,
   useState,
 } from "react";
-import aegisShield from "./assets/aegis-shield.png";
-import aegisShieldDark from "./assets/aegis-shield-dark.png";
+import aegisShield from "./assets/aegis-shield.webp";
+import aegisShieldDark from "./assets/aegis-shield-dark.webp";
 import { formatDate, formatMetric, toDateTimeLocal } from "./format.js";
 import {
   checkDevice,
@@ -2529,6 +2529,27 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const latest = scans[0];
+  const identifiedPorts = new Set(
+    latest?.findings
+      .filter((finding) => finding.port != null && finding.category === "SERVICE_IDENTIFICATION")
+      .map((finding) => finding.port) || [],
+  );
+  const unresolvedPorts = new Set(
+    latest?.findings
+      .filter((finding) => finding.port != null && finding.category === "CVE_CORRELATION")
+      .map((finding) => finding.port) || [],
+  );
+  const cveReadyPorts = new Set(
+    latest?.findings
+      .filter((finding) => finding.port != null && finding.service_product && finding.service_version && !unresolvedPorts.has(finding.port))
+      .map((finding) => finding.port) || [],
+  );
+  const exactCpePorts = new Set(
+    latest?.findings
+      .filter((finding) => finding.port != null && finding.service_cpe && !unresolvedPorts.has(finding.port))
+      .map((finding) => finding.port) || [],
+  );
+  const openServiceCount = new Set([...identifiedPorts, ...unresolvedPorts]).size;
 
   async function scan() {
     const confirmed = window.confirm(
@@ -2566,7 +2587,7 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
         )}
       </div>
       {error && <div className="form-error">{error}</div>}
-      <p className="panel-help">The fast assessment scans the top 1,000 TCP ports first, then gives low-intensity version detection six seconds only when ports are open. It runs signed, bounded Nuclei exposure checks on discovered web endpoints, searches NVD when product and version evidence is available, then adds CISA KEV and FIRST EPSS priority data. Fast detection may miss quiet services; every match still requires review.</p>
+      <p className="panel-help">The assessment discovers open ports, refines unresolved service identities, then automatically selects WhatWeb for HTTP(S), OpenSSL and sslscan for TLS, and curated NSE checks for SMB. Separate software products and explicit versions feed the CVE mirror; conflicting versions are withheld. TLS configuration and certificate clues remain separate evidence. A zero-match result does not cover unidentified services.</p>
       {!latest ? (
         <div className="empty-state empty-state--compact">
           No assessments recorded. The bounded assessment checks registered
@@ -2577,8 +2598,10 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
           <div className="scan-summary">
             <strong>{latest.findings.length} findings</strong>
             <span>
-              {latest.findings.filter((finding) => finding.cve_id).length} CVE candidates
+              {latest.findings.filter((finding) => finding.cve_id).length} CVE matches
             </span>
+            <span>{cveReadyPorts.size}/{openServiceCount} services CVE-ready</span>
+            <span>{exactCpePorts.size} exact CPE</span>
             <span>
               {latest.findings.filter((finding) => finding.category === "NUCLEI_VALIDATION").length} template matches
             </span>
@@ -2592,6 +2615,17 @@ function VulnerabilityPanel({ device, scans, comparison, onChanged, canScan }) {
               {latest.status} · {formatDate(latest.completed_at)}
             </span>
           </div>
+          {latest.tool_runs?.length > 0 && (
+            <details className="playbook-evidence__raw">
+              <summary>Automatic tool reports · {latest.tool_runs.length} checks</summary>
+              {latest.tool_runs.map((run, index) => (
+                <details key={`${run.tool}-${run.port}-${index}`} className="playbook-evidence__raw">
+                  <summary>{run.tool} · TCP {run.port} · {run.status} · {Math.round(run.duration_ms)} ms</summary>
+                  <pre>{JSON.stringify(run.details, null, 2)}</pre>
+                </details>
+              ))}
+            </details>
+          )}
           <div className="finding-list">
             {latest.findings.map((finding) => (
               <article
@@ -5449,6 +5483,7 @@ export default function App() {
   const [acknowledgingAll, setAcknowledgingAll] = useState(false);
   const acknowledgementInFlight = useRef(new Set());
   const headerMenuRef = useRef(null);
+  const dashboardRequestRef = useRef(null);
   const [scheduler, setScheduler] = useState(null);
   const [schedulerBusy, setSchedulerBusy] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -6021,9 +6056,15 @@ export default function App() {
   }
 
   const loadDashboard = useCallback(async ({ quiet = false } = {}) => {
+    if (dashboardRequestRef.current) {
+      if (quiet) return;
+      dashboardRequestRef.current.abort();
+    }
+    const controller = new AbortController();
+    dashboardRequestRef.current = controller;
     if (!quiet) setLoading(true);
     try {
-      const refresh = await getDashboardRefresh();
+      const refresh = await getDashboardRefresh({ signal: controller.signal });
       const {
         dashboard,
         scheduler: schedulerStatus,
@@ -6048,9 +6089,12 @@ export default function App() {
       setError("");
       setLastUpdated(new Date());
     } catch (requestError) {
-      setError(requestError.message);
+      if (requestError.name !== "AbortError") setError(requestError.message);
     } finally {
-      if (!quiet) setLoading(false);
+      if (dashboardRequestRef.current === controller) {
+        dashboardRequestRef.current = null;
+        if (!quiet) setLoading(false);
+      }
     }
   }, []);
 
@@ -6070,18 +6114,18 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!auth?.authenticated) return undefined;
+    if (!auth?.authenticated || selectedId) return undefined;
     loadDashboard();
     const timer = window.setInterval(
       () => {
-        if (!selectedId && document.visibilityState === "visible") {
+        if (document.visibilityState === "visible") {
           loadDashboard({ quiet: true });
         }
       },
       15000,
     );
     function refreshWhenVisible() {
-      if (!selectedId && document.visibilityState === "visible") {
+      if (document.visibilityState === "visible") {
         loadDashboard({ quiet: true });
       }
     }
@@ -6089,6 +6133,9 @@ export default function App() {
     return () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+      const activeRequest = dashboardRequestRef.current;
+      dashboardRequestRef.current = null;
+      activeRequest?.abort();
     };
   }, [loadDashboard, selectedId, auth?.authenticated]);
 
@@ -6115,7 +6162,6 @@ export default function App() {
     window.history.pushState({}, "", "/");
     setSelectedId(null);
     setDetailOrigin(null);
-    loadDashboard({ quiet: true });
   }
 
   function navigateBackFromDevice() {

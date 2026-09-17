@@ -24,6 +24,7 @@ NSE_XML = """<?xml version="1.0"?>
       </port>
     </ports>
     <hostscript>
+      <script id="smb-os-discovery" output="OS: Windows 11 Pro 22631; Computer name: LAB-PC" />
       <script id="smb-protocols" output="NT LM 0.12 (SMBv1) [dangerous]" />
     </hostscript>
   </host>
@@ -32,12 +33,13 @@ NSE_XML = """<?xml version="1.0"?>
 
 
 def test_nse_parser_keeps_only_requested_script_evidence():
-    scripts = ("smb-protocols", "smb2-security-mode", "ssh2-enum-algos")
+    scripts = ("smb-os-discovery", "smb-protocols", "smb2-security-mode", "ssh2-enum-algos")
 
     observations = parse_nse_verification(NSE_XML, scripts, [22, 445])
 
     assert [(item.script_id, item.port) for item in observations] == [
         ("ssh2-enum-algos", 22),
+        ("smb-os-discovery", 445),
         ("smb-protocols", 445),
         ("smb2-security-mode", 445),
     ]
@@ -69,14 +71,14 @@ def test_nse_verifier_builds_bounded_argument_list(monkeypatch):
     command = captured["command"]
     assert command[:4] == ["docker", "exec", "aegis-network-tools", "nmap"]
     assert command[command.index("--script") + 1] == (
-        "smb-protocols,smb2-security-mode,ssh2-enum-algos"
+        "smb-os-discovery,smb-protocols,smb2-security-mode,ssh2-enum-algos"
     )
     assert command[command.index("-p") + 1] == "22,445"
     assert "--reason" in command
     assert command[-1] == "198.18.1.25"
     assert captured["kwargs"]["timeout"] == 30
     assert captured["kwargs"]["shell"] is False
-    assert len(result.observations) == 3
+    assert len(result.observations) == 4
 
 
 def test_nse_verifier_skips_devices_without_supported_open_services(monkeypatch):

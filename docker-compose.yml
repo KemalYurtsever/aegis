@@ -7,6 +7,7 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/monitoring.db
       AEGIS_BACKUP_DIRECTORY: /data/backups
+      AEGIS_BACKUP_INCLUDE_CVE_MIRROR: ${AEGIS_BACKUP_INCLUDE_CVE_MIRROR:-false}
       AEGIS_REPORT_DIRECTORY: /data/reports
       AEGIS_ATTACHMENT_DIRECTORY: /data/attachments
       AEGIS_PROMETHEUS_TOKEN_FILE: /run/secrets/prometheus_token

@@ -21,6 +21,7 @@ from app.models import (
 from app.schemas import DnsQueryRead, LabCommandRead, TraceRouteRead
 from app.services.nmap_top_ports import NMAP_TOP_1000_TCP_PORTS
 from app.services.security_toolbox_service import (
+    avahi_browse,
     query_dns,
     test_connection_ports,
     trace_registered_device,
@@ -32,7 +33,7 @@ from app.services.vulnerability_service import run_vulnerability_scan
 PLAYBOOK_STEPS = (
     ("powershell_tcp", "PowerShell TCP reachability"),
     ("traceroute", "Network path trace"),
-    ("attack_surface", "Nmap exposure, NSE verification and CVE correlation"),
+    ("attack_surface", "Service discovery, automatic web/TLS/SMB evidence and CVE correlation"),
     ("dns_identity", "DNS identity lookup"),
 )
 ACTIVE_RUN_STATUSES = ("QUEUED", "RUNNING")
@@ -138,6 +139,66 @@ def _render_step_output(value: object) -> str:
     return _bounded_text(value)
 
 
+def _compact_finding(finding) -> dict[str, object]:
+    """Render useful playbook evidence without pages of misleading nulls."""
+    rendered: dict[str, object] = {
+        "severity": finding.severity,
+        "category": finding.category,
+        "title": finding.title,
+        "description": finding.description,
+        "recommendation": finding.recommendation,
+    }
+    optional_fields = (
+        "port",
+        "cve_id",
+        "cvss_score",
+        "match_confidence",
+        "epss_score",
+        "validation_tool",
+        "validation_check_id",
+        "validation_target",
+        "service_product",
+        "service_version",
+        "service_cpe",
+    )
+    for field in optional_fields:
+        value = getattr(finding, field)
+        if value is not None:
+            rendered[field] = value
+    if finding.known_exploited:
+        rendered["known_exploited"] = True
+    return rendered
+
+
+def _compact_tool_run(run) -> dict:
+    details = dict(run.details)
+    details.pop("raw_output", None)
+    evidence = dict(details.get("evidence") or {})
+    for key, limit in (("ciphers", 20), ("technologies", 20)):
+        if isinstance(evidence.get(key), list):
+            evidence[f"{key}_total"] = len(evidence[key])
+            evidence[key] = evidence[key][:limit]
+    if evidence:
+        details["evidence"] = evidence
+    if isinstance(details.get("observations"), list):
+        details["observations"] = [{**item, "output": item.get("output", "")[:1000]} for item in details["observations"][:8]]
+    return {"tool": run.tool, "port": run.port, "status": run.status, "duration_ms": run.duration_ms, "details": details}
+
+
+def _fit_attack_surface_output(result: dict) -> dict:
+    """Keep the stored report valid JSON; full evidence stays on the scan API."""
+    while len(json.dumps(result, ensure_ascii=False, indent=2).encode("utf-8")) > _OUTPUT_LIMIT_BYTES:
+        if result["findings"]:
+            result["findings"].pop()
+            result["omitted_finding_count"] = result.get("omitted_finding_count", 0) + 1
+        elif result.get("tool_runs"):
+            result["tool_runs"].pop()
+            result["omitted_tool_run_count"] = result.get("omitted_tool_run_count", 0) + 1
+        else:
+            break
+    return result
+
+
 def _error_text(exc: Exception) -> str:
     message = " ".join(str(exc).split()) or exc.__class__.__name__
     return message[:1000]
@@ -151,6 +212,53 @@ def _result_error(value: object) -> str | None:
     if isinstance(value, TraceRouteRead) and not value.completed:
         return "Traceroute did not complete within its bounded probe limits"
     return None
+
+
+def _mdns_enrichment(target_ip: str) -> dict[str, object]:
+    """Collect target-scoped DNS-SD evidence without making it step-fatal."""
+    try:
+        result = avahi_browse(grep=target_ip)
+    except Exception as exc:
+        return {
+            "status": "UNAVAILABLE",
+            "tool": "avahi-browse",
+            "target": target_ip,
+            "records": [],
+            "error": _error_text(exc),
+        }
+
+    output = result.output.strip()
+    no_record_markers = (
+        "no host-interface mdns records matched",
+        "no dns-sd services were observed",
+        "no avahi output matched",
+        "no dns-sd services were visible",
+    )
+    has_records = bool(output) and not any(
+        marker in output.casefold() for marker in no_record_markers
+    )
+    records: list[dict[str, object]] = []
+    if has_records:
+        for line in output.splitlines()[:20]:
+            columns = line.split("\t")
+            if len(columns) >= 5 and columns[0] == target_ip:
+                records.append({
+                    "address": columns[0],
+                    "display_name": None if columns[1] == "-" else columns[1],
+                    "model": None if columns[2] == "-" else columns[2],
+                    "hostname": None if columns[3] == "-" else columns[3],
+                    "services": [] if columns[4] == "-" else columns[4].split(","),
+                })
+            elif target_ip in line:
+                records.append({"raw": line[:1000]})
+    return {
+        "status": "MATCHED" if records else "NO_RECORDS",
+        "tool": result.tool,
+        "target": target_ip,
+        "duration_ms": result.duration_ms,
+        "records": records,
+        "raw_output": output[:4000] if output else None,
+    }
 
 
 class SecurityPlaybookRunner:
@@ -460,6 +568,7 @@ class SecurityPlaybookRunner:
         raise RuntimeError(f"Unknown playbook step: {step_key}")
 
     def _run_attack_surface(self, target: PlaybookTarget) -> dict:
+        mdns = _mdns_enrichment(target.target_ip)
         # Vulnerability scans own their commit lifecycle, so they receive an
         # isolated session rather than the runner's progress session.
         with self._session_factory() as db:
@@ -471,7 +580,7 @@ class SecurityPlaybookRunner:
         with self._session_factory() as db:
             scan = db.scalar(
                 select(VulnerabilityScan)
-                .options(selectinload(VulnerabilityScan.findings))
+                .options(selectinload(VulnerabilityScan.findings), selectinload(VulnerabilityScan.tool_runs))
                 .where(VulnerabilityScan.id == scan_id)
             )
             if scan is None:
@@ -479,31 +588,70 @@ class SecurityPlaybookRunner:
             severity_counts: dict[str, int] = {}
             for finding in scan.findings:
                 severity_counts[finding.severity] = severity_counts.get(finding.severity, 0) + 1
-            return {
+            identified_ports = {
+                item.port
+                for item in scan.findings
+                if item.port is not None and item.category == "SERVICE_IDENTIFICATION"
+            }
+            unresolved_ports = {
+                item.port
+                for item in scan.findings
+                if item.port is not None and item.category == "CVE_CORRELATION"
+            }
+            cve_ready_ports = {
+                item.port
+                for item in scan.findings
+                if item.port is not None and item.service_product and item.service_version
+            }
+            exact_cpe_ports = {
+                item.port
+                for item in scan.findings
+                if item.port is not None and item.service_cpe
+            }
+            cve_ready_ports -= unresolved_ports
+            exact_cpe_ports -= unresolved_ports
+            open_ports = identified_ports | unresolved_ports
+            evidence_coverage = {
+                "open_services": len(open_ports),
+                "cve_ready_services": len(cve_ready_ports),
+                "exact_cpe_services": len(exact_cpe_ports),
+                "unresolved_ports": sorted(unresolved_ports),
+                "coverage_percent": (
+                    round(len(cve_ready_ports) * 100 / len(open_ports))
+                    if open_ports
+                    else 0
+                ),
+            }
+            scan_provenance = None
+            for finding in scan.findings:
+                if finding.category == "SCAN_PROVENANCE":
+                    try:
+                        saved = json.loads(finding.description)
+                        if isinstance(saved, dict):
+                            scan_provenance = saved
+                    except (TypeError, ValueError):
+                        pass
+                    break
+            ordered_findings = sorted(scan.findings, key=lambda item: (
+                {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}.get(item.severity, 5),
+                0 if item.cve_id else 1, item.port or 0, item.title,
+            ))
+            return _fit_attack_surface_output({
+                "output_schema_version": 2,
                 "scan_id": scan.id,
                 "status": scan.status,
                 "profile": scan.profile,
                 "finding_count": len(scan.findings),
                 "cve_candidates": sum(1 for item in scan.findings if item.cve_id),
+                "cve_matches": sum(1 for item in scan.findings if item.cve_id),
+                "cve_evidence": evidence_coverage,
                 "severity_counts": severity_counts,
-                "findings": [
-                    {
-                        "severity": item.severity,
-                        "category": item.category,
-                        "title": item.title,
-                        "port": item.port,
-                        "cve_id": item.cve_id,
-                        "cvss_score": item.cvss_score,
-                        "match_confidence": item.match_confidence,
-                        "known_exploited": item.known_exploited,
-                        "epss_score": item.epss_score,
-                        "validation_tool": item.validation_tool,
-                        "validation_check_id": item.validation_check_id,
-                        "validation_target": item.validation_target,
-                    }
-                    for item in scan.findings[:50]
-                ],
-            }
+                "mdns_enrichment": mdns,
+                "tool_runs": [_compact_tool_run(run) for run in scan.tool_runs],
+                **({"scan_provenance": scan_provenance} if scan_provenance else {}),
+                "findings": [_compact_finding(item) for item in ordered_findings[:50]],
+                "omitted_finding_count": max(0, len(ordered_findings) - 50),
+            })
 
     def _complete_step(
         self,
@@ -659,4 +807,12 @@ class SecurityPlaybookRunner:
                 summary["vulnerability_scan_id"] = attack_summary.get("scan_id")
                 summary["findings"] = attack_summary.get("finding_count", 0)
                 summary["cve_candidates"] = attack_summary.get("cve_candidates", 0)
+                evidence = attack_summary.get("cve_evidence")
+                if isinstance(evidence, dict):
+                    summary["cve_ready_services"] = evidence.get("cve_ready_services", 0)
+                    summary["open_services"] = evidence.get("open_services", 0)
+                    summary["cve_coverage_percent"] = evidence.get("coverage_percent", 0)
+                mdns = attack_summary.get("mdns_enrichment")
+                if isinstance(mdns, dict):
+                    summary["mdns_status"] = mdns.get("status")
         return summary

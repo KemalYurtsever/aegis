@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import CveLookupCache, utc_now
+from app.services.cve_mirror_service import lookup_local_cves
 
 
 NVD_CVE_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -35,6 +36,7 @@ class CveLookupResult:
     query: str
     confidence: str
     cached: bool
+    source: str = "NVD_API"
 
 
 def cpe22_to_cpe23(value: str) -> str:
@@ -153,6 +155,23 @@ def lookup_cves(
         cpe23 = cpe22_to_cpe23(cpe)
         query = cpe23
         confidence = "HIGH"
+        local_result = lookup_local_cves(db, cpe23)
+        if local_result is not None:
+            return CveLookupResult(
+                matches=tuple(CveMatch(
+                    cve_id=item.cve_id,
+                    description=item.description,
+                    cvss_score=item.cvss_score,
+                    severity=item.severity,
+                    published=item.published,
+                    url=f"https://nvd.nist.gov/vuln/detail/{item.cve_id}",
+                ) for item in local_result.matches),
+                total_results=local_result.total_results,
+                query=query,
+                confidence=confidence,
+                cached=True,
+                source="LOCAL_NVD_MIRROR",
+            )
         params = {"cpeName": cpe23, "resultsPerPage": "2000"}
         cache_identity = f"cpe:{cpe23}"
     else:

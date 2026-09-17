@@ -8,6 +8,34 @@ Public examples and screenshots use synthetic demonstration data, not an operato
 
 > Aegis is intended for systems and networks you own or are explicitly authorized to assess. Its discovery, capture, diagnostic, and assessment tools are deliberately bounded and are not a substitute for authorization or change control.
 
+## Start here
+
+Aegis follows one operational loop:
+
+```text
+Register a device → Observe health → Assess exposure → Prioritize evidence → Remediate and reassess
+```
+
+| Your goal | Open | Result |
+|---|---|---|
+| See whether infrastructure is healthy | **Dashboard** | Current device, service, agent, alert, and inventory status. |
+| Investigate one device | **Device record** | Monitoring history, services, telemetry, notes, findings, and asset context. |
+| Run a repeatable security review | **Security workbench → Assessment** | A saved four-step assessment with network, service, mDNS, CVE, and DNS evidence. |
+| Run one specific network test | **Assessment → Manual checks** | A bounded Nmap, TCP, traceroute, DNS, TLS, web, or SMB result. |
+| Refresh local vulnerability intelligence | **Security workbench → CVE mirror** | Integrity-checked NVD CVE and CPE applicability data for local matching. |
+| Confirm that Aegis itself is ready | **Administration → System status** | Database, scheduler, integrations, and supporting-tool readiness. |
+
+For a short explanation of concepts, screens, result meanings, and the first assessment workflow, read the [project guide](docs/PROJECT_GUIDE.md). Planned improvements and their acceptance criteria are tracked in the [prototype roadmap](docs/PROTOTYPE_ROADMAP.md).
+
+### First prototype walkthrough
+
+1. Run `.\start-hybrid.ps1` and sign in as the local administrator.
+2. Add one device manually or use **More actions → Discover network devices**.
+3. Run a reachability check and confirm the device record shows a current result.
+4. Open **Security workbench → Assessment**, choose the device, and start with **Fast**.
+5. Review findings as evidence to verify—not automatic proof of compromise or exploitability.
+6. Apply an approved remediation and run the same assessment again to compare the result.
+
 ## Product capabilities
 
 ### Operations dashboard
@@ -68,7 +96,7 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 | Service checks | Monitors TCP ports and HTTP or HTTPS endpoints on registered devices. HTTP checks use a validated path and record response time and status code. |
 | Service history | Shows recent results, uptime, successful and failed totals, average response time, and a dependency-free response-time chart. |
 | TCP port scan | Scans Nmap's 1,000 most common TCP ports on a registered device, using Nmap when available and a bounded host-side socket scanner otherwise, then can turn an open port into a scheduled service check. |
-| Attack-surface CVE correlation | Runs a fast top-1,000 TCP pass, then performs Fast, Detailed, or Aggressive service detection only on open ports. It runs signed, bounded Nuclei exposure checks against discovered web endpoints, searches the full NVD CVE corpus for supported fingerprints, enriches matches with CISA KEV and FIRST EPSS priority data, caches external results for 24 hours, and marks matches for applicability review. |
+| Attack-surface CVE correlation | Discovers open TCP ports and automatically gathers WhatWeb technology versions and OpenSSL/sslscan TLS evidence where the detected protocol applies; SMB reuses curated NSE posture checks. Separate products use the local NVD mirror with online fallback; contradictory versions are withheld. Bounded Nuclei and CISA KEV/FIRST EPSS evidence support review. See [automatic service evidence](docs/AUTOMATIC_SERVICE_ENRICHMENT.md) for budgets and limitations. |
 | Device fingerprinting | Uses bounded network evidence such as open services, manufacturer information, and mDNS/DNS-SD names, service types, and advertised model metadata to suggest a device classification. |
 | Alert rules | Creates per-device rules for consecutive failures and high latency. Alerts persist, can be acknowledged, and resolve automatically after recovery. |
 | Alert history | Provides a searchable operational record of active, acknowledged, and resolved alert events. |
@@ -128,9 +156,13 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | TLS inspection | Runs `sslscan` or an OpenSSL certificate/session inspection against a registered device and selected TLS port. Execution is capped, application data is not sent, and Heartbleed probing is disabled. |
 | Web technology and exposure checks | Runs WhatWeb's light fingerprint profile or a non-interactive Nikto assessment against one HTTP(S) endpoint on a registered device. Operators choose the scheme, port, and validated path; Nikto is capped at 45 seconds. |
 | SMB posture | Lists services through an anonymous `smbclient` session or runs fixed Nmap scripts for SMB protocol, signing, and time posture. The API does not accept usernames, passwords, hashes, domains, or arbitrary scripts. |
-| Network CLI | Runs administrator-only Nmap TCP scans and a separate bounded scan of up to 64 UDP ports against registered devices. Both provide Fast, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) depth where applicable. It also provides registered-host `fping`, local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, WhatWeb, Nikto, `sslscan`, OpenSSL, anonymous `smbclient`, a fixed Nmap SMB posture check, and `dig`, `host`, or standard-record DNSRecon queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, capped output, and closed stdin without invoking a shell. |
+| Network CLI | Runs administrator-only Nmap TCP scans and a separate bounded scan of up to 64 UDP ports against registered devices. TCP scanning defaults to an IDS-friendly traffic policy capped at 100 probes per second, with an explicit fast-mode override. Both provide Fast, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) depth where applicable. It also provides registered-host `fping`, local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, WhatWeb, Nikto, `sslscan`, OpenSSL, anonymous `smbclient`, a fixed Nmap SMB posture check, and `dig`, `host`, or standard-record DNSRecon queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, capped output, and closed stdin without invoking a shell. |
 | PowerShell TCP test | Tests up to 128 TCP ports concurrently on one registered device. PowerShell 7 uses `Test-Connection -TcpPort`; Windows PowerShell uses bounded .NET TCP socket probes. Results distinguish open ports, refused connections, unanswered probes, and errors, while targets and ports are passed as validated data rather than command text. |
-| Assessment playbooks | Queues a persistent four-step assessment for one registered target: PowerShell TCP reachability, traceroute, Nmap top-1,000 attack-surface and CVE correlation, then DNS identity. Fast, Detailed, and Aggressive profiles control probe depth. The workbench shows durable per-step progress and output, and cancellation takes effect after the active command finishes. |
+| Assessment workspace | Combines the persistent four-step playbook with manual checks on one page. Automated reachability and traceroute lead into Nmap top-1,000 discovery, mDNS identity, protocol-directed WhatWeb/OpenSSL/sslscan evidence, reused SMB NSE posture and CVE correlation, then DNS identity. Each selected tool's status, command and evidence are visible; profiles control depth and additional collection budgets. |
+
+The toolbox pins official **Nmap 7.991** and its matching probe/script database, with a verified source archive SHA-256. Managed Docker scans use SYN discovery (`-sS`, with `NET_RAW`); application fingerprints and host-side scans use TCP connect (`-sT`). This avoids a locally reproduced repeated-source-port connection failure during SYN-mode version detection. Detailed TCP service detection allows 90 seconds of host time; Aggressive allows 180 seconds (100/200-second process budgets). Top-1,000 scans fingerprint only discovered open ports and preserve discovery evidence if fingerprinting is incomplete. CLI output records the Nmap version, execution context and actual commands; assessments save scanner provenance alongside their findings.
+
+When comparing against Kali, match the Nmap version and `nmap-service-probes`, target, TCP port list, scan type and `-sV` intensity. Aegis Docker and a Kali VM may leave through different source IPs/interfaces, so a firewall or service can return different evidence even with identical flags. `Aggressive` means `--version-all`, not Nmap's `-A` option.
 
 ![Aegis network toolbox configured for an Nmap TCP scan against a registered target](docs/screenshots/06-network-toolbox.png)
 
@@ -169,7 +201,7 @@ Prometheus authenticates with a bearer token stored in `secrets/prometheus_token
 | Automation center | Manages maintenance windows, correlated incidents, allowlisted incident diagnostics, scheduled reports, configuration baselines, agent-version visibility, and advisory health summaries. |
 | Configuration drift | Compares recorded device information with stored baselines and surfaces material changes for review. |
 | Health summary | Produces a built-in operational summary. An optional local Foundry model can rewrite that summary when explicitly configured; the built-in result remains the fallback. |
-| Backups | Creates verified SQLite snapshots at startup and on schedule, supports manual creation and verification, and keeps the configured number of recent backups. |
+| Backups | Creates verified SQLite snapshots when due, supports manual creation and verification, and keeps the configured number of recent backups. Rebuildable CVE mirror rows are excluded by default. |
 | History retention | Previews aged monitoring data before deletion, requires an explicit confirmation phrase, and creates a verified safety backup before cleanup. Configuration and identity records are preserved. |
 
 Network-changing automations—automatic discovery, service discovery, and paced defensive assessment—remain disabled until an administrator explicitly enables them.
@@ -200,6 +232,30 @@ Aegis intentionally uses a small, inspectable architecture.
 | Observability | Prometheus and Grafana | Metric retention, querying, and provisioned infrastructure dashboards. |
 
 SQLite is appropriate for a single Aegis application instance. The Kubernetes manifests intentionally run one backend replica; horizontal backend scaling requires migration to a shared database such as PostgreSQL and coordination of scheduled work.
+
+### Adaptive Nmap jobs
+
+Network CLI TCP scans run through a durable, single-worker queue. Each job records the administrator, API client address, target snapshot, profile, traffic policy, timing, result and completion state. The UI polls the job record to show live phase/progress and can request cancellation; cancellation takes effect after the current bounded Nmap phase exits.
+
+- Discovery always runs before optional service fingerprinting, and only confirmed open ports reach the deeper phase.
+- Ports confirmed `closed` are cached for 10 minutes and skipped on matching scans. `filtered` and unanswered ports are never treated as closed.
+- Open-port observations are retained for 24 hours. If all previously open ports disappear while Nmap reports filtering, packet loss or a timeout, the job is marked `PARTIAL` with a possible firewall/IDS block signal.
+- Only one Nmap job runs at a time and each target may have only one queued or running job, limiting traffic bursts and preserving an auditable order.
+
+### Local NVD CVE mirror
+
+The Security Workbench CVE mirror imports official NVD JSON 2.0 feeds into normalized CVE and CPE applicability tables. Downloads are checked against the feed metadata's expanded size and SHA-256 digest before import. Exact CPE lookups evaluate the detected version against NVD start/end bounds locally; partial mirrors fall back to the online NVD API when no local candidate exists.
+
+Use **Modified** for routine incremental refreshes and **Full** for the initial baseline. The full 2002-current corpus can require multiple gigabytes of temporary JSON/database space. Synchronization is asynchronous in the UI, reports feed progress, supports bounded cancellation, and retains verified completed batches.
+
+The mirror is reproducible and can be large, so normal Aegis backups retain its table schemas but omit its rows. After restoring a core backup, run a Full synchronization again. Set `AEGIS_BACKUP_INCLUDE_CVE_MIRROR=true` only when an offline snapshot of the entire corpus is explicitly required.
+
+The same operation is available from the backend directory:
+
+```powershell
+.\.venv\Scripts\python.exe tools\sync_cve_mirror.py --mode modified
+.\.venv\Scripts\python.exe tools\sync_cve_mirror.py --mode full
+```
 
 ## Requirements
 
@@ -249,6 +305,8 @@ Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics
 ```
 
 The launcher verifies the frontend, API, agent ingress, network toolbox, Grafana, and Prometheus before returning. If Docker Desktop is unavailable, it starts the core Aegis services without the toolbox or observability containers. Runtime logs are written to `logs/`.
+
+### Prototype readiness
 
 Before the first prototype session, run the reproducible readiness gate from the repository root. It checks Python and Node dependencies, compiles the backend, verifies the live SQLite database, runs the backend suite, builds the production frontend, validates both Compose definitions, and confirms the Docker daemon:
 
@@ -370,10 +428,11 @@ Backend settings can be supplied through the process environment or `backend/.en
 | `AEGIS_MONITOR_CHECK_WORKERS` | `32` | Maximum concurrent reachability probes for manual batch checks. Database writes remain sequential. |
 | `MONITOR_INTERVAL_SECONDS` | `60` | Scheduler interval in seconds. |
 | `SCHEDULER_ENABLED` | `true` | Enables scheduled monitoring at application startup. |
-| `AEGIS_BACKUP_ENABLED` | `true` | Enables startup and scheduled database backups. |
+| `AEGIS_BACKUP_ENABLED` | `true` | Enables scheduled database backups. A missing backup is created at startup; otherwise the latest backup's age is honored. |
 | `AEGIS_BACKUP_INTERVAL_HOURS` | `24` | Time between automatic backups. |
 | `AEGIS_BACKUP_KEEP_COUNT` | `14` | Number of newest backups retained. |
 | `AEGIS_BACKUP_DIRECTORY` | `./backups` | Backup storage directory. |
+| `AEGIS_BACKUP_INCLUDE_CVE_MIRROR` | `false` | Includes the reproducible local NVD mirror in every backup. Leave disabled to keep core backups small and resynchronize the mirror after a restore. |
 | `AEGIS_HISTORY_RETENTION_DAYS` | `90` | Age threshold used by retention preview and cleanup. |
 | `AEGIS_REPORT_DIRECTORY` | `./reports` | Generated report storage directory. |
 | `AEGIS_ATTACHMENT_DIRECTORY` | `./attachments` | Device attachment storage directory. |
@@ -429,11 +488,11 @@ cd backend
 
 Tests use temporary SQLite databases and do not modify the development database.
 
-Create a production frontend build:
+Run the frontend performance-regression checks and create a production build:
 
 ```powershell
 cd frontend
-npm.cmd run build
+npm.cmd run check
 ```
 
 ## Kubernetes deployment

@@ -39,6 +39,37 @@ def _format_bytes(value: int) -> str:
     return "0 B"
 
 
+def database_readiness_component(db: Session) -> SystemComponentRead:
+    """Return a fast liveness/readiness view without scanning the full database.
+
+    Full SQLite integrity checks are intentionally reserved for backup
+    verification and the prototype verification command. Running quick_check
+    here made every System Status view scan the rebuildable CVE corpus.
+    """
+    try:
+        db.execute(text("SELECT 1")).scalar_one()
+        sqlite = db.get_bind().dialect.name == "sqlite"
+        foreign_keys_enabled = (
+            bool(db.execute(text("PRAGMA foreign_keys")).scalar_one())
+            if sqlite else True
+        )
+        active_devices = db.scalar(
+            select(func.count(Device.id)).where(Device.is_active.is_(True))
+        ) or 0
+        latest_check = db.scalar(select(func.max(MonitorResult.timestamp)))
+        latest = latest_check.isoformat() if latest_check else "no checks recorded"
+        enforcement = "enabled" if foreign_keys_enabled else "disabled"
+        return _component(
+            "Database",
+            "HEALTHY" if foreign_keys_enabled else "WARNING",
+            f"Connection ready; foreign-key enforcement {enforcement}; "
+            f"{active_devices} active devices; latest result {latest}. "
+            "Deep integrity is checked by backup verification and verify-prototype.ps1.",
+        )
+    except SQLAlchemyError as exc:
+        return _component("Database", "WARNING", f"Database readiness check failed: {exc}")
+
+
 @router.get("/readiness", response_model=SystemReadiness)
 def system_readiness(request: Request, db: Session = Depends(get_db)) -> SystemReadiness:
     components: list[SystemComponentRead] = []
@@ -77,23 +108,7 @@ def system_readiness(request: Request, db: Session = Depends(get_db)) -> SystemR
         if missing_tools else "Network lab tools are available locally or through the Docker toolbox; Npcap and Docker CLI detected.",
     ))
 
-    try:
-        integrity = str(db.execute(text("PRAGMA quick_check")).scalar_one())
-        foreign_keys = len(db.execute(text("PRAGMA foreign_key_check")).fetchall())
-        active_devices = db.scalar(
-            select(func.count(Device.id)).where(Device.is_active.is_(True))
-        ) or 0
-        latest_check = db.scalar(select(func.max(MonitorResult.timestamp)))
-        healthy = integrity.lower() == "ok" and foreign_keys == 0
-        latest = latest_check.isoformat() if latest_check else "no checks recorded"
-        components.append(_component(
-            "Database",
-            "HEALTHY" if healthy else "WARNING",
-            f"Integrity {integrity}; {foreign_keys} foreign-key violations; "
-            f"{active_devices} active devices; latest result {latest}.",
-        ))
-    except SQLAlchemyError as exc:
-        components.append(_component("Database", "WARNING", f"Database check failed: {exc}"))
+    components.append(database_readiness_component(db))
 
     scheduler = request.app.state.monitor_scheduler
     scheduler_status = "HEALTHY" if scheduler.is_running else (

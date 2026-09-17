@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  cancelCveMirrorSync,
+  cancelNmapScanJob,
   cancelSecurityPlaybookRun,
+  createNmapScanJob,
   createSecurityPlaybookRun,
   getAttackPaths,
+  getCveMirrorStatus,
   getHostNetworkPolicy,
   getNeighborTable,
+  getNmapScanJob,
   getSecurityPlaybookRun,
   getWirelessAdapters,
   listSecurityPlaybookRunIndex,
   listSecurityPlaybookRuns,
   listPacketCaptures,
+  listNmapScanJobs,
   runAvahiBrowse,
   runDnsQuery,
   runArpScan,
@@ -25,30 +31,39 @@ import {
   runSmbPostureScan,
   runTlsScan,
   runWhatWebScan,
-  runNmapScan,
   runNmapUdpScan,
   runTestConnectionPorts,
   runSecurityTraceroute,
+  startCveMirrorSync,
 } from "./api.js";
 import { formatDate } from "./format.js";
-import aegisShield from "./assets/aegis-shield.png";
-import aegisShieldDark from "./assets/aegis-shield-dark.png";
+import aegisShield from "./assets/aegis-shield.webp";
+import aegisShieldDark from "./assets/aegis-shield-dark.webp";
 
 const TOOLS = [
-  ["overview", "Overview", "01"],
-  ["playbooks", "Playbooks", "02"],
-  ["decoder", "Decoder & numbers", "03"],
-  ["network", "Network", "04"],
-  ["sniffer", "Sniffer", "05"],
-  ["credentials", "Credential hygiene", "06"],
-  ["traceroute", "Traceroute", "07"],
-  ["configuration", "Configuration audit", "08"],
-  ["wireless", "Wireless", "09"],
-  ["query", "DNS query", "10"],
-  ["policy", "Firewall & routing", "11"],
-  ["lab-cli", "Network CLI", "12"],
-  ["test-connection", "TCP port test", "13"],
+  ["overview", "Overview", "HOME"],
+  ["playbooks", "Assessment", "RUN"],
+  ["cve-mirror", "CVE mirror", "DATA"],
+  ["network", "Registered assets", "HOST"],
+  ["sniffer", "Packet observation", "PKT"],
+  ["configuration", "Exposure review", "RISK"],
+  ["wireless", "Wireless status", "WLAN"],
+  ["policy", "Firewall & routing", "HOST"],
+  ["query", "DNS query", "DNS"],
+  ["decoder", "Decoder & numbers", "LOCAL"],
+  ["credentials", "Credential hygiene", "LOCAL"],
 ];
+const TOOL_GROUPS = [
+  ["Start here", ["overview", "playbooks", "cve-mirror"]],
+  ["Review evidence", ["network", "sniffer", "configuration", "wireless", "policy"]],
+  ["Local utilities", ["query", "decoder", "credentials"]],
+];
+const LEGACY_ASSESSMENT_TABS = new Set(["lab-cli", "traceroute", "test-connection"]);
+
+function normalizeWorkbenchTab(value) {
+  if (LEGACY_ASSESSMENT_TABS.has(value)) return "playbooks";
+  return TOOLS.some(([tool]) => tool === value) ? value : "overview";
+}
 
 const PLAYBOOK_PROFILES = [
   ["FAST", "Fast", "Tests 8 common TCP ports, discovers Nmap's top 1,000 ports, then uses lightweight service detection."],
@@ -56,8 +71,10 @@ const PLAYBOOK_PROFILES = [
   ["AGGRESSIVE", "Aggressive", "Tests 64 common TCP ports, discovers the top 1,000, then runs -sV --version-all on open ports."],
 ];
 const ACTIVE_PLAYBOOK_STATUSES = new Set(["QUEUED", "RUNNING"]);
+const ACTIVE_NMAP_JOB_STATUSES = new Set(["QUEUED", "RUNNING"]);
 const FINISHED_STEP_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 const DEFAULT_TCP_PORTS = "22,80,443,445,3389";
+const QUICK_NMAP_TCP_PORTS = "80,23,443,21,22,25,3389,110,445,139,143,53,135,3306,8080,1723,111,995,993,5900,1025,587,8888,199";
 const DEFAULT_UDP_PORTS = [
   53, 67, 69, 123, 137, 161, 500, 514, 520, 623,
   1434, 1900, 4500, 5060, 5353, 5683, 10001, 11211, 20000, 47808,
@@ -1093,8 +1110,8 @@ function QueryTool() {
 function LabCliTool({ devices }) {
   const [tool, setTool] = useState("nmap");
   const [deviceId, setDeviceId] = useState(devices[0]?.id || "");
-  const [ports, setPorts] = useState(DEFAULT_TCP_PORTS);
-  const [scanMode, setScanMode] = useState("TOP_1000");
+  const [ports, setPorts] = useState(QUICK_NMAP_TCP_PORTS);
+  const [scanMode, setScanMode] = useState("QUICK");
   const [target, setTarget] = useState("");
   const [recordType, setRecordType] = useState("A");
   const [tlsPort, setTlsPort] = useState(443);
@@ -1104,6 +1121,7 @@ function LabCliTool({ devices }) {
   const [interfaceName, setInterfaceName] = useState("");
   const [grep, setGrep] = useState("");
   const [nmapProfile, setNmapProfile] = useState("FAST");
+  const [nmapTrafficPolicy, setNmapTrafficPolicy] = useState("IDS_FRIENDLY");
   const [showNmapReason, setShowNmapReason] = useState(false);
   const [udpPorts, setUdpPorts] = useState(DEFAULT_UDP_PORTS);
   const [udpProfile, setUdpProfile] = useState("FAST");
@@ -1112,6 +1130,65 @@ function LabCliTool({ devices }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [nmapJob, setNmapJob] = useState(null);
+  const [nmapHistory, setNmapHistory] = useState([]);
+
+  useEffect(() => {
+    if (!deviceId) {
+      setNmapHistory([]);
+      return undefined;
+    }
+    let disposed = false;
+    listNmapScanJobs(Number(deviceId), 5)
+      .then((jobs) => {
+        if (disposed) return;
+        setNmapHistory(jobs);
+        const active = jobs.find((job) => ACTIVE_NMAP_JOB_STATUSES.has(job.status));
+        if (active) setNmapJob(active);
+      })
+      .catch(() => {
+        if (!disposed) setNmapHistory([]);
+      });
+    return () => { disposed = true; };
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (!nmapJob || !ACTIVE_NMAP_JOB_STATUSES.has(nmapJob.status)) return undefined;
+    let disposed = false;
+    let polling = false;
+    const refresh = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const updated = await getNmapScanJob(nmapJob.id);
+        if (!disposed) {
+          setNmapJob(updated);
+          setNmapHistory((current) => [updated, ...current.filter((item) => item.id !== updated.id)].slice(0, 5));
+        }
+      } catch (pollError) {
+        if (!disposed) setError(pollError.message);
+      } finally {
+        polling = false;
+      }
+    };
+    const timer = window.setInterval(refresh, 1000);
+    refresh();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [nmapJob?.id, nmapJob?.status]);
+
+  useEffect(() => {
+    if (!busy) return undefined;
+    const started = performance.now();
+    setElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((performance.now() - started) / 1000));
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   async function run(event) {
     event.preventDefault();
@@ -1122,14 +1199,21 @@ function LabCliTool({ devices }) {
     try {
       let response;
       if (tool === "nmap") {
-        response = await runNmapScan({
+        const nmapPorts = scanMode === "TOP_1000"
+          ? [80]
+          : parsePortList(scanMode === "QUICK" ? QUICK_NMAP_TCP_PORTS : ports, "TCP", 1000);
+        response = await createNmapScanJob({
           device_id: Number(deviceId),
-          ports: scanMode === "CUSTOM" ? parsePortList(ports, "TCP", 1000) : [80],
-          scan_mode: scanMode,
+          ports: nmapPorts,
+          scan_mode: scanMode === "TOP_1000" ? "TOP_1000" : "CUSTOM",
           profile: nmapProfile,
+          traffic_policy: nmapTrafficPolicy,
           show_reason: showNmapReason,
           ...common,
         });
+        setNmapJob(response);
+        setNmapHistory((current) => [response, ...current.filter((item) => item.id !== response.id)].slice(0, 5));
+        return;
       } else if (tool === "nmap-udp") {
         response = await runNmapUdpScan({
           device_id: Number(deviceId),
@@ -1175,6 +1259,21 @@ function LabCliTool({ devices }) {
       setResult(response);
     } catch (requestError) {
       setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelNmapJob() {
+    if (!nmapJob || !ACTIVE_NMAP_JOB_STATUSES.has(nmapJob.status)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await cancelNmapScanJob(nmapJob.id);
+      setNmapJob(updated);
+      setNmapHistory((current) => [updated, ...current.filter((item) => item.id !== updated.id)].slice(0, 5));
+    } catch (cancelError) {
+      setError(cancelError.message);
     } finally {
       setBusy(false);
     }
@@ -1236,6 +1335,7 @@ function LabCliTool({ devices }) {
         {tool === "nmap" && <>
           <label>Scan scope
             <select value={scanMode} onChange={(event) => setScanMode(event.target.value)}>
+              <option value="QUICK">Quick · 24 common TCP ports</option>
               <option value="TOP_1000">Nmap top 1,000 TCP ports</option>
               <option value="CUSTOM">Custom TCP port list</option>
             </select>
@@ -1248,7 +1348,13 @@ function LabCliTool({ devices }) {
               <option value="FAST">Fast · ports only</option>
               <option value="FAST_VERSION">Fast version · -sV intensity 0</option>
               <option value="DETAILED">Detailed · -sV --version-light</option>
-              <option value="AGGRESSIVE">Aggressive · -sV --version-all</option>
+              <option value="AGGRESSIVE">Aggressive · full -sV probes · up to 3 min</option>
+            </select>
+          </label>
+          <label>Traffic policy
+            <select value={nmapTrafficPolicy} onChange={(event) => setNmapTrafficPolicy(event.target.value)}>
+              <option value="IDS_FRIENDLY">IDS-friendly · max 100 probes/s</option>
+              <option value="FAST">Fast · 500+ probes/s</option>
             </select>
           </label>
           <label className="checkbox-label">
@@ -1313,8 +1419,54 @@ function LabCliTool({ devices }) {
         <label>Grep output (optional text)
           <input value={grep} onChange={(event) => setGrep(event.target.value)} placeholder="open, tcp, 192.168..." />
         </label>
-        <button className="button button--primary" disabled={busy || (REGISTERED_CLI_TOOLS.has(tool) && !deviceId) || (["curl", "dig", "host", "dnsrecon"].includes(tool) && !target.trim())}>{busy ? "Running…" : tool === "nmap" && scanMode === "TOP_1000" ? "Scan 1,000 ports" : tool === "nmap-udp" ? "Scan UDP exposure" : "Run tool"}</button>
+        <button className="button button--primary" disabled={busy || (tool === "nmap" && nmapJob && ACTIVE_NMAP_JOB_STATUSES.has(nmapJob.status)) || (REGISTERED_CLI_TOOLS.has(tool) && !deviceId) || (["curl", "dig", "host", "dnsrecon"].includes(tool) && !target.trim())}>{busy ? `Running · ${elapsedSeconds}s` : tool === "nmap" && scanMode === "QUICK" ? "Run quick scan" : tool === "nmap" && scanMode === "TOP_1000" ? "Scan 1,000 ports" : tool === "nmap-udp" ? "Scan UDP exposure" : "Run tool"}</button>
       </form>
+      {tool === "nmap" && (
+        <p className="panel-help">
+          IDS-friendly mode is the default and paces discovery to at most 100 probes per second. Quick checks 24 common ports; top-1,000 scans discover open ports first, then fingerprint only those ports. External firewall and IDS allowlisting is still required to guarantee exclusion from automatic blocking.
+          Detailed service detection has a 90-second host budget; Aggressive uses -sV --version-all with 180 seconds. Results record the engine, commands and execution context. Docker and a Kali VM can use different source IPs; match the Nmap release, probe database, ports and flags when comparing them.
+          Cancellation takes effect after the current bounded phase finishes.
+        </p>
+      )}
+      {tool === "nmap" && nmapJob && (
+        <section className="nmap-job" aria-live="polite">
+          <div className="nmap-job__header">
+            <div>
+              <strong>Scan #{nmapJob.id} · {nmapJob.status}</strong>
+              <span>{nmapJob.phase} · {nmapJob.progress_percent}%</span>
+            </div>
+            {ACTIVE_NMAP_JOB_STATUSES.has(nmapJob.status) && (
+              <button type="button" className="button button--secondary" disabled={busy || nmapJob.cancel_requested} onClick={cancelNmapJob}>
+                {nmapJob.cancel_requested ? "Cancelling…" : "Cancel safely"}
+              </button>
+            )}
+          </div>
+          <progress value={nmapJob.progress_percent} max="100">{nmapJob.progress_percent}%</progress>
+          <div className="nmap-job__facts">
+            <span>{nmapJob.scanned_port_count ?? 0} network-tested</span>
+            <span>{nmapJob.cached_closed_count} cached closed</span>
+            <span>{nmapJob.open_ports.length} open</span>
+            <span>{nmapJob.traffic_policy}</span>
+          </div>
+          {nmapJob.ban_signal && <div className="form-error">Possible firewall/IDS block: {nmapJob.ban_reason}</div>}
+          {nmapJob.error && <div className="form-error">{nmapJob.error}</div>}
+          {!ACTIVE_NMAP_JOB_STATUSES.has(nmapJob.status) && <pre>{nmapJob.output || `Scan ${nmapJob.status.toLowerCase()}.`}</pre>}
+        </section>
+      )}
+      {tool === "nmap" && nmapHistory.length > 0 && (
+        <details className="nmap-history">
+          <summary>Recent Nmap audit records</summary>
+          <div className="table-wrap"><table><thead><tr><th>Time</th><th>Administrator / source</th><th>Target</th><th>Policy</th><th>Status</th></tr></thead><tbody>
+            {nmapHistory.map((job) => <tr key={job.id}>
+              <td>{formatDate(job.created_at)}</td>
+              <td><strong>{job.requested_by}</strong><br /><span>{job.client_ip || "local"}</span></td>
+              <td>{job.target_name}<br /><span>{job.target_ip}</span></td>
+              <td>{job.profile}<br /><span>{job.traffic_policy}</span></td>
+              <td>{job.status}</td>
+            </tr>)}
+          </tbody></table></div>
+        </details>
+      )}
       {tool === "nmap-udp" && (
         <p className="panel-help">UDP results marked open are responsive. Open|filtered is inconclusive because UDP services often stay silent and firewalls may drop the probe.</p>
       )}
@@ -1393,6 +1545,123 @@ function TestConnectionPortTool({ devices }) {
   );
 }
 
+function AttackSurfaceStepOutput({ output }) {
+  let result;
+  try {
+    result = JSON.parse(output);
+  } catch {
+    return <pre>{output}</pre>;
+  }
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return <pre>{output}</pre>;
+  }
+
+  const findings = Array.isArray(result.findings)
+    ? result.findings.filter((finding) => finding.category !== "SCAN_PROVENANCE")
+    : [];
+  const evidence = result.cve_evidence && typeof result.cve_evidence === "object"
+    ? result.cve_evidence
+    : null;
+  const mdns = result.mdns_enrichment && typeof result.mdns_enrichment === "object"
+    ? result.mdns_enrichment
+    : null;
+  const legacy = (result.output_schema_version ?? 1) < 2 || !evidence;
+  const cveMatches = result.cve_matches ?? result.cve_candidates ?? 0;
+
+  return (
+    <div className="playbook-evidence">
+      <div className="nmap-job__facts playbook-evidence__facts">
+        <span>Scan #{result.scan_id ?? "—"}</span>
+        <span>{result.profile || "Unknown profile"}</span>
+        <span>{result.finding_count ?? findings.length} findings</span>
+        <span>{cveMatches} CVE matches</span>
+        <span>
+          CVE evidence {evidence
+            ? `${evidence.cve_ready_services ?? 0}/${evidence.open_services ?? 0} · ${evidence.coverage_percent ?? 0}%`
+            : "not recorded"}
+        </span>
+      </div>
+      {legacy && (
+        <div className="playbook-evidence__notice">
+          Legacy saved result: fingerprint coverage was not recorded. Unknown values are hidden; rerun the assessment for the current evidence format.
+        </div>
+      )}
+      {mdns && (
+        <div className="playbook-evidence__identity">
+          <strong>mDNS identity · {mdns.status || "UNKNOWN"}</strong>
+          <span>{mdns.records?.length || 0} matching record(s){mdns.target ? ` · ${mdns.target}` : ""}</span>
+          {mdns.raw_output && <small>{mdns.raw_output}</small>}
+        </div>
+      )}
+      {result.scan_provenance && (
+        <details className="playbook-evidence__raw">
+          <summary>Scanner version and execution context</summary>
+          <pre>{JSON.stringify(result.scan_provenance, null, 2)}</pre>
+        </details>
+      )}
+      {Array.isArray(result.tool_runs) && result.tool_runs.length > 0 && (
+        <section className="playbook-evidence__findings" aria-label="Automatic service checks">
+          <strong>Automatic service checks</strong>
+          <p>Open HTTP(S) services → WhatWeb. TLS services → OpenSSL certificate/session and sslscan protocols/ciphers. SMB → the existing NSE protocol/signing pass. Explicit software versions feed CVE matching; certificate names and cipher suites do not.</p>
+          {result.tool_runs.map((run, index) => (
+            <article key={`${run.tool}-${run.port}-${index}`}>
+              <strong>{run.tool} · TCP {run.port} · {String(run.status || "UNKNOWN").replaceAll("_", " ")}</strong>
+              <small>{Math.round(run.duration_ms || 0)} ms{run.details?.target ? ` · ${run.details.target}` : ""}</small>
+              {run.details?.error && <p className="diagnostic-error">{run.details.error}</p>}
+              {run.details?.note && <p>{run.details.note}</p>}
+              <details className="playbook-evidence__raw">
+                <summary>Collected evidence and command</summary>
+                <pre>{JSON.stringify(run.details || {}, null, 2)}</pre>
+              </details>
+            </article>
+          ))}
+          <small>Cipher/technology previews are capped at 20 entries; full tool reports are retained on the saved scan.</small>
+        </section>
+      )}
+      {(result.omitted_finding_count > 0 || result.omitted_tool_run_count > 0) && (
+        <p className="playbook-evidence__notice">This preview omits {result.omitted_finding_count || 0} findings and {result.omitted_tool_run_count || 0} tool reports. Full evidence remains on the saved vulnerability scan.</p>
+      )}
+      <div className="playbook-evidence__findings">
+        {findings.length === 0 ? (
+          <div className="empty-state empty-state--compact">No findings were stored for this step.</div>
+        ) : findings.map((finding, index) => {
+          const metadata = [
+            finding.cve_id,
+            finding.cvss_score != null ? `CVSS ${finding.cvss_score}` : null,
+            finding.match_confidence ? `${finding.match_confidence} confidence` : null,
+            finding.service_product
+              ? `${finding.service_product}${finding.service_version ? ` ${finding.service_version}` : ""}`
+              : null,
+            finding.validation_tool,
+            finding.validation_check_id,
+            finding.known_exploited ? "CISA KEV" : null,
+            finding.epss_score != null ? `EPSS ${(finding.epss_score * 100).toFixed(1)}%` : null,
+          ].filter(Boolean);
+          return (
+            <article key={`${finding.category || "finding"}-${finding.port ?? "none"}-${index}`}>
+              <div>
+                <span className={`diagnostic-status diagnostic-status--${String(finding.severity || "info").toLowerCase()}`}>
+                  {finding.severity || "INFO"}
+                </span>
+                <small>{String(finding.category || "FINDING").replaceAll("_", " ")}</small>
+              </div>
+              <strong>{finding.title || "Untitled finding"}{finding.port != null ? ` · TCP ${finding.port}` : ""}</strong>
+              {finding.description && <p>{finding.description}</p>}
+              {metadata.length > 0 && <div className="playbook-evidence__metadata">{metadata.map((item, metadataIndex) => <span key={`${item}-${metadataIndex}`}>{item}</span>)}</div>}
+              {finding.service_cpe && <code>{finding.service_cpe}</code>}
+              {finding.recommendation && <small>{finding.recommendation}</small>}
+            </article>
+          );
+        })}
+      </div>
+      <details className="playbook-evidence__raw">
+        <summary>View preserved JSON</summary>
+        <pre>{output}</pre>
+      </details>
+    </div>
+  );
+}
+
 function PlaybookStep({ step }) {
   const hasOutput = Boolean(step.output?.trim());
   let timing = "Waiting to run";
@@ -1420,7 +1689,9 @@ function PlaybookStep({ step }) {
         <details className="diagnostic-result">
           <summary>View step output</summary>
           <div className="lab-cli-result playbook-step__output">
-            <pre>{step.output}</pre>
+            {step.step_key === "attack_surface"
+              ? <AttackSurfaceStepOutput output={step.output} />
+              : <pre>{step.output}</pre>}
           </div>
         </details>
       )}
@@ -1686,9 +1957,9 @@ function PlaybookTool({ devices }) {
   return (
     <section className="workbench-tool playbook-tool">
       <header>
-        <p className="eyebrow">Automated assessment</p>
-        <h3>Host assessment playbooks</h3>
-        <span>Run a bounded sequence of PowerShell and Linux network checks against one registered target.</span>
+        <p className="eyebrow">Recommended workflow</p>
+        <h3>Automated host assessment</h3>
+        <span>Choose a target and depth. Aegis runs the ordered checks, stores their evidence, and keeps progress available if you leave this page.</span>
       </header>
       <form className="lab-cli-form playbook-form" onSubmit={createRun}>
         <label>Registered target
@@ -1879,7 +2150,9 @@ function PlaybookTool({ devices }) {
                   <article><span>Completed steps</span><strong>{summary.completed_steps ?? 0}</strong></article>
                   <article><span>Failed steps</span><strong>{summary.failed_steps ?? 0}</strong></article>
                   <article><span>Findings</span><strong>{summary.findings ?? 0}</strong></article>
-                  <article><span>CVE candidates</span><strong>{summary.cve_candidates ?? 0}</strong></article>
+                  <article><span>CVE matches</span><strong>{summary.cve_candidates ?? 0}</strong></article>
+                  <article><span>CVE evidence</span><strong>{summary.cve_ready_services ?? 0}/{summary.open_services ?? 0} · {summary.cve_coverage_percent ?? 0}%</strong></article>
+                  <article><span>mDNS identity</span><strong>{summary.mdns_status || "Not checked"}</strong></article>
                 </div>
               )}
               {selectedRun.error && <div className="diagnostic-error">{selectedRun.error}</div>}
@@ -1894,14 +2167,202 @@ function PlaybookTool({ devices }) {
   );
 }
 
+function AssessmentTool({ devices }) {
+  const [mode, setMode] = useState("automated");
+  return (
+    <section className="assessment-workspace">
+      <header className="assessment-workspace__header">
+        <p className="eyebrow">Unified assessment</p>
+        <h2>Choose how you want to investigate</h2>
+        <p>Use the automated workflow for a complete, repeatable assessment. Use manual checks when you only need one specific test.</p>
+        <div className="assessment-mode-switch" role="tablist" aria-label="Assessment mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "automated"}
+            className={mode === "automated" ? "active" : ""}
+            onClick={() => setMode("automated")}
+          >
+            <strong>Automated workflow</strong>
+            <span>Recommended · complete sequence with saved evidence</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "manual"}
+            className={mode === "manual" ? "active" : ""}
+            onClick={() => setMode("manual")}
+          >
+            <strong>Manual checks</strong>
+            <span>Run one focused command or repeat a single stage</span>
+          </button>
+        </div>
+      </header>
+      {mode === "automated" && <PlaybookTool devices={devices} />}
+      {mode === "manual" && <section className="assessment-manual-tools" aria-labelledby="manual-assessment-tools-title">
+        <header>
+          <p className="eyebrow">On-demand checks</p>
+          <h3 id="manual-assessment-tools-title">Manual assessment tools</h3>
+          <span>Select the smallest tool that answers your question. Each tool remains bounded to registered targets and fixed command options.</span>
+        </header>
+        <details open>
+          <summary>
+            <span>Network command tools</span>
+            <small>Nmap TCP/UDP, Avahi, ARP, web, TLS, SMB and DNS</small>
+          </summary>
+          <LabCliTool devices={devices} />
+        </details>
+        <details>
+          <summary>
+            <span>TCP port test</span>
+            <small>Quick PowerShell reachability check for selected ports</small>
+          </summary>
+          <TestConnectionPortTool devices={devices} />
+        </details>
+        <details>
+          <summary>
+            <span>Traceroute</span>
+            <small>Inspect the bounded network path to a registered device</small>
+          </summary>
+          <TracerouteTool devices={devices} />
+        </details>
+      </section>}
+    </section>
+  );
+}
+
+function CveMirrorTool() {
+  const [status, setStatus] = useState(null);
+  const [mode, setMode] = useState("MODIFIED");
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const datasetState = !status
+    ? "Loading"
+    : status.baseline_complete
+      ? "Ready for matching"
+      : status.record_count > 0
+        ? "Partial"
+        : "Empty";
+  const refreshState = !status
+    ? "Loading"
+    : ({
+        IDLE: "Not started",
+        SYNCING: "Updating now",
+        READY: "Completed",
+        CANCELLED: "Cancelled",
+        FAILED: "Failed",
+      }[status.status] || status.status);
+  const syncHint = {
+    MODIFIED: "Recommended after the first Full import. Downloads recently changed NVD records.",
+    RECENT: "Downloads newly published and recently updated records only.",
+    YEAR: "Imports or repairs one publication year without rebuilding the whole mirror.",
+    FULL: "Builds the authoritative 2002-current baseline. Use this for first setup or recovery.",
+  }[mode];
+
+  useEffect(() => {
+    let disposed = false;
+    let timer;
+    async function refresh() {
+      try {
+        const next = await getCveMirrorStatus();
+        if (disposed) return;
+        setStatus(next);
+        if (next.status === "SYNCING") timer = window.setTimeout(refresh, 1500);
+      } catch (requestError) {
+        if (!disposed) setError(requestError.message);
+      }
+    }
+    refresh();
+    return () => {
+      disposed = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [status?.status === "SYNCING"]);
+
+  async function synchronize(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      setStatus(await startCveMirrorSync({
+        mode,
+        ...(mode === "YEAR" ? { year: Number(year) } : {}),
+      }));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelSync() {
+    setBusy(true);
+    setError("");
+    try {
+      setStatus(await cancelCveMirrorSync());
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="workbench-tool cve-mirror-tool">
+      <header>
+        <p className="eyebrow">Local vulnerability intelligence</p>
+        <h3>NVD CVE mirror</h3>
+        <span>Keeps a verified local copy of NVD applicability data so Aegis can match detected products and versions quickly, even when the public NVD API is unavailable.</span>
+      </header>
+      <div className="cve-mirror-explainer" aria-label="How CVE correlation works">
+        <article><span>1</span><div><strong>Identify</strong><small>Nmap supplies product, version and preferably an exact CPE.</small></div></article>
+        <article><span>2</span><div><strong>Match locally</strong><small>The mirror checks vendor, product and NVD version boundaries.</small></div></article>
+        <article><span>3</span><div><strong>Prioritize</strong><small>CVSS, CISA KEV and FIRST EPSS help order candidates for review.</small></div></article>
+      </div>
+      <p className="cve-mirror-caution"><strong>Result meaning:</strong> a match is a review candidate, not proof that the device is exploitable. Confirm fingerprints, vendor backports and local mitigations.</p>
+      <div className="audit-summary cve-mirror-summary">
+        <article><span>CVE records</span><strong>{status?.record_count?.toLocaleString() || 0}</strong></article>
+        <article><span>CPE matches</span><strong>{status?.cpe_match_count?.toLocaleString() || 0}</strong></article>
+        <article><span>Local dataset</span><strong>{datasetState}</strong></article>
+        <article><span>Latest refresh</span><strong>{refreshState}</strong></article>
+      </div>
+      <form className="lab-cli-form cve-mirror-form" onSubmit={synchronize}>
+        <label>Synchronization scope
+          <select value={mode} onChange={(event) => setMode(event.target.value)} disabled={status?.status === "SYNCING"}>
+            <option value="MODIFIED">Modified · recent changes</option>
+            <option value="RECENT">Recent · newly published</option>
+            <option value="YEAR">One publication year</option>
+            <option value="FULL">Full baseline · all years</option>
+          </select>
+        </label>
+        {mode === "YEAR" && <label>Publication year
+          <input type="number" min="2002" max={new Date().getFullYear()} value={year} onChange={(event) => setYear(event.target.value)} required />
+        </label>}
+        <button className="button button--primary" disabled={busy || status?.status === "SYNCING"}>{busy ? "Starting…" : "Update local mirror"}</button>
+        {status?.status === "SYNCING" && <button type="button" className="button button--secondary" disabled={busy || status.cancel_requested} onClick={cancelSync}>{status.cancel_requested ? "Cancelling…" : "Cancel safely"}</button>}
+        <p className="cve-mirror-form__hint" aria-live="polite">{syncHint}</p>
+      </form>
+      {status?.status === "SYNCING" && <div className="nmap-job cve-mirror-progress">
+        <div className="nmap-job__header"><div><strong>{status.current_feed || "Preparing feed"}</strong><span>{status.feeds_completed} / {status.feeds_total} feeds · {status.progress_percent}%</span></div></div>
+        <progress value={status.progress_percent} max="100">{status.progress_percent}%</progress>
+      </div>}
+      {status?.source_last_modified && <p className="panel-help">NVD source timestamp: {status.source_last_modified} · Latest refresh activity: {formatDate(status.completed_at)}</p>}
+      {status?.record_count > 0 && ["FAILED", "CANCELLED"].includes(status.status) && <p className="panel-help">The last refresh did not finish, but the existing verified dataset remains active.</p>}
+      {status?.error && <div className="form-error">{status.error}</div>}
+      {error && <div className="form-error">{error}</div>}
+      <p className="panel-help">A full baseline downloads each annual feed from 2002 onward and may require substantial time and disk I/O. Interrupted imports retain verified completed batches and online lookup remains available.</p>
+    </section>
+  );
+}
+
 function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
+  const goals = [
+    ["playbooks", "Assess a registered device", "Recommended", "Run the repeatable four-step workflow and save evidence for comparison."],
+    ["cve-mirror", "Refresh vulnerability data", "Offline-ready", "Update the local NVD dataset used for exact CPE and version-range matching."],
+    ["configuration", "Prioritize existing evidence", `${attackPaths?.candidate_paths || 0} candidate paths`, "Review stored findings and likely exposure paths without sending more traffic."],
+  ];
   const cards = [
-    [
-      "playbooks",
-      "Assessment playbooks",
-      "AUTOMATED",
-      "Run a multi-step host assessment",
-    ],
     [
       "network",
       "Registered assets",
@@ -1912,13 +2373,7 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
       "sniffer",
       "Packet captures",
       captures.length,
-      "Inspect bounded traffic metadata",
-    ],
-    [
-      "configuration",
-      "Candidate paths",
-      attackPaths?.candidate_paths || 0,
-      "Prioritize stored exposure evidence",
+      "Review controlled metadata captures",
     ],
     [
       "wireless",
@@ -1933,10 +2388,7 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
       "LOCAL",
       "Estimate password-example strength",
     ],
-    ["traceroute", "Traceroute", "12 HOPS", "Trace registered devices only"],
     ["query", "DNS query", "SAFE", "Validated forward and reverse lookup"],
-    ["lab-cli", "Network CLI", "ADMIN", "TCP/UDP Nmap, arp-scan, Avahi, neighbors, curl and dig"],
-    ["test-connection", "TCP port test", "POWERSHELL", "Test selected ports on a registered host"],
     [
       "policy",
       "Firewall & routing",
@@ -1948,11 +2400,44 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
     <section className="workbench-overview">
       <div className="workbench-hero">
         <p className="eyebrow">Defensive investigation console</p>
-        <h2>Understand the network without collecting secrets.</h2>
+        <h2>Start with the question you need to answer.</h2>
         <p>
-          Every active tool is bounded, authenticated, and auditable. Local
-          utilities keep their input in your browser.
+          Assess a host for the full repeatable workflow. Open a focused tool
+          only when you already know the individual check you need.
         </p>
+      </div>
+      <section className="workbench-explainer" aria-labelledby="workbench-flow-title">
+        <div>
+          <p className="eyebrow">Mental model</p>
+          <h3 id="workbench-flow-title">How Aegis turns a host into an action</h3>
+        </div>
+        <ol>
+          <li><span>1</span><strong>Register</strong><small>Add or discover an authorized device.</small></li>
+          <li><span>2</span><strong>Observe</strong><small>Monitor reachability, services and telemetry.</small></li>
+          <li><span>3</span><strong>Assess</strong><small>Collect bounded network and version evidence.</small></li>
+          <li><span>4</span><strong>Prioritize</strong><small>Correlate findings with CVE, KEV and EPSS data.</small></li>
+          <li><span>5</span><strong>Verify</strong><small>Remediate, then reassess to confirm the change.</small></li>
+        </ol>
+      </section>
+      <section className="workbench-starting-points" aria-labelledby="workbench-goals-title">
+        <div className="workbench-section-heading">
+          <p className="eyebrow">Choose by goal</p>
+          <h3 id="workbench-goals-title">What do you want to do?</h3>
+        </div>
+        <div>
+          {goals.map(([tab, title, value, description]) => (
+            <button key={tab} onClick={() => onChangeTab(tab)}>
+              <span>{value}</span>
+              <strong>{title}</strong>
+              <small>{description}</small>
+              <b>Start →</b>
+            </button>
+          ))}
+        </div>
+      </section>
+      <div className="workbench-section-heading workbench-section-heading--tools">
+        <p className="eyebrow">Focused tools</p>
+        <h3>Browse individual evidence sources</h3>
       </div>
       <div className="workbench-cards">
         {cards.map(([tab, title, value, description]) => (
@@ -1977,7 +2462,8 @@ export default function SecurityWorkbenchModal({
   initialTab = "overview",
   onTabChange,
 }) {
-  const [tab, setTab] = useState(initialTab);
+  const normalizedInitialTab = normalizeWorkbenchTab(initialTab);
+  const [tab, setTab] = useState(normalizedInitialTab);
   const [captures, setCaptures] = useState([]);
   const [attackPaths, setAttackPaths] = useState(null);
   const [adapters, setAdapters] = useState([]);
@@ -1992,6 +2478,9 @@ export default function SecurityWorkbenchModal({
       mounted.current = false;
     };
   }, []);
+  useEffect(() => {
+    if (initialTab !== normalizedInitialTab) onTabChange?.(normalizedInitialTab);
+  }, [initialTab, normalizedInitialTab, onTabChange]);
   useEffect(() => {
     const required = tab === "overview"
       ? ["captures", "attackPaths", "adapters"]
@@ -2041,8 +2530,9 @@ export default function SecurityWorkbenchModal({
     [tab],
   );
   function changeTab(nextTab) {
-    setTab(nextTab);
-    onTabChange?.(nextTab);
+    const normalizedTab = normalizeWorkbenchTab(nextTab);
+    setTab(normalizedTab);
+    onTabChange?.(normalizedTab);
   }
   function selectDevice(deviceId) {
     onClose();
@@ -2074,15 +2564,23 @@ export default function SecurityWorkbenchModal({
             </div>
           </div>
           <nav aria-label="Security tools">
-            {TOOLS.map(([value, label, index]) => (
-              <button
-                key={value}
-                className={tab === value ? "active" : ""}
-                onClick={() => changeTab(value)}
-              >
-                <span>{index}</span>
-                {label}
-              </button>
+            {TOOL_GROUPS.map(([group, values]) => (
+              <section className="workbench-nav-group" key={group} aria-label={group}>
+                <strong>{group}</strong>
+                {values.map((value) => {
+                  const [, label, tag] = TOOLS.find(([tool]) => tool === value);
+                  return (
+                    <button
+                      key={value}
+                      className={tab === value ? "active" : ""}
+                      onClick={() => changeTab(value)}
+                    >
+                      <span>{tag}</span>
+                      {label}
+                    </button>
+                  );
+                })}
+              </section>
             ))}
           </nav>
           <div className="workbench-boundary">
@@ -2124,7 +2622,8 @@ export default function SecurityWorkbenchModal({
               onChangeTab={changeTab}
             />
           )}
-          {tab === "playbooks" && <PlaybookTool devices={devices} />}
+          {tab === "playbooks" && <AssessmentTool devices={devices} />}
+          {tab === "cve-mirror" && <CveMirrorTool />}
           {tab === "decoder" && <DecoderTool />}
           {tab === "network" && (
             <NetworkTool devices={devices} onSelectDevice={selectDevice} />
@@ -2133,7 +2632,6 @@ export default function SecurityWorkbenchModal({
             <SnifferTool captures={captures} onOpenCapture={openCapture} />
           )}
           {tab === "credentials" && <CredentialTool />}
-          {tab === "traceroute" && <TracerouteTool devices={devices} />}
           {tab === "configuration" && (
             <ConfigurationTool
               devices={devices}
@@ -2144,8 +2642,6 @@ export default function SecurityWorkbenchModal({
           {tab === "wireless" && <WirelessTool adapters={adapters} />}
           {tab === "query" && <QueryTool />}
           {tab === "policy" && <HostNetworkPolicyTool />}
-          {tab === "lab-cli" && <LabCliTool devices={devices} />}
-          {tab === "test-connection" && <TestConnectionPortTool devices={devices} />}
         </main>
       </section>
     </div>

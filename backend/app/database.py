@@ -45,11 +45,13 @@ def ensure_performance_indexes(engine) -> None:
         return
     statements = (
         "CREATE INDEX IF NOT EXISTS ix_monitor_results_device_timestamp_id ON monitor_results (device_id, timestamp, id)",
+        "CREATE INDEX IF NOT EXISTS ix_monitor_results_device_status ON monitor_results (device_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_service_results_check_timestamp_id ON service_results (service_check_id, timestamp, id)",
         "CREATE INDEX IF NOT EXISTS ix_host_metrics_device_timestamp_id ON host_metrics (device_id, timestamp, id)",
         "CREATE INDEX IF NOT EXISTS ix_alert_events_device_type_resolved ON alert_events (device_id, alert_type, resolved_at)",
         "CREATE INDEX IF NOT EXISTS ix_anomaly_events_device_metric_detected ON anomaly_events (device_id, metric, detected_at)",
         "CREATE INDEX IF NOT EXISTS ix_vulnerability_findings_cve_id ON vulnerability_findings (cve_id)",
+        "CREATE INDEX IF NOT EXISTS ix_local_cve_cpe_product_version ON local_cve_cpe_matches (part, vendor, product, criteria_version)",
     )
     with engine.begin() as connection:
         tables = set(inspect(connection).get_table_names())

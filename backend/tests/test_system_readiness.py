@@ -20,7 +20,9 @@ def test_system_readiness_reports_core_components(client):
     components = component_map(payload)
     assert payload["status"] == "HEALTHY"
     assert components["Database"]["status"] == "HEALTHY"
-    assert "0 foreign-key violations" in components["Database"]["message"]
+    assert "Connection ready" in components["Database"]["message"]
+    assert "foreign-key enforcement enabled" in components["Database"]["message"]
+    assert "Deep integrity is checked" in components["Database"]["message"]
     assert components["Monitoring scheduler"]["status"] == "DISABLED"
     assert components["Backup scheduler"]["status"] == "DISABLED"
     assert components["Storage"]["status"] == "HEALTHY"

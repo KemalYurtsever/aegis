@@ -77,6 +77,11 @@ def test_history_statistics_and_status_events(client, monkeypatch):
         "OFFLINE_TO_ONLINE",
         "ONLINE_TO_OFFLINE",
     ]
+    latest_event = client.get(f"/api/devices/{device['id']}/status-events?limit=1")
+    assert latest_event.status_code == 200
+    assert [event["event_type"] for event in latest_event.json()] == [
+        "OFFLINE_TO_ONLINE",
+    ]
 
 
 def test_all_offline_has_zero_availability_and_no_average(client, monkeypatch):

@@ -86,24 +86,32 @@ def calculate_device_statistics(device_id: int, db: Session) -> StatisticsResult
 
 
 def derive_status_events(device_id: int, db: Session, limit: int) -> list[StatusEventResult]:
-    results = list(
-        db.scalars(
-            select(MonitorResult)
-            .where(MonitorResult.device_id == device_id)
-            .order_by(MonitorResult.timestamp.asc(), MonitorResult.id.asc())
+    transitions = select(
+        MonitorResult.id.label("id"),
+        MonitorResult.device_id.label("device_id"),
+        MonitorResult.timestamp.label("timestamp"),
+        MonitorResult.status.label("current_status"),
+        func.lag(MonitorResult.status).over(
+            partition_by=MonitorResult.device_id,
+            order_by=(MonitorResult.timestamp.asc(), MonitorResult.id.asc()),
+        ).label("previous_status"),
+    ).where(MonitorResult.device_id == device_id).subquery()
+    rows = db.execute(
+        select(transitions)
+        .where(
+            transitions.c.previous_status.is_not(None),
+            transitions.c.previous_status != transitions.c.current_status,
         )
+        .order_by(transitions.c.timestamp.desc(), transitions.c.id.desc())
+        .limit(limit)
     )
-    events: list[StatusEventResult] = []
-    for previous, current in zip(results, results[1:]):
-        if previous.status == current.status:
-            continue
-        events.append(
-            StatusEventResult(
-                device_id=device_id,
-                timestamp=current.timestamp,
-                previous_status=previous.status,
-                current_status=current.status,
-                event_type=f"{previous.status}_TO_{current.status}",
-            )
+    return [
+        StatusEventResult(
+            device_id=row.device_id,
+            timestamp=row.timestamp,
+            previous_status=row.previous_status,
+            current_status=row.current_status,
+            event_type=f"{row.previous_status}_TO_{row.current_status}",
         )
-    return list(reversed(events[-limit:]))
+        for row in rows
+    ]

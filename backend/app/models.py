@@ -135,6 +135,7 @@ class MonitorResult(Base):
     __table_args__ = (
         CheckConstraint("status IN ('ONLINE', 'OFFLINE')", name="ck_monitor_result_status"),
         Index("ix_monitor_results_device_timestamp_id", "device_id", "timestamp", "id"),
+        Index("ix_monitor_results_device_status", "device_id", "status"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -267,6 +268,22 @@ class VulnerabilityScan(Base):
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="RUNNING")
     profile: Mapped[str] = mapped_column(String(12), nullable=False, default="FAST")
     findings: Mapped[list["VulnerabilityFinding"]] = relationship(cascade="all, delete-orphan", passive_deletes=True)
+    tool_runs: Mapped[list["VulnerabilityToolRun"]] = relationship(cascade="all, delete-orphan", passive_deletes=True)
+
+
+class VulnerabilityToolRun(Base):
+    __tablename__ = "vulnerability_tool_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scan_id: Mapped[int] = mapped_column(ForeignKey("vulnerability_scans.id", ondelete="CASCADE"), index=True, nullable=False)
+    tool: Mapped[str] = mapped_column(String(30), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    details_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    @property
+    def details(self) -> dict:
+        return json.loads(self.details_json)
 
 
 class VulnerabilityFinding(Base):
@@ -309,6 +326,71 @@ class ThreatIntelligenceCache(Base):
     cache_key: Mapped[str] = mapped_column(String(100), primary_key=True)
     response_json: Mapped[str] = mapped_column(Text, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
+class LocalCveRecord(Base):
+    __tablename__ = "local_cve_records"
+    __table_args__ = (
+        Index("ix_local_cve_records_modified", "last_modified"),
+        Index("ix_local_cve_records_severity", "severity"),
+    )
+    cve_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    source_identifier: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vuln_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    cvss_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    severity: Mapped[str] = mapped_column(String(10), nullable=False, default="INFO")
+    published: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_modified: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    configurations_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
+class LocalCveCpeMatch(Base):
+    __tablename__ = "local_cve_cpe_matches"
+    __table_args__ = (
+        Index("ix_local_cve_cpe_product", "part", "vendor", "product"),
+        Index(
+            "ix_local_cve_cpe_product_version",
+            "part",
+            "vendor",
+            "product",
+            "criteria_version",
+        ),
+        Index("ix_local_cve_cpe_cve", "cve_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cve_id: Mapped[str] = mapped_column(ForeignKey("local_cve_records.cve_id", ondelete="CASCADE"), nullable=False)
+    criteria: Mapped[str] = mapped_column(String(1000), nullable=False)
+    match_criteria_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vulnerable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    part: Mapped[str] = mapped_column(String(1), nullable=False)
+    vendor: Mapped[str] = mapped_column(String(255), nullable=False)
+    product: Mapped[str] = mapped_column(String(255), nullable=False)
+    criteria_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    version_start_including: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    version_start_excluding: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    version_end_including: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    version_end_excluding: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class CveMirrorState(Base):
+    __tablename__ = "cve_mirror_state"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="IDLE")
+    mode: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    current_feed: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    feeds_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    feeds_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cpe_match_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    baseline_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source_last_modified: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
 
 class SecurityPlaybookRun(Base):
@@ -374,6 +456,79 @@ class SecurityPlaybookStep(Base):
     duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+
+
+class NmapScanJob(Base):
+    __tablename__ = "nmap_scan_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED')",
+            name="ck_nmap_scan_job_status",
+        ),
+        CheckConstraint("active_slot IS NULL OR active_slot = 1", name="ck_nmap_scan_job_active_slot"),
+        UniqueConstraint("device_id", "active_slot", name="uq_nmap_scan_job_active_device"),
+        Index("ix_nmap_scan_jobs_device_created", "device_id", "created_at", "id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    target_ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    client_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    scan_mode: Mapped[str] = mapped_column(String(12), nullable=False)
+    profile: Mapped[str] = mapped_column(String(12), nullable=False)
+    traffic_policy: Mapped[str] = mapped_column(String(16), nullable=False)
+    show_reason: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    grep: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ports_json: Mapped[str] = mapped_column(Text, nullable=False)
+    open_ports_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    status: Mapped[str] = mapped_column(String(10), index=True, nullable=False, default="QUEUED")
+    active_slot: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
+    phase: Mapped[str] = mapped_column(String(30), nullable=False, default="QUEUED")
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cache_hit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cached_closed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ban_signal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ban_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scanned_port_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def ports(self) -> list[int]:
+        try:
+            values = json.loads(self.ports_json)
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return values if isinstance(values, list) and all(isinstance(item, int) for item in values) else []
+
+    @property
+    def open_ports(self) -> list[int]:
+        try:
+            values = json.loads(self.open_ports_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return values if isinstance(values, list) and all(isinstance(item, int) for item in values) else []
+
+
+class NmapPortCache(Base):
+    __tablename__ = "nmap_port_cache"
+    __table_args__ = (
+        CheckConstraint("state IN ('OPEN', 'CLOSED')", name="ck_nmap_port_cache_state"),
+        UniqueConstraint("device_id", "target_ip", "port", name="uq_nmap_port_cache_target_port"),
+        Index("ix_nmap_port_cache_lookup", "device_id", "target_ip", "state", "observed_at"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(6), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
 
 
 class PacketCapture(Base):
