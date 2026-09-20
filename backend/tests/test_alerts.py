@@ -140,9 +140,9 @@ def test_maintenance_window_keeps_results_but_suppresses_new_alerts(client, monk
     assert all(result["status"] == "OFFLINE" for result in history)
 
 
-def test_agent_resource_threshold_alerts_trigger_and_resolve(client):
-    device = client.post("/api/devices", json={**DEVICE, "ip_address": "198.18.56.41"}).json()
-    client.put(f"/api/devices/{device['id']}/alert-rule", json={
+def test_agent_resource_threshold_alerts_trigger_and_resolve(client, admin_headers):
+    device = client.post("/api/devices", headers=admin_headers, json={**DEVICE, "ip_address": "198.18.56.41"}).json()
+    client.put(f"/api/devices/{device['id']}/alert-rule", headers=admin_headers, json={
         "enabled": True,
         "consecutive_failures": 2,
         "latency_threshold_ms": 100,
@@ -150,7 +150,7 @@ def test_agent_resource_threshold_alerts_trigger_and_resolve(client):
         "memory_threshold_percent": 85,
         "disk_threshold_percent": 90,
     })
-    token = client.post(f"/api/devices/{device['id']}/agent/enroll").json()["token"]
+    token = client.post(f"/api/devices/{device['id']}/agent/enroll", headers=admin_headers).json()["token"]
     payload = {
         "hostname": "resource-host", "platform": "Windows", "agent_version": "0.1.0",
         "report_interval_seconds": 60,
@@ -159,10 +159,10 @@ def test_agent_resource_threshold_alerts_trigger_and_resolve(client):
         "disk_used_bytes": 400, "disk_total_bytes": 1000,
     }
     assert client.post("/api/agent/metrics", json=payload, headers={"X-Agent-Token": token}).status_code == 201
-    alerts = client.get("/api/alerts").json()
+    alerts = client.get("/api/alerts", headers=admin_headers).json()
     assert len(alerts) == 1
     assert alerts[0]["alert_type"] == "HIGH_CPU"
 
     payload["cpu_percent"] = 20
     assert client.post("/api/agent/metrics", json=payload, headers={"X-Agent-Token": token}).status_code == 201
-    assert client.get("/api/alerts").json() == []
+    assert client.get("/api/alerts", headers=admin_headers).json() == []

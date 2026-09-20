@@ -57,7 +57,12 @@ class PeriodicMonitor:
     async def _run_loop(self) -> None:
         while True:
             await asyncio.sleep(self.interval_seconds)
-            await asyncio.to_thread(self.run_cycle)
+            try:
+                await asyncio.to_thread(self.run_cycle)
+            except Exception:
+                # A failed cycle must not permanently terminate monitoring.
+                # CancelledError remains outside this handler.
+                logger.exception("Periodic monitoring cycle failed; retrying next interval")
 
     def run_cycle(self) -> int:
         with self._session_factory() as db:

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models import ServiceCheck, ServiceResult
 from app.config import get_settings
 from app.services.scan_policy import scan_target_allowed
+from app.services.http_probe import bounded_http_response
 
 
 @dataclass(frozen=True)
@@ -30,27 +31,26 @@ def probe_service(check: ServiceCheck, timeout_seconds: float = 3.0) -> ServiceP
                 elapsed = (time.monotonic() - started) * 1000
                 return ServiceProbeResult("UP", round(elapsed, 2))
 
-        connection_class = http.client.HTTPSConnection if check.check_type == "HTTPS" else http.client.HTTPConnection
-        kwargs = {"host": check.device.ip_address, "port": check.port, "timeout": timeout_seconds}
-        if check.check_type == "HTTPS":
-            kwargs["context"] = ssl.create_default_context()
-        connection = connection_class(**kwargs)
-        try:
-            connection.request("GET", check.path, headers={"User-Agent": "AEGIS/0.1"})
-            response = connection.getresponse()
+        secure = check.check_type == "HTTPS"
+        with bounded_http_response(
+            check.device.ip_address, check.port, secure=secure,
+            context=ssl.create_default_context() if secure else None,
+            path=check.path, headers={"User-Agent": "AEGIS/0.1"},
+            timeout_seconds=timeout_seconds,
+        ) as response:
             response.read(1024)
             elapsed = (time.monotonic() - started) * 1000
             # Any valid HTTP response proves that the service responded. Status
             # semantics remain visible to the operator for later rule support.
             return ServiceProbeResult("UP", round(elapsed, 2), response.status)
-        finally:
-            connection.close()
     except socket.timeout:
         return ServiceProbeResult("DOWN", None, diagnostic_reason="timeout")
     except ssl.SSLError:
         return ServiceProbeResult("DOWN", None, diagnostic_reason="tls_error")
     except (ConnectionRefusedError, ConnectionResetError):
         return ServiceProbeResult("DOWN", None, diagnostic_reason="connection_refused")
+    except http.client.HTTPException:
+        return ServiceProbeResult("DOWN", None, diagnostic_reason="protocol_error")
     except OSError:
         return ServiceProbeResult("DOWN", None, diagnostic_reason="network_error")
 

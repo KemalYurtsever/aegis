@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import AuditEvent, AutomationEvent, User, UserSession
+from app.models import AuditEvent, AuthBootstrapClaim, AutomationEvent, User, UserSession
 from app.schemas import AuditEventRead, AuthSessionCreated, AuthStatus, LoginRequest, SetupRequest, UserCreate, UserRead, UserUpdate
 from app.services.auth_service import create_session, hash_password, session_user, token_digest, verify_password
 
@@ -37,7 +37,21 @@ def setup_admin(payload: SetupRequest, db: Session = Depends(get_db)) -> AuthSes
     if (db.scalar(select(func.count(User.id))) or 0) != 0:
         raise HTTPException(status_code=409, detail="Initial setup has already been completed")
     user = User(username=payload.username.lower(), password_hash=hash_password(payload.password), role="ADMIN")
-    db.add(user); db.commit(); db.refresh(user)
+    try:
+        # The count is only an early rejection. The singleton primary key
+        # arbitrates concurrent requests/processes in the same transaction as
+        # user creation; a failed transaction releases the claim.
+        db.add(AuthBootstrapClaim(id=1))
+        db.flush()
+        db.add(user)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Initial setup has already been completed") from exc
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(user)
     token, session = create_session(user, db)
     return AuthSessionCreated(token=token, expires_at=session.expires_at, user=user)
 

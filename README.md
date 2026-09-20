@@ -27,6 +27,8 @@ Register a device → Observe health → Assess exposure → Prioritize evidence
 
 For a short explanation of concepts, screens, result meanings, and the first assessment workflow, read the [project guide](docs/PROJECT_GUIDE.md). Planned improvements and their acceptance criteria are tracked in the [prototype roadmap](docs/PROTOTYPE_ROADMAP.md).
 
+Measured API improvements, request budgets and regression checks are documented in [performance and security](docs/PERFORMANCE_SECURITY.md).
+
 ### First prototype walkthrough
 
 1. Run `.\start-hybrid.ps1` and sign in as the local administrator.
@@ -124,7 +126,7 @@ Anomaly results are operational indicators, not diagnoses. Aegis performs this a
 | Attack-surface assessment | Checks the ranked top 1,000 TCP ports, identifies exposed management, cleartext, database, and infrastructure services, runs time-bounded version detection, inspects HTTP security headers and TLS posture, runs signed Nuclei exposure, misconfiguration, and TLS templates, correlates supported fingerprints with NVD CVEs, and prioritizes candidates with CISA KEV and FIRST EPSS evidence. |
 | Assessment comparison | Compares the two latest assessments, calculates a capped 0–100 exposure score, and separates new, persistent, and resolved findings. Informational evidence does not increase the score. |
 | Passive attack paths | Correlates stored assessment results with groups, subnets, criticality, and remote-access services to prioritize possible paths between registered assets. It sends no additional traffic. |
-| Controlled packet capture | Captures packet metadata for 1–30 seconds and 1–1000 packets. It stores timestamps, addresses, protocol, ports, and length—never packet payloads or PCAP files. |
+| Wireshark packet analysis | Opens the real Wireshark GUI in an optional Docker sidecar sharing the toolbox's network namespace. Inspect scans, protocol fields and TCP streams, save PCAP/PCAPNG in a dedicated volume, or import host-captured files. Windows physical interfaces are not directly visible. Previous metadata capture records remain available as legacy history. |
 | Remote diagnostics and safe validation | Dispatches only fixed, administrator-approved job types to explicitly enabled agents. Safe simulations include signed callbacks, synthetic credential canaries, password-policy inspection, temporary markers, generated-file activity, benign detection variations, registered-device segmentation probes, and signed non-executable artifacts. Jobs are device-bound, parameter-bounded, expire after 15 minutes, clean up generated data, and cannot contain arbitrary commands. |
 | Wireless status | Reports the local Aegis host's wireless-adapter state without collecting Wi-Fi keys or handshakes. |
 
@@ -149,7 +151,7 @@ The administrator-only **Security workbench** consolidates defensive investigati
 | Secure password generator | Generates random 16-, 20-, 24-, or 32-character passwords with browser cryptographic randomness and supports masked display and copying. |
 | Password-strength guide | Evaluates a disposable example locally, displays a four-stage strength meter, and explains how length, character variety, repetition, sequences, and predictable words affect the result. Real passwords should never be entered. |
 | Registered inventory search | Searches known assets and their recorded details without scanning arbitrary targets. |
-| Capture review | Summarizes stored controlled packet-capture metadata and links to the capture workflow. |
+| Wireshark | Opens the Docker Wireshark GUI, explains capture versus display filters and generates registered-device filter examples. Existing metadata records remain readable under legacy capture history. |
 | Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
 | Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
 | DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
@@ -172,11 +174,9 @@ When comparing against Kali, match the Nmap version and `nmap-service-probes`, t
 
 *Persistent host-assessment playbooks with target and depth controls.*
 
-![Aegis packet observation summary containing metadata but no payload data](docs/screenshots/08-packet-observation.png)
+Packet analysis now uses the optional [Docker Wireshark GUI](docs/WIRESHARK.md). It can retain full packet payloads in a dedicated Docker volume; captures are not stored in the Aegis database, included in normal Aegis backups, or automatically correlated with CVEs. TLS application data is not automatically decrypted. The legacy metadata-capture API and history are preserved for compatibility.
 
-*Controlled packet observation stores metadata summaries without payloads or credentials.*
-
-Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, payload capture, exploit execution, brute force, or arbitrary remote command execution. NetExec and credentialed SMB enumeration are deliberately excluded. OpenVAS, Nessus, Zeek, and Suricata require separately operated scanners or sensors; Lynis and osquery require a future host-agent result model rather than misleadingly auditing the toolbox container.
+Aegis does not provide password or hash cracking, credential harvesting, ARP poisoning, man-in-the-middle routing, Wi-Fi key recovery, router-configuration theft, exploit execution, brute force, or arbitrary remote command execution. NetExec and credentialed SMB enumeration are deliberately excluded. OpenVAS, Nessus, Zeek, and Suricata require separately operated scanners or sensors; Lynis and osquery require a future host-agent result model rather than misleadingly auditing the toolbox container.
 
 ### Reports and observability
 
@@ -263,7 +263,7 @@ The same operation is available from the backend directory:
 - Node.js 20.19 or newer and npm
 - PowerShell on Windows, or an equivalent terminal for native development
 - Docker Desktop for Prometheus, Grafana, or the complete container stack
-- Npcap for Windows packet metadata capture
+- Wireshark and Npcap on Windows only when capturing physical Windows interfaces for PCAP import; Docker Wireshark does not require host Npcap.
 - Nmap is optional for TCP top-port discovery, which has a host-side socket fallback. Nmap is required for UDP exposure checks, Fast (`-sV --version-intensity 0`), Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) fingerprints, and high-confidence CPE-based CVE correlation.
 - `arp-scan`, `curl`, `dig` (`dnsutils`), `fping`, `host`, `iproute2`, Nmap, Nikto, OpenSSL, `smbclient`, `sslscan`, `traceroute`, and WhatWeb when running the corresponding workbench tools directly on Linux. The network-toolbox image installs these utilities together with DNSRecon, Netdiscover, SNMP CLI tools, tcpdump, and tshark.
 
@@ -305,6 +305,21 @@ Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics
 ```
 
 The launcher verifies the frontend, API, agent ingress, network toolbox, Grafana, and Prometheus before returning. If Docker Desktop is unavailable, it starts the core Aegis services without the toolbox or observability containers. Runtime logs are written to `logs/`.
+
+### Optional Docker Wireshark GUI
+
+With the toolbox running, start the actual Wireshark application without recreating the toolbox or interrupting scans:
+
+```powershell
+.\start-wireshark.ps1
+.\verify-wireshark.ps1
+```
+
+The first command creates an ignored local password once and starts Wireshark plus a loopback-only TLS passthrough proxy. The second checks namespace attachment, GUI health, local publishing, authentication, proxy configuration and non-root capture-interface access without starting a capture.
+
+Open **Wireshark** in Aegis, then **Open Wireshark**, or visit `https://127.0.0.1:8444/`. User: `aegis`; password: local `secrets/wireshark_password.txt`. The first connection may require you to approve the local self-signed certificate in your browser. Select `eth0` and apply a target capture filter before running an Aegis tool. Captures saved under `/config/captures` survive container recreation in the dedicated Wireshark volume.
+
+For the first combined startup, use `start-hybrid.ps1 -WithWireshark`. Subsequent hybrid launches reattach Wireshark automatically when its local password file exists. `stop-hybrid.ps1` stops it while preserving that volume. [Capture scope, PCAP handling and troubleshooting](docs/WIRESHARK.md).
 
 ### Prototype readiness
 
@@ -448,10 +463,11 @@ Backend settings can be supplied through the process environment or `backend/.en
 | `AEGIS_DISCOVERY_PING_TIMEOUT_SECONDS` | `0.4` | Per-address ICMP timeout during discovery. |
 | `AEGIS_DISCOVERY_MDNS_TIMEOUT_SECONDS` | `2` | Passive mDNS collection window during discovery. |
 | `NVD_API_KEY` | unset | Optional NVD API key for a higher request rate during product/version CVE correlation. The key is sent only to `services.nvd.nist.gov`. |
-| `AEGIS_FOUNDRY_LOCAL_URL` | unset | Optional loopback or private Foundry Local-compatible endpoint for health-summary wording. |
+| `AEGIS_FOUNDRY_LOCAL_URL` | unset | Optional loopback Foundry Local-compatible endpoint for health-summary wording. |
 | `AEGIS_FOUNDRY_LOCAL_MODEL` | unset | Model identifier used with the optional local summary endpoint. |
 | `VITE_GRAFANA_URL` | `http://127.0.0.1:3000` | Browser-visible Grafana base URL set at frontend build time. |
 | `VITE_GRAFANA_DASHBOARD_URL` | provisioned dashboard | Optional complete embedded-dashboard URL set at frontend build time. |
+| `VITE_WIRESHARK_URL` | `https://127.0.0.1:8444/` | Browser-visible HTTPS Wireshark link set at frontend build time. No credentials belong in this value. |
 
 Notification recipients, SMTP server details, ports, sender addresses, TLS choices, and channel enablement are non-secret settings managed in the administrator interface. Restart the backend after changing secret environment variables.
 
@@ -503,9 +519,11 @@ Kustomize manifests are provided in `deploy/kubernetes`. Build and publish the b
 Copy-Item deploy/kubernetes/secret.example.yaml deploy/kubernetes/secret.yaml
 ```
 
-Replace every placeholder, configure the intended ingress hostname and TLS, then deploy:
+Replace every placeholder and set the same intended hostname in both `rules.host` and `tls.hosts` in `deploy/kubernetes/ingress.yaml`. Create the namespace first, then provision a `kubernetes.io/tls` Secret named `aegis-tls` using your certificate and private key. Set `$certPath` and `$keyPath` to local file paths before running these commands. The manifest forces HTTPS redirects; do not expose the ingress until the certificate is ready:
 
 ```powershell
+kubectl apply -f deploy/kubernetes/namespace.yaml
+kubectl -n aegis create secret tls aegis-tls --cert="$certPath" --key="$keyPath"
 kubectl apply -k deploy/kubernetes
 kubectl -n aegis get pods,svc,pvc,ingress
 ```

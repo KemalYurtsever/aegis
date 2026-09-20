@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import WiresharkPanel from "./WiresharkPanel.jsx";
+import MacManagementPanel from "./MacManagementPanel.jsx";
 
 import {
   cancelCveMirrorSync,
@@ -45,10 +47,11 @@ const TOOLS = [
   ["playbooks", "Assessment", "RUN"],
   ["cve-mirror", "CVE mirror", "DATA"],
   ["network", "Registered assets", "HOST"],
-  ["sniffer", "Packet observation", "PKT"],
+  ["sniffer", "Wireshark", "PKT"],
   ["configuration", "Exposure review", "RISK"],
   ["wireless", "Wireless status", "WLAN"],
   ["policy", "Firewall & routing", "HOST"],
+  ["mac", "MAC yönetimi", "MAC"],
   ["query", "DNS query", "DNS"],
   ["decoder", "Decoder & numbers", "LOCAL"],
   ["credentials", "Credential hygiene", "LOCAL"],
@@ -56,7 +59,7 @@ const TOOLS = [
 const TOOL_GROUPS = [
   ["Start here", ["overview", "playbooks", "cve-mirror"]],
   ["Review evidence", ["network", "sniffer", "configuration", "wireless", "policy"]],
-  ["Local utilities", ["query", "decoder", "credentials"]],
+  ["Local utilities", ["mac", "query", "decoder", "credentials"]],
 ];
 const LEGACY_ASSESSMENT_TABS = new Set(["lab-cli", "traceroute", "test-connection"]);
 
@@ -86,7 +89,7 @@ const INVESTIGATION_COVERAGE = [
   ["Host discovery", "Built in", "Discovery, arp-scan, fping", "Netdiscover is packaged for approved toolbox use; Aegis discovery remains limited to the confirmed local /24."],
   ["Port and service mapping", "Built in", "Nmap, PowerShell TCP", "RustScan is intentionally not duplicated; Nmap top-1,000 and bounded custom scans use the same inventory controls."],
   ["mDNS / Bonjour", "Built in", "Avahi and native mDNS", "Equivalent to dns-sd for the services Aegis records."],
-  ["Packet analysis", "Built in", "Controlled metadata capture", "Scapy stores headers and flow metadata only; tcpdump and tshark payload output is not exposed."],
+  ["Packet analysis", "Docker GUI", "Wireshark", "Full protocol analysis shares the toolbox network namespace. Windows-interface traffic needs an imported PCAP; old metadata records are preserved."],
   ["Web services", "Available", "curl, WhatWeb, Nikto", "WhatWeb uses its light profile; Nikto has a 45-second target budget."],
   ["TLS", "Available", "sslscan, OpenSSL", "Heartbleed probing is disabled and application data is not sent."],
   ["Windows / SMB", "Available", "smbclient, Nmap SMB posture", "Anonymous sessions only. Credentials, NetExec, and user enumeration are not accepted."],
@@ -631,24 +634,18 @@ function NetworkTool({ devices, onSelectDevice }) {
   );
 }
 
-function SnifferTool({ captures, onOpenCapture }) {
+function SnifferTool({ captures, devices }) {
   return (
     <section className="workbench-tool">
       <header>
-        <p className="eyebrow">Metadata only</p>
-        <h3>Packet observation</h3>
-        <span>
-          AEGIS stores addresses, protocol, ports, time, and size—not payloads
-          or credentials.
-        </span>
-        <button className="button button--primary" onClick={onOpenCapture}>
-          Open controlled capture
-        </button>
+        <p className="eyebrow">Packet analysis</p>
+        <h3>Wireshark workspace</h3>
       </header>
+      <WiresharkPanel devices={devices} />
       {captures.length === 0 ? (
-        <div className="empty-state">No captures recorded yet.</div>
+        <div className="empty-state">No legacy metadata records. Wireshark captures are saved in its dedicated Docker volume.</div>
       ) : (
-        <div className="capture-cards">
+        <details className="playbook-evidence__raw"><summary>Legacy metadata captures · {captures.length} records</summary><div className="capture-cards">
           {captures.map((capture) => {
             const protocols = capture.packets.reduce(
               (counts, packet) => ({
@@ -674,7 +671,7 @@ function SnifferTool({ captures, onOpenCapture }) {
               </article>
             );
           })}
-        </div>
+        </div></details>
       )}
     </section>
   );
@@ -2371,9 +2368,9 @@ function Overview({ devices, captures, attackPaths, adapters, onChangeTab }) {
     ],
     [
       "sniffer",
-      "Packet captures",
-      captures.length,
-      "Review controlled metadata captures",
+      "Wireshark",
+      "DOCKER",
+      "Analyze toolbox packets or import a PCAP",
     ],
     [
       "wireless",
@@ -2629,7 +2626,7 @@ export default function SecurityWorkbenchModal({
             <NetworkTool devices={devices} onSelectDevice={selectDevice} />
           )}
           {tab === "sniffer" && (
-            <SnifferTool captures={captures} onOpenCapture={openCapture} />
+            <SnifferTool captures={captures} devices={devices} />
           )}
           {tab === "credentials" && <CredentialTool />}
           {tab === "configuration" && (
@@ -2642,6 +2639,7 @@ export default function SecurityWorkbenchModal({
           {tab === "wireless" && <WirelessTool adapters={adapters} />}
           {tab === "query" && <QueryTool />}
           {tab === "policy" && <HostNetworkPolicyTool />}
+          {tab === "mac" && <MacManagementPanel />}
         </main>
       </section>
     </div>

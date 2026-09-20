@@ -10,6 +10,7 @@ import {
 import aegisShield from "./assets/aegis-shield.webp";
 import aegisShieldDark from "./assets/aegis-shield-dark.webp";
 import { formatDate, formatMetric, toDateTimeLocal } from "./format.js";
+import WiresharkPanel from "./WiresharkPanel.jsx";
 import {
   checkDevice,
   checkAllDevices,
@@ -57,9 +58,7 @@ import {
   pollSnmp,
   runVulnerabilityScan,
   detectAnomalies,
-  getPacketInterfaces,
   listPacketCaptures,
-  startPacketCapture,
   getDiscoveryNetwork,
   getDeviceDetails,
   getDeviceChangeEvents,
@@ -2301,7 +2300,7 @@ function HostMetricsPanel({ device, metrics, onChanged }) {
   );
 }
 
-function RemoteAgentPanel({ device, agent, onChanged }) {
+function RemoteAgentPanel({ device, agent, onChanged, canManage }) {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const isLocal =
@@ -2348,7 +2347,7 @@ function RemoteAgentPanel({ device, agent, onChanged }) {
           <p className="eyebrow">Authenticated collector</p>
           <h2>Remote host agent</h2>
         </div>
-        <div className="row-actions">
+        {canManage && <div className="row-actions">
           <button
             className="button button--secondary"
             onClick={enroll}
@@ -2365,7 +2364,7 @@ function RemoteAgentPanel({ device, agent, onChanged }) {
               Revoke
             </button>
           )}
-        </div>
+        </div>}
       </div>
       <div className="agent-content">
         {!agent ? (
@@ -3693,68 +3692,15 @@ function DhcpImportModal({ onClose, onImported }) {
   );
 }
 
-function PacketCaptureModal({ onClose }) {
-  const [interfaces, setInterfaces] = useState([]);
+function PacketCaptureModal({ onClose, devices }) {
   const [captures, setCaptures] = useState([]);
-  const [form, setForm] = useState({
-    interface_name: "",
-    duration_seconds: 10,
-    max_packets: 200,
-  });
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const retryTimer = useRef(null);
-  const retryCount = useRef(0);
-  const load = useCallback(async () => {
-    try {
-      const [i, c] = await Promise.all([
-        getPacketInterfaces(),
-        listPacketCaptures(),
-      ]);
-      setInterfaces(i);
-      setCaptures(c);
-      setError("");
-      setForm((current) => ({
-        ...current,
-        interface_name:
-          current.interface_name ||
-          i.find((item) => item.recommended)?.value ||
-          "",
-      }));
-      if (i.length === 0 && retryCount.current < 3) {
-        retryCount.current += 1;
-        retryTimer.current = window.setTimeout(load, 1500);
-      }
-    } catch (e) {
-      setError(e.message);
-    }
-  }, []);
   useEffect(() => {
-    load();
-    return () => window.clearTimeout(retryTimer.current);
-  }, [load]);
-  async function start() {
-    if (
-      !window.confirm(
-        `Capture metadata for up to ${form.duration_seconds} seconds? Packet payloads will not be stored.`,
-      )
-    )
-      return;
-    setBusy(true);
-    try {
-      await startPacketCapture({
-        ...form,
-        interface_name: form.interface_name || null,
-        duration_seconds: Number(form.duration_seconds),
-        max_packets: Number(form.max_packets),
-      });
-      await load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+    let mounted = true;
+    listPacketCaptures().then((items) => { if (mounted) setCaptures(items); })
+      .catch((e) => { if (mounted) setError(`Legacy history unavailable: ${e.message}`); });
+    return () => { mounted = false; };
+  }, []);
   return (
     <div className="modal-backdrop">
       <section
@@ -3766,84 +3712,22 @@ function PacketCaptureModal({ onClose }) {
         <div className="modal-heading">
           <div>
             <p className="eyebrow">Administrator tool</p>
-            <h2 id="packet-capture-title">Controlled packet capture</h2>
+            <h2 id="packet-capture-title">Packet analysis · Wireshark</h2>
           </div>
           <button
             className="icon-button"
             onClick={onClose}
-            aria-label="Close packet capture"
+            aria-label="Close Wireshark packet analysis"
           >
             ×
           </button>
         </div>
-        <p className="panel-help">Captures are time- and packet-limited and retain packet metadata only. Selecting an interface determines which traffic this host can actually observe.</p>
+        <WiresharkPanel devices={devices} />
         {error && <div className="form-error user-error">{error}</div>}
-        {interfaces.length === 0 && (
-          <div className="capture-interface-status">
-            No interfaces loaded yet.
-            <button
-              className="text-button"
-              onClick={() => {
-                retryCount.current = 0;
-                load();
-              }}
-            >
-              Refresh interfaces
-            </button>
-          </div>
-        )}
-        <div className="capture-form">
-          <select
-            value={form.interface_name}
-            onChange={(e) =>
-              setForm({ ...form, interface_name: e.target.value })
-            }
-          >
-            <option value="">
-              {interfaces.length === 0
-                ? "Loading interfaces…"
-                : "Default interface"}
-            </option>
-            {interfaces.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-                {item.recommended ? " (recommended)" : ""}
-              </option>
-            ))}
-          </select>
-          <label>
-            Seconds
-            <input
-              type="number"
-              min="1"
-              max="30"
-              value={form.duration_seconds}
-              onChange={(e) =>
-                setForm({ ...form, duration_seconds: e.target.value })
-              }
-            />
-          </label>
-          <label>
-            Max packets
-            <input
-              type="number"
-              min="1"
-              max="1000"
-              value={form.max_packets}
-              onChange={(e) =>
-                setForm({ ...form, max_packets: e.target.value })
-              }
-            />
-          </label>
-          <button
-            className="button button--primary"
-            onClick={start}
-            disabled={busy || interfaces.length === 0}
-          >
-            {busy ? "Capturing…" : "Start capture"}
-          </button>
-        </div>
-        <div className="table-wrap">
+        {captures.length > 0 && <details className="playbook-evidence__raw">
+          <summary>Legacy metadata captures · {captures.length} records</summary>
+          <p className="panel-help">Previous metadata-only records remain unchanged. New packet analysis runs in Wireshark.</p>
+          <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -3859,11 +3743,7 @@ function PacketCaptureModal({ onClose }) {
                 <tr key={item.id}>
                   <td>{formatDate(item.started_at)}</td>
                   <td>
-                    {interfaces.find(
-                      (option) => option.value === item.interface_name,
-                    )?.label ||
-                      item.interface_name ||
-                      "Default"}
+                    {item.interface_name || "Default"}
                   </td>
                   <td>{item.status}</td>
                   <td>{item.packets.length}</td>
@@ -3872,7 +3752,8 @@ function PacketCaptureModal({ onClose }) {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </details>}
       </section>
     </div>
   );
@@ -4523,6 +4404,7 @@ function DeviceDetail({
         device={device}
         agent={details.agent}
         onChanged={load}
+        canManage={isAdmin}
       />
       {isAdmin && (
         <Suspense fallback={<LazyPanelFallback label="remote diagnostics" />}>
@@ -6428,8 +6310,8 @@ export default function App() {
         },
         {
           id: "packet-capture",
-          label: "Open packet capture",
-          description: "Start a controlled local capture",
+          label: "Open Wireshark packet analysis",
+          description: "Analyze toolbox traffic in Docker Wireshark",
           icon: "◉",
           action: () => setShowPacketCapture(true),
         },
@@ -6875,7 +6757,7 @@ export default function App() {
                     Attack paths
                   </button>
                   <button onClick={() => openSidebarPanel(() => setShowPacketCapture(true))}>
-                    Packet capture
+                    Wireshark
                   </button>
                 </div>
               </section>
@@ -7726,7 +7608,7 @@ export default function App() {
         <NotificationSettings onClose={() => setShowNotifications(false)} />
       )}
       {showPacketCapture && (
-        <PacketCaptureModal onClose={() => setShowPacketCapture(false)} />
+        <PacketCaptureModal devices={data.devices} onClose={() => setShowPacketCapture(false)} />
       )}
       {showDhcpImport && (
         <DhcpImportModal

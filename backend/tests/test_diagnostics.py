@@ -84,8 +84,7 @@ def test_admin_creates_agent_executes_and_reads_diagnostic_job(client):
         json={"status": "COMPLETED", "result": result, "error": None},
     )
     assert completed.status_code == 200
-    assert completed.json()["status"] == "COMPLETED"
-    assert completed.json()["result"] == result
+    assert completed.json() == {"id": job_id, "status": "COMPLETED"}
 
     repeated = client.post(
         f"/api/agent/jobs/{job_id}/result",
@@ -93,11 +92,12 @@ def test_admin_creates_agent_executes_and_reads_diagnostic_job(client):
         json={"status": "COMPLETED", "result": {"ignored": True}, "error": None},
     )
     assert repeated.status_code == 200
-    assert repeated.json()["result"] == result
+    assert repeated.json() == {"id": job_id, "status": "COMPLETED"}
 
     history = client.get(f"/api/devices/{device['id']}/diagnostic-jobs", headers=headers)
     assert history.status_code == 200
     assert history.json()[0]["id"] == job_id
+    assert history.json()[0]["result"] == result
 
 
 def test_diagnostic_jobs_require_admin_and_are_allowlisted(client):
@@ -121,6 +121,12 @@ def test_diagnostic_jobs_require_admin_and_are_allowlisted(client):
         json={"job_type": "TOP_PROCESSES"},
     )
     assert forbidden.status_code == 403
+    assert client.post(
+        f"/api/devices/{device['id']}/agent/enroll", headers=operator_headers
+    ).status_code == 403
+    assert client.delete(
+        f"/api/devices/{device['id']}/agent", headers=operator_headers
+    ).status_code == 403
     invalid = client.post(
         f"/api/devices/{device['id']}/diagnostic-jobs",
         headers=admin_headers,
@@ -206,8 +212,10 @@ def test_safe_validation_callback_is_nonce_bound_and_preserved(client):
         json={"status": "COMPLETED", "result": {"callback_submitted": True}},
     )
     assert completed.status_code == 200
-    assert completed.json()["result"]["callback_submitted"] is True
-    assert completed.json()["result"]["callback"]["verified"] is True
+    assert completed.json() == {"id": job_id, "status": "COMPLETED"}
+    stored = client.get(f"/api/devices/{device['id']}/diagnostic-jobs", headers=headers).json()[0]
+    assert stored["result"]["callback_submitted"] is True
+    assert stored["result"]["callback"]["verified"] is True
 
 
 def test_claimed_diagnostic_rejects_callbacks_and_results_after_expiry(client):
@@ -289,7 +297,9 @@ def test_server_callback_evidence_survives_result_without_payload(client):
     )
 
     assert completed.status_code == 200
-    assert completed.json()["result"]["callback"]["verified"] is True
+    assert completed.json() == {"id": created["id"], "status": "COMPLETED"}
+    stored = client.get(f"/api/devices/{device['id']}/diagnostic-jobs", headers=headers).json()[0]
+    assert stored["result"]["callback"]["verified"] is True
 
 
 def test_safe_validation_requires_exact_authorization_and_one_active_job(client):

@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, contains_eager
 
 from app.database import get_db
-from app.models import AgentEnrollment, Device, HostMetric, utc_now
+from app.models import AgentEnrollment, Device, HostMetric, User, utc_now
+from app.routers.auth import require_admin
 from app.routers.devices import get_device_or_404
 from app.schemas import AgentEnrollmentCreated, AgentEnrollmentRead, AgentFleetItem, AgentFleetOverview, AgentMetricSubmission, HostMetricRead
 from app.services.agent_health_service import calculate_agent_health
@@ -73,7 +74,7 @@ def get_agent_overview(db: Session = Depends(get_db)) -> AgentFleetOverview:
 
 
 @router.post("/devices/{device_id}/agent/enroll", response_model=AgentEnrollmentCreated, status_code=201)
-def enroll_agent(device_id: int, db: Session = Depends(get_db)):
+def enroll_agent(device_id: int, _admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     get_device_or_404(device_id, db)
     token = secrets.token_urlsafe(32)
     enrollment = db.scalar(select(AgentEnrollment).where(AgentEnrollment.device_id == device_id))
@@ -100,7 +101,7 @@ def get_agent_enrollment(device_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/devices/{device_id}/agent", status_code=204)
-def revoke_agent(device_id: int, db: Session = Depends(get_db)):
+def revoke_agent(device_id: int, _admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     get_device_or_404(device_id, db)
     enrollment = db.scalar(select(AgentEnrollment).where(AgentEnrollment.device_id == device_id))
     if enrollment is not None:

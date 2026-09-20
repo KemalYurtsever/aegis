@@ -36,6 +36,15 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
     $ErrorActionPreference = $previousErrorPreference
 }
 if ($dockerAvailable) {
+    # Release the optional GUI's shared namespace/proxy network attachment
+    # before bringing down its toolbox. No named volumes are deleted.
+    $wiresharkIds = @(docker ps -aq --filter "label=aegis.wireshark.managed=true" --filter "label=com.docker.compose.project.working_dir=$projectRoot")
+    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect optional Wireshark containers." }
+    if ($wiresharkIds.Count -gt 0) {
+        docker rm -f $wiresharkIds | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Unable to stop optional Wireshark containers." }
+        Write-Host "Wireshark stopped. Saved PCAP files and settings were preserved in its Docker volume."
+    }
     docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") down
     if ($LASTEXITCODE -ne 0) { throw "Unable to stop the network toolbox, Prometheus, and Grafana cleanly." }
     Remove-StaleComposeContainers -WorkingDirectory $projectRoot

@@ -49,6 +49,16 @@ function jsonRequest(path, method, payload) {
 export function getAuthStatus() {
   return request("/api/auth/status");
 }
+
+export function getMacAdapters() {
+  return request("/api/system/mac/adapters");
+}
+export function prepareMacChange(payload) {
+  return jsonRequest("/api/system/mac/plan", "POST", payload);
+}
+export function applyMacChange(payload) {
+  return jsonRequest("/api/system/mac/apply", "POST", payload);
+}
 export function setupAdmin(payload) {
   return jsonRequest("/api/auth/setup", "POST", payload);
 }

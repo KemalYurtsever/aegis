@@ -32,10 +32,11 @@ privacy-cleanup/
 *.har
 *.evtx
 *.etl
-*.log
+captures/
 *.pcap
 *.pcapng
 *.cap
+*.log
 
 # Environment files and credentials. Keep sanitized examples versionable.
 .env

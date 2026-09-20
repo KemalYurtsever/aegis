@@ -209,7 +209,7 @@ def update_service_check(check_id: int, payload: ServiceCheckCreate, db: Session
     return serialize_check(check, db)
 
 
-@router.delete("/service-checks/{check_id}", status_code=204)
+@router.delete("/service-checks/{check_id}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_service_check(check_id: int, db: Session = Depends(get_db)):
     db.delete(get_check_or_404(check_id, db)); db.commit()
     return Response(status_code=204)

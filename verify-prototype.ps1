@@ -63,6 +63,9 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 Invoke-PrototypeCheck "Full-stack Compose configuration" { & docker compose -f (Join-Path $projectRoot "docker-compose.yml") config --quiet }
 Invoke-PrototypeCheck "Hybrid Compose configuration" { & docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") config --quiet }
+if (Test-Path -LiteralPath (Join-Path $projectRoot "secrets\wireshark_password.txt")) {
+    Invoke-PrototypeCheck "Optional Wireshark Compose configuration" { & docker compose -f (Join-Path $projectRoot "docker-compose.wireshark.yml") config --quiet }
+}
 
 $previousErrorPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"

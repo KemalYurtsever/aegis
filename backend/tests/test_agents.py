@@ -7,16 +7,16 @@ PAYLOAD = {
 }
 
 
-def create_remote_device(client):
-    return client.post("/api/devices", json={
+def create_remote_device(client, headers=None):
+    return client.post("/api/devices", headers=headers, json={
         "name": "Linux Agent", "ip_address": "198.18.56.90", "device_type": "Server",
         "description": None, "is_active": True,
     }).json()
 
 
-def test_agent_enrollment_submission_and_revocation(client):
-    device = create_remote_device(client)
-    enrolled = client.post(f"/api/devices/{device['id']}/agent/enroll")
+def test_agent_enrollment_submission_and_revocation(client, admin_headers):
+    device = create_remote_device(client, admin_headers)
+    enrolled = client.post(f"/api/devices/{device['id']}/agent/enroll", headers=admin_headers)
     assert enrolled.status_code == 201
     token = enrolled.json()["token"]
     assert len(token) >= 32
@@ -27,21 +27,21 @@ def test_agent_enrollment_submission_and_revocation(client):
     assert submitted.status_code == 201
     assert submitted.json()["device_id"] == device["id"]
 
-    status = client.get(f"/api/devices/{device['id']}/agent").json()
+    status = client.get(f"/api/devices/{device['id']}/agent", headers=admin_headers).json()
     assert status["hostname"] == "lab-linux"
     assert status["last_seen_at"] is not None
     assert status["health_status"] == "REPORTING"
     assert status["report_interval_seconds"] == 60
-    assert len(client.get(f"/api/devices/{device['id']}/metrics").json()) == 1
+    assert len(client.get(f"/api/devices/{device['id']}/metrics", headers=admin_headers).json()) == 1
 
-    assert client.delete(f"/api/devices/{device['id']}/agent").status_code == 204
+    assert client.delete(f"/api/devices/{device['id']}/agent", headers=admin_headers).status_code == 204
     assert client.post("/api/agent/metrics", json=PAYLOAD, headers={"X-Agent-Token": token}).status_code == 401
 
 
-def test_reenrollment_invalidates_old_token(client):
-    device = create_remote_device(client)
-    first = client.post(f"/api/devices/{device['id']}/agent/enroll").json()["token"]
-    second = client.post(f"/api/devices/{device['id']}/agent/enroll").json()["token"]
+def test_reenrollment_invalidates_old_token(client, admin_headers):
+    device = create_remote_device(client, admin_headers)
+    first = client.post(f"/api/devices/{device['id']}/agent/enroll", headers=admin_headers).json()["token"]
+    second = client.post(f"/api/devices/{device['id']}/agent/enroll", headers=admin_headers).json()["token"]
     assert first != second
     assert client.post("/api/agent/metrics", json=PAYLOAD, headers={"X-Agent-Token": first}).status_code == 401
     assert client.post("/api/agent/metrics", json=PAYLOAD, headers={"X-Agent-Token": second}).status_code == 201
@@ -64,17 +64,17 @@ def test_agent_health_transitions_from_reporting_to_delayed_and_offline():
     assert serialize_enrollment(enrollment, now).health_status == "OFFLINE"
 
 
-def test_agent_fleet_overview_counts_waiting_and_reporting(client):
-    device = create_remote_device(client)
-    enrolled = client.post(f"/api/devices/{device['id']}/agent/enroll").json()
+def test_agent_fleet_overview_counts_waiting_and_reporting(client, admin_headers):
+    device = create_remote_device(client, admin_headers)
+    enrolled = client.post(f"/api/devices/{device['id']}/agent/enroll", headers=admin_headers).json()
 
-    waiting = client.get("/api/agents/overview").json()
+    waiting = client.get("/api/agents/overview", headers=admin_headers).json()
     assert waiting["total_agents"] == 1
     assert waiting["waiting_agents"] == 1
     assert waiting["agents"][0]["device_name"] == "Linux Agent"
 
     client.post("/api/agent/metrics", json=PAYLOAD, headers={"X-Agent-Token": enrolled["token"]})
-    reporting = client.get("/api/agents/overview").json()
+    reporting = client.get("/api/agents/overview", headers=admin_headers).json()
     assert reporting["reporting_agents"] == 1
     assert reporting["waiting_agents"] == 0
 from datetime import datetime, timedelta, timezone

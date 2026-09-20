@@ -3,6 +3,7 @@ from enum import Enum
 from ipaddress import ip_address
 import re
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -762,6 +763,11 @@ class DiagnosticJobAgentRead(BaseModel):
     parameters: dict[str, int | str]
 
 
+class DiagnosticJobResultAck(BaseModel):
+    id: int
+    status: Literal["COMPLETED", "FAILED"]
+
+
 class DiagnosticJobResultSubmission(BaseModel):
     status: Literal["COMPLETED", "FAILED"]
     result: Any | None = None
@@ -1498,3 +1504,16 @@ class SystemReadiness(BaseModel):
     status: Literal["HEALTHY", "WARNING"]
     checked_at: datetime
     components: list[SystemComponentRead]
+
+
+class MacChangePlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    interface_id: UUID
+    mode: Literal["manual", "random", "restore"]
+    mac_address: str | None = Field(default=None, min_length=12, max_length=17)
+
+
+class MacChangeApplyRequest(MacChangePlanRequest):
+    plan_token: str = Field(min_length=20, max_length=1024)
+    expected_mac: str = Field(min_length=12, max_length=17)
+    acknowledgement: Literal["CHANGE LOCAL MAC"]

@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import User, UserSession, utc_now
 
@@ -50,13 +50,16 @@ def create_session(user: User, db: Session) -> tuple[str, UserSession]:
 
 
 def session_user(token: str, db: Session) -> User | None:
-    session = db.scalar(select(UserSession).where(UserSession.token_hash == token_digest(token)))
+    session = db.scalar(
+        select(UserSession).options(joinedload(UserSession.user))
+        .where(UserSession.token_hash == token_digest(token))
+    )
     if session is None:
         return None
     expires_at = session.expires_at
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at <= datetime.now(timezone.utc) or not session.user.is_active:
+    if expires_at <= datetime.now(timezone.utc) or session.user is None or not session.user.is_active:
         db.delete(session); db.commit()
         return None
     return session.user

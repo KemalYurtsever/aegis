@@ -29,6 +29,7 @@ services:
       context: ./frontend
       args:
         VITE_GRAFANA_URL: ${VITE_GRAFANA_URL:-http://127.0.0.1:3000}
+        VITE_WIRESHARK_URL: ${VITE_WIRESHARK_URL:-https://127.0.0.1:8444/}
     restart: unless-stopped
     depends_on:
       backend:

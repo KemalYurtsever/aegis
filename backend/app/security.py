@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
+import math
 import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -87,21 +88,42 @@ class RateLimit:
 class InMemoryRateLimiter:
     """Small process-local sliding-window limiter for the single-instance AEGIS API."""
 
-    def __init__(self) -> None:
-        self._events: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+    def __init__(self, max_keys: int = 4096, cleanup_interval: float = 30.0,
+                 clock: Callable[[], float] | None = None) -> None:
+        if max_keys < 1 or not math.isfinite(cleanup_interval) or cleanup_interval <= 0:
+            raise ValueError("Rate limiter capacity and cleanup interval must be positive")
+        self._events: dict[tuple[str, str], deque[float]] = {}
+        self._expires: dict[tuple[str, str], float] = {}
+        self._max_keys = max_keys
+        self._cleanup_interval = cleanup_interval
+        self._next_cleanup = 0.0
+        self._clock = clock or time.monotonic
         self._lock = threading.Lock()
 
     def check(self, bucket: str, identity: str, limit: RateLimit) -> int | None:
-        now = time.monotonic()
-        cutoff = now - limit.window_seconds
         key = (bucket, identity)
         with self._lock:
-            events = self._events[key]
+            now = self._clock()
+            cutoff = now - limit.window_seconds
+            if now >= self._next_cleanup:
+                for expired in [item for item, expiry in self._expires.items() if expiry <= now]:
+                    del self._events[expired]
+                    del self._expires[expired]
+                self._next_cleanup = now + self._cleanup_interval
+            events = self._events.get(key)
+            if events is None:
+                if len(self._events) >= self._max_keys:
+                    # Fail closed for new identities: evicting a live counter
+                    # would let identity churn reset another client's limit.
+                    return max(1, math.ceil(self._next_cleanup - now))
+                events = self._events[key] = deque()
             while events and events[0] <= cutoff:
                 events.popleft()
             if len(events) >= limit.requests:
                 return max(1, int(limit.window_seconds - (now - events[0])) + 1)
             events.append(now)
+            # Rejected requests do not extend the lifetime of idle entries.
+            self._expires[key] = now + limit.window_seconds
         return None
 
 
@@ -115,8 +137,11 @@ def rate_limit_for(request: Request) -> tuple[str, RateLimit]:
     method = request.method
     if path in {"/api/auth/login", "/api/auth/setup"} and method == "POST":
         return "authentication", RateLimit(10, 60)
+    if path == "/api/system/mac/adapters" and method == "GET":
+        return "host-inspection", RateLimit(20, 60)
     expensive = (
         path == "/api/discovery/import"
+        or path in {"/api/system/mac/plan", "/api/system/mac/apply"}
         or path == "/api/devices/actions/clear-all"
         or path == "/api/devices/check-all"
         or path == "/api/devices/bulk/check"

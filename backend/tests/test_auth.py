@@ -6,6 +6,34 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_concurrent_bootstrap_has_exactly_one_administrator(client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import select
+    from app.models import User, UserSession
+    from app.routers import auth as auth_router
+
+    barrier = Barrier(2)
+    original_hash = auth_router.hash_password
+
+    def overlapping_hash(password):
+        result = original_hash(password)
+        barrier.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(auth_router, "hash_password", overlapping_hash)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda name: setup(client, username=name), ["first-admin", "other-admin"]))
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    with client.app.state.session_factory() as db:
+        assert len(list(db.scalars(select(User)))) == 1
+        assert len(list(db.scalars(select(UserSession)))) == 1
+    winner = next(response for response in responses if response.status_code == 201)
+    client.app.state.auth_required = True
+    assert client.get("/api/auth/users", headers=auth(winner.json()["token"])).status_code == 200
+
+
 def test_first_run_setup_login_logout_and_protection(client):
     assert client.get("/api/auth/status").json()["setup_required"] is True
     created = setup(client)
@@ -23,6 +51,24 @@ def test_first_run_setup_login_logout_and_protection(client):
     logged_in = client.post("/api/auth/login", json={"username": "ADMIN", "password": "correct-horse-battery-staple"})
     assert logged_in.status_code == 200
     assert logged_in.json()["user"]["username"] == "admin"
+
+
+def test_failed_bootstrap_transaction_releases_claim(client, monkeypatch):
+    from app.models import AuthBootstrapClaim, User
+    from app.routers.auth import setup_admin
+    from app.schemas import SetupRequest
+    import pytest
+    from sqlalchemy import select
+
+    with client.app.state.session_factory() as db:
+        original_commit = db.commit
+        monkeypatch.setattr(db, "commit", lambda: (_ for _ in ()).throw(RuntimeError("synthetic commit failure")))
+        with pytest.raises(RuntimeError, match="synthetic commit failure"):
+            setup_admin(SetupRequest(username="retry-admin", password="long-retry-test-password"), db)
+        monkeypatch.setattr(db, "commit", original_commit)
+        assert db.get(AuthBootstrapClaim, 1) is None
+        assert db.scalar(select(User)) is None
+    assert setup(client, username="retry-admin").status_code == 201
 
 
 def test_roles_enforce_admin_management_and_viewer_read_only(client):

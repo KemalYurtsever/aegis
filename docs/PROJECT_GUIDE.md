@@ -60,11 +60,13 @@ Confirm the detected product and version, check vendor backports and compensatin
 | Assessment | A complete saved investigation or one bounded manual check | Continuous monitoring |
 | CVE mirror | Updating local NVD matching data | Scanning hosts or proving exploitation |
 | Exposure review | Reviewing stored findings and candidate paths | Sending new traffic |
-| Capture review | Controlled packet metadata and stored capture history | Full payload capture, TLS decryption, or CVE matching |
+| Wireshark | Docker toolbox packet analysis, PCAP import/export, and legacy metadata history | Direct access to Windows Wi-Fi/Ethernet, all LAN conversations, automatic TLS decryption, or automatic PCAP-to-CVE matching |
 | Observability | Long-range Prometheus and Grafana trends | The operational source of truth for inventory |
 | System status | Aegis component readiness | Target-device health |
 
 ## Important terms
+
+The [Wireshark guide](WIRESHARK.md) explains startup, capture filters, storage and Docker network visibility. Capture before running the assessment to see its network exchanges; Wireshark is a protocol analyzer, not the CVE mirror or a replacement for service identification.
 
 | Term | Meaning in Aegis |
 |---|---|

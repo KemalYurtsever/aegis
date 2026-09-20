@@ -4,6 +4,9 @@ import hmac
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import urllib.request
+
+import pytest
 
 
 AGENT_PATH = Path(__file__).parents[2] / "agent" / "aegis_agent.py"
@@ -36,10 +39,42 @@ def test_agent_health_check_uses_dedicated_ingress(monkeypatch):
         captured["timeout"] = timeout
         return FakeResponse(200, {"status": "healthy", "service": "AEGIS agent ingress"})
 
-    monkeypatch.setattr(agent.urllib.request, "urlopen", open_request)
+    monkeypatch.setattr(agent, "open_agent_request", open_request)
     health = agent.check_server()
     assert captured == {"url": f"{agent.SERVER_URL}/api/agent/health", "timeout": 10}
     assert health["status"] == "healthy"
+
+
+def test_agent_transport_rejects_remote_http_and_url_credentials(monkeypatch):
+    for address in ("http://192.0.2.10:8002", "http://[2001:db8::10]:8002", "https://user:pass@192.0.2.10:8002", "https://192.0.2.10:8002/?token=value"):
+        monkeypatch.setattr(agent, "SERVER_URL", address)
+        with pytest.raises(ValueError):
+            agent.validate_server_url()
+    for address in ("http://127.0.0.1:8002", "http://localhost:8002", "https://192.0.2.10:8002"):
+        monkeypatch.setattr(agent, "SERVER_URL", address)
+        agent.validate_server_url()
+
+
+def test_agent_transport_does_not_follow_redirects(monkeypatch):
+    monkeypatch.setattr(agent, "SERVER_URL", "https://192.0.2.10:8002")
+    captured = {}
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            captured.update(request=request, timeout=timeout)
+            return FakeResponse(200, {})
+
+    def build_opener(handler):
+        captured["handler"] = handler
+        return FakeOpener()
+
+    monkeypatch.setattr(agent.urllib.request, "build_opener", build_opener)
+    request = urllib.request.Request("https://192.0.2.10:8002/api/agent/health")
+    with agent.open_agent_request(request, timeout=10):
+        pass
+    assert captured["timeout"] == 10
+    assert captured["handler"] is agent.NoRedirectHandler
+    assert agent.NoRedirectHandler().redirect_request(request, None, 302, "Moved", {}, "https://example.test/") is None
 
 
 def test_agent_loads_windows_powershell_bom_config(monkeypatch, tmp_path):
@@ -138,7 +173,7 @@ def test_validation_callback_is_hmac_signed(monkeypatch):
         captured.update(request=request, timeout=timeout)
         return FakeResponse(204, {})
 
-    monkeypatch.setattr(agent.urllib.request, "urlopen", open_request)
+    monkeypatch.setattr(agent, "open_agent_request", open_request)
     result = agent.submit_validation_callback(17, "nonce-value-long-enough")
     expected = hmac.new(b"x" * 32, b"nonce-value-long-enough", hashlib.sha256).hexdigest()
     assert captured["request"].full_url.endswith("/api/agent/jobs/17/validation-callback")

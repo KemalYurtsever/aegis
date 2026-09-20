@@ -1,5 +1,23 @@
+param(
+    [switch]$WithWireshark
+)
+
 $ErrorActionPreference = "Stop"
+$startupMutex = [System.Threading.Mutex]::new($false, "Local\AegisHybridStartup")
+$startupLockAcquired = $false
+try {
+    $startupLockAcquired = $startupMutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+    $startupLockAcquired = $true
+}
+if (-not $startupLockAcquired) {
+    $startupMutex.Dispose()
+    throw "Another AEGIS hybrid startup is already in progress. Wait for it to finish before retrying."
+}
+
+try {
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$wiresharkEnabled = $WithWireshark -or (Test-Path -LiteralPath (Join-Path $projectRoot "secrets\wireshark_password.txt"))
 $dockerBin = Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin"
 if (Test-Path $dockerBin) { $env:Path = "$dockerBin;$env:Path" }
 
@@ -141,6 +159,12 @@ if ($dockerAvailable) {
     Wait-HttpEndpoint -Name "Prometheus" -Url "http://127.0.0.1:9090/-/ready"
     Assert-LoopbackListener -Port 3000 -Service "Grafana"
     Assert-LoopbackListener -Port 9090 -Service "Prometheus"
+    if ($wiresharkEnabled) {
+        # Rejoin the new toolbox namespace after hybrid startup recreates it.
+        # The optional GUI's volume and local credential are preserved.
+        & (Join-Path $projectRoot "start-wireshark.ps1")
+        Assert-LoopbackListener -Port 8444 -Service "Wireshark"
+    }
 }
 
 Write-Host "Hybrid AEGIS started:"
@@ -158,3 +182,7 @@ if ($dockerAvailable) {
 }
 Write-Host "  Logs:       $logDirectory"
 Write-Host "All AEGIS services passed readiness checks."
+} finally {
+    if ($startupLockAcquired) { $startupMutex.ReleaseMutex() }
+    $startupMutex.Dispose()
+}

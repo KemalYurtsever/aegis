@@ -13,8 +13,14 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Run this installer from PowerShell as Administrator."
 }
+. (Join-Path $PSScriptRoot 'install-security.ps1')
 $server = [Uri]$ServerUrl
 if ($server.Scheme -notin @("http", "https") -or -not $server.Host) { throw "ServerUrl must be an HTTP or HTTPS URL." }
+if ($server.UserInfo -or $server.Query -or $server.Fragment) { throw "ServerUrl must not contain credentials, a query, or a fragment." }
+$loopback = $server.Host -in @('localhost', 'localhost.')
+$serverIp = $null
+if ([Net.IPAddress]::TryParse($server.Host, [ref]$serverIp)) { $loopback = [Net.IPAddress]::IsLoopback($serverIp) }
+if ($server.Scheme -eq 'http' -and -not $loopback) { throw "Remote ServerUrl must use HTTPS." }
 if (-not $Token) {
     $secureToken = Read-Host "Paste the one-time AEGIS agent token" -AsSecureString
     $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
@@ -36,7 +42,7 @@ $pythonLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
 $pythonCommand = Get-Command python.exe -ErrorAction SilentlyContinue
 if (-not $pythonLauncher -and -not $pythonCommand) { throw "Python 3 is required. Install it, then rerun this script." }
 
-New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
+$InstallDirectory = Initialize-AegisInstallDirectory -Path $InstallDirectory
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "aegis_agent.py") -Destination $InstallDirectory -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "requirements.txt") -Destination $InstallDirectory -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination $InstallDirectory -Force
@@ -45,8 +51,10 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "test-agent.ps1") -Destination $
 $venv = Join-Path $InstallDirectory ".venv"
 if ($pythonLauncher) { & $pythonLauncher.Source -3 -m venv $venv }
 else { & $pythonCommand.Source -m venv $venv }
+if ($LASTEXITCODE -ne 0) { throw 'Python virtual environment creation failed.' }
 $venvPython = Join-Path $venv "Scripts\python.exe"
 & $venvPython -m pip install --disable-pip-version-check -r (Join-Path $InstallDirectory "requirements.txt")
+if ($LASTEXITCODE -ne 0) { throw 'Agent dependency installation failed.' }
 
 $configPath = Join-Path $InstallDirectory "agent-config.json"
 $logPath = Join-Path $InstallDirectory "logs\agent.log"
@@ -57,8 +65,8 @@ $logPath = Join-Path $InstallDirectory "logs\agent.log"
     diagnostics_enabled = [bool]$EnableDiagnostics
 } |
     ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-& icacls.exe $configPath /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" "${identity}:R" | Out-Null
+Set-Acl -LiteralPath $configPath -AclObject (Get-AegisProtectedAcl) -ErrorAction Stop
+$null = Initialize-AegisInstallDirectory -Path $InstallDirectory
 
 & $venvPython (Join-Path $InstallDirectory "aegis_agent.py") --once --log-file $logPath
 if ($LASTEXITCODE -ne 0) { throw "The verification metric could not be submitted. Review $logPath before retrying." }

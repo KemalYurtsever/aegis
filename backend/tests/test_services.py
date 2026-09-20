@@ -138,6 +138,8 @@ def test_operator_cannot_configure_or_run_network_service_probes(client, admin_h
     assert create_response.status_code == 403
     assert update_response.status_code == 403
     assert run_response.status_code == 403
+    assert client.delete(f"/api/service-checks/{check['id']}", headers=operator_headers).status_code == 403
+    assert len(client.get(f"/api/devices/{device['id']}/service-checks", headers=admin_headers).json()) == 1
 
 
 def test_service_statistics_calculate_availability_and_response_time(client, admin_headers, monkeypatch):

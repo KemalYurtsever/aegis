@@ -692,6 +692,14 @@ class DiagnosticJob(Base):
     device: Mapped[Device] = relationship(back_populates="diagnostic_jobs")
 
 
+class AuthBootstrapClaim(Base):
+    """A database-wide, single-use first-administrator capability."""
+    __tablename__ = "auth_bootstrap_claims"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_auth_bootstrap_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (

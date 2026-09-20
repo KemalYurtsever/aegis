@@ -17,6 +17,7 @@ from app.schemas import (
     DiagnosticJobAgentRead,
     DiagnosticJobCreate,
     DiagnosticJobRead,
+    DiagnosticJobResultAck,
     DiagnosticJobResultSubmission,
 )
 from app.services.scan_policy import scan_target_rejection_reason
@@ -256,20 +257,20 @@ def submit_validation_callback(
     return Response(status_code=204)
 
 
-@ingest_router.post("/agent/jobs/{job_id}/result", response_model=DiagnosticJobRead)
+@ingest_router.post("/agent/jobs/{job_id}/result", response_model=DiagnosticJobResultAck)
 def submit_diagnostic_result(
     job_id: int,
     payload: DiagnosticJobResultSubmission,
     x_agent_token: str = Header(min_length=20),
     db: Session = Depends(get_db),
-) -> DiagnosticJobRead:
+) -> DiagnosticJobResultAck:
     enrollment = authenticated_enrollment(x_agent_token, db)
     expire_jobs(db, enrollment.device_id)
     job = db.get(DiagnosticJob, job_id)
     if job is None or job.device_id != enrollment.device_id:
         raise HTTPException(status_code=404, detail="Diagnostic job not found")
     if job.status in {"COMPLETED", "FAILED"}:
-        return serialize_job(job)
+        return DiagnosticJobResultAck(id=job.id, status=job.status)
     if job.status != "RUNNING":
         raise HTTPException(status_code=409, detail=f"Diagnostic job is {job.status.lower()}")
 
@@ -293,4 +294,4 @@ def submit_diagnostic_result(
     job.completed_at = utc_now()
     db.commit()
     db.refresh(job)
-    return serialize_job(job)
+    return DiagnosticJobResultAck(id=job.id, status=job.status)

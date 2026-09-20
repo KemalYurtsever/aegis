@@ -16,6 +16,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 
 import psutil
@@ -44,6 +45,29 @@ DIAGNOSTICS_ENABLED = str(
 ).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def validate_server_url() -> None:
+    parsed = urlsplit(SERVER_URL)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("AEGIS_SERVER_URL must be an HTTP or HTTPS server URL without credentials or a query")
+    host = parsed.hostname.rstrip(".").lower()
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host == "localhost"
+    if parsed.scheme == "http" and not loopback:
+        raise ValueError("Remote AEGIS_SERVER_URL must use HTTPS")
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
+
+
+def open_agent_request(request: urllib.request.Request, timeout: int):
+    validate_server_url()
+    return urllib.request.build_opener(NoRedirectHandler).open(request, timeout=timeout)
+
+
 def collect_payload() -> dict:
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
@@ -65,7 +89,7 @@ def collect_payload() -> dict:
 
 def check_server() -> dict:
     request = urllib.request.Request(f"{SERVER_URL}/api/agent/health", method="GET")
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with open_agent_request(request, timeout=10) as response:
         if response.status != 200:
             raise RuntimeError(f"Unexpected AEGIS health response: {response.status}")
         payload = json.loads(response.read().decode("utf-8"))
@@ -81,7 +105,7 @@ def submit() -> dict:
         headers={"Content-Type": "application/json", "X-Agent-Token": AGENT_TOKEN},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with open_agent_request(request, timeout=10) as response:
         if response.status != 201:
             raise RuntimeError(f"Unexpected AEGIS response: {response.status}")
         return json.loads(response.read().decode("utf-8"))
@@ -478,7 +502,7 @@ def submit_validation_callback(job_id: int, nonce: str) -> dict:
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with open_agent_request(request, timeout=10) as response:
         if response.status != 204:
             raise RuntimeError(f"Unexpected validation callback response: {response.status}")
     return {
@@ -534,7 +558,7 @@ def poll_diagnostic_job() -> dict | None:
         headers={"X-Agent-Token": AGENT_TOKEN},
         method="GET",
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with open_agent_request(request, timeout=10) as response:
         if response.status == 204:
             return None
         if response.status != 200:
@@ -556,7 +580,7 @@ def submit_diagnostic_result(job_id: int, status: str, result=None, error: str |
         headers={"Content-Type": "application/json", "X-Agent-Token": AGENT_TOKEN},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
+    with open_agent_request(request, timeout=15) as response:
         if response.status != 200:
             raise RuntimeError(f"Unexpected diagnostic result response: {response.status}")
         return json.loads(response.read().decode("utf-8"))

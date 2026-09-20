@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.concurrency import run_in_threadpool
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, ensure_performance_indexes, get_db, migrate_agent_monitoring_columns, migrate_automation_columns, migrate_device_inventory_columns, migrate_diagnostic_job_types, migrate_notification_tables, migrate_security_playbook_columns, migrate_vulnerability_columns
 from app.models import AuditEvent
@@ -110,23 +111,27 @@ app.add_middleware(
     path_limits={r"/api/devices/\d+/attachments": 7_200_000},
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:5174",
-        "http://localhost:5174",
-    ],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 _AUTH_PUBLIC_PATHS = {
     "/api/health", "/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/agent/metrics",
     "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc", "/metrics",
 }
 _AUTH_PUBLIC_PREFIXES = ("/api/agent/",)
+
+
+def load_authenticated_user(session_factory, token):
+    # No cached permissions and no ORM connection retained during the endpoint.
+    # Closing in the same worker also keeps synchronous SQLite I/O off the loop.
+    with session_factory() as db:
+        user = session_user(token, db)
+        if user is not None:
+            db.expunge(user)
+        return user
+
+
+def write_audit_event(session_factory, details):
+    with session_factory() as db:
+        db.add(AuditEvent(**details))
+        db.commit()
 
 
 @app.middleware("http")
@@ -135,11 +140,11 @@ async def authenticate_request(request: Request, call_next):
         bucket, limit = rate_limit_for(request)
         retry_after = request.app.state.rate_limiter.check(bucket, request_identity(request), limit)
         if retry_after is not None:
-            return JSONResponse(
+            return add_security_headers(request, JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests; try again later"},
                 headers={"Retry-After": str(retry_after)},
-            )
+            ))
     if (
         not request.app.state.auth_required
         or request.method == "OPTIONS"
@@ -150,25 +155,24 @@ async def authenticate_request(request: Request, call_next):
         return add_security_headers(request, response)
     authorization = request.headers.get("Authorization", "")
     token = authorization[7:].strip() if authorization.startswith("Bearer ") else ""
-    with request.app.state.session_factory() as db:
-        user = session_user(token, db) if token else None
-        if user is None:
-            return JSONResponse(status_code=401, content={"detail": "Authentication required"})
-        request.state.user = user
-        if user.role == "VIEWER" and request.method not in {"GET", "HEAD"} and request.url.path != "/api/auth/logout":
-            return JSONResponse(status_code=403, content={"detail": "Viewer role is read-only"})
-        response = await call_next(request)
-        if request.method not in {"GET", "HEAD", "OPTIONS"}:
-            db.add(AuditEvent(
-                user_id=user.id,
-                username=user.username,
-                role=user.role,
-                method=request.method,
-                path=request.url.path,
-                status_code=response.status_code,
-                client_ip=request.client.host if request.client else None,
-            ))
-            db.commit()
+    session_factory = request.app.state.session_factory
+    user = await run_in_threadpool(load_authenticated_user, session_factory, token) if token else None
+    if user is None:
+        return add_security_headers(request, JSONResponse(status_code=401, content={"detail": "Authentication required"}))
+    request.state.user = user
+    if user.role == "VIEWER" and request.method not in {"GET", "HEAD"} and request.url.path != "/api/auth/logout":
+        return add_security_headers(request, JSONResponse(status_code=403, content={"detail": "Viewer role is read-only"}))
+    response = await call_next(request)
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        await run_in_threadpool(write_audit_event, session_factory, {
+            "user_id": user.id,
+            "username": user.username,
+            "role": user.role,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "client_ip": request.client.host if request.client else None,
+        })
     return add_security_headers(request, response)
 
 
@@ -180,6 +184,20 @@ def add_security_headers(request: Request, response):
         response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+# CORS must wrap authentication as well as endpoints, so allowed development
+# origins receive readable 401/403/429 responses rather than a fetch failure.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173", "http://localhost:5173",
+        "http://127.0.0.1:5174", "http://localhost:5174",
+    ],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 app.include_router(auth_router)

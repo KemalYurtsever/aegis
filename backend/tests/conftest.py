@@ -8,11 +8,13 @@ from app.services.backup_service import BackupService
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
     database_url = f"sqlite:///{tmp_path / 'test.db'}"
     test_engine = create_database_engine(database_url)
     testing_session = sessionmaker(bind=test_engine, autoflush=False, expire_on_commit=False)
     Base.metadata.create_all(bind=test_engine)
+    # Lifespan migrations also use this engine, never the operator database.
+    monkeypatch.setattr("app.main.engine", test_engine)
 
     def override_get_db():
         with testing_session() as session:

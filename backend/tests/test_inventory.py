@@ -144,4 +144,3 @@ def test_inventory_health_finds_lease_monitoring_and_duplicate_mac_issues(client
 from datetime import datetime, timedelta, timezone
 
 from app.models import Device, MonitorResult
-

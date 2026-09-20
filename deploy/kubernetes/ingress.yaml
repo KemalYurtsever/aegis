@@ -5,7 +5,11 @@ metadata:
   namespace: aegis
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: 2m
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
+  tls:
+    - hosts: [aegis.example.com]
+      secretName: aegis-tls
   rules:
     - host: aegis.example.com
       http:

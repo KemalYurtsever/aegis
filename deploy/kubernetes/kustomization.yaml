@@ -10,12 +10,14 @@ resources:
   - observability.yaml
   - ingress.yaml
 configMapGenerator:
+  # Kustomize restricts file sources to this directory; keep these copies in
+  # sync with deploy/grafana when changing observability configuration.
   - name: grafana-datasource
     files:
-      - prometheus.yml=../grafana/provisioning/datasources/prometheus.yml
+      - prometheus.yml=grafana/prometheus.yml
   - name: grafana-dashboard-provider
     files:
-      - aegis.yml=../grafana/provisioning/dashboards/aegis.yml
+      - aegis.yml=grafana/aegis.yml
   - name: grafana-dashboard
     files:
-      - aegis-overview.json=../grafana/dashboards/aegis-overview.json
+      - aegis-overview.json=grafana/aegis-overview.json

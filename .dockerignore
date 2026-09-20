@@ -6,3 +6,7 @@
 **/.pytest_cache
 backend/monitoring.db
 secrets
+**/captures
+**/*.pcap
+**/*.pcapng
+**/*.cap

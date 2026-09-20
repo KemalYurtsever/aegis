@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AgentEnrollment, Device, MonitorResult, utc_now
 from app.routers.auth import require_admin
-from app.schemas import SystemComponentRead, SystemReadiness
+from app.schemas import MacChangeApplyRequest, MacChangePlanRequest, SystemComponentRead, SystemReadiness
+from app.services import mac_management_service
 
 
 router = APIRouter(
@@ -28,6 +29,31 @@ router = APIRouter(
 
 def _component(name: str, status: str, message: str) -> SystemComponentRead:
     return SystemComponentRead(name=name, status=status, message=message)
+
+
+def _mac_operation(operation, *args):
+    try:
+        return operation(*args)
+    except mac_management_service.MacManagementError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/mac/adapters")
+def mac_adapters():
+    return _mac_operation(mac_management_service.adapter_status)
+
+
+@router.post("/mac/plan")
+def mac_change_plan(payload: MacChangePlanRequest):
+    return _mac_operation(mac_management_service.prepare_change, payload.interface_id, payload.mode, payload.mac_address)
+
+
+@router.post("/mac/apply")
+def mac_change_apply(payload: MacChangeApplyRequest):
+    return _mac_operation(mac_management_service.apply_change, payload.interface_id, payload.mode,
+                          payload.mac_address, payload.expected_mac, payload.plan_token)
 
 
 def _format_bytes(value: int) -> str:
