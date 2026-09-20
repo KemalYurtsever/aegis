@@ -1,5 +1,6 @@
 param(
-    [switch]$WithWireshark
+    [switch]$WithWireshark,
+    [switch]$RebuildToolbox
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,7 +113,23 @@ if ($dockerAvailable) {
     Remove-StaleComposeContainers -WorkingDirectory $projectRoot
     Assert-PortAvailable -Port 9090 -Service "Prometheus"
     Assert-PortAvailable -Port 3000 -Service "Grafana"
-    docker compose -f (Join-Path $projectRoot "docker-compose.observability.yml") up -d --build
+    # Reuse the locally built toolbox on routine starts. Rebuilding it can
+    # download Debian packages, Nmap source, and Nuclei templates again.
+    $previousErrorPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    docker image inspect aegis-network-toolbox:latest --format "{{.Id}}" 2>$null | Out-Null
+    $toolboxImagePresent = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $previousErrorPreference
+    $observabilityCompose = Join-Path $projectRoot "docker-compose.observability.yml"
+    $observabilityArgs = @("compose", "-f", $observabilityCompose, "up", "-d")
+    if ($RebuildToolbox -or -not $toolboxImagePresent) {
+        Write-Host "Building the Aegis network toolbox (first run or -RebuildToolbox)."
+        $observabilityArgs += "--build"
+    } else {
+        Write-Host "Using the existing Aegis network toolbox image."
+        $observabilityArgs += "--no-build"
+    }
+    & docker @observabilityArgs
     if ($LASTEXITCODE -ne 0) { throw "Unable to start the network toolbox, Prometheus, and Grafana." }
 } else {
     Write-Warning "Docker Desktop is not running. Starting core AEGIS without the network toolbox, Prometheus, or Grafana."

@@ -306,6 +306,8 @@ Hybrid mode keeps the FastAPI application, Windows-aware discovery, host metrics
 
 The launcher verifies the frontend, API, agent ingress, network toolbox, Grafana, and Prometheus before returning. If Docker Desktop is unavailable, it starts the core Aegis services without the toolbox or observability containers. Runtime logs are written to `logs/`.
 
+The toolbox image is built on first launch and reused on routine starts. Run `.\start-hybrid.ps1 -RebuildToolbox` after changing `deploy/network-toolbox` or when you deliberately want a fresh toolbox build; that build downloads Debian packages, Nmap source, and Nuclei templates. Docker can also pull a missing Prometheus or Grafana image on first use.
+
 ### Optional Docker Wireshark GUI
 
 With the toolbox running, start the actual Wireshark application without recreating the toolbox or interrupting scans:
