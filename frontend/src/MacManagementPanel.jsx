@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { applyMacChange, getMacAdapters, prepareMacChange } from "./api.js";
-import { changeMacDirectly, macChangeRequest, newRandomMac } from "./mac.js";
+import { changeMacDirectly, macChangeRequest, newRandomMac, preferredMacAdapter } from "./mac.js";
 
 function downloadScript(script, filename) {
   const url = URL.createObjectURL(new Blob(["\uFEFF", script], { type: "text/plain;charset=utf-8" }));
@@ -35,9 +35,7 @@ export default function MacManagementPanel() {
       const next = await getMacAdapters();
       if (!mounted.current) return;
       setState(next);
-      setSelected((current) => next.adapters.some((item) => item.interface_id === current) ? current :
-        (next.adapters.find((item) => item.status === "Up" && item.supports_override) ||
-         next.adapters.find((item) => item.status === "Up") || next.adapters[0])?.interface_id || "");
+      setSelected((current) => preferredMacAdapter(next.adapters, current)?.interface_id || "");
     } catch (failure) {
       if (mounted.current) setError(failure.message);
     } finally {
@@ -120,19 +118,27 @@ export default function MacManagementPanel() {
     <header>
       <p className="eyebrow">Windows host / Administrator</p>
       <h3>MAC yönetimi</h3>
-      <span>Bağlantıyı seç, MAC gir veya rastgele üret, Uygula’ya bas. Fabrika adresine de dönebilirsin.</span>
+      <span>Bu bilgisayardaki fiziksel ağ bağdaştırıcısını seç, MAC gir veya rastgele üret, Uygula’ya bas. Fabrika adresine de dönebilirsin.</span>
       <button className="button button--secondary" onClick={refresh} disabled={busy}>{busy ? "İşlem sürüyor…" : "Bağlantıları yenile"}</button>
     </header>
-    <p className="panel-help">Seçili yerel bağlantının MAC’i değişir ve bağlantı yeniden başlar; kısa kesinti olabilir.</p>
+    <p className="panel-help">Ethernet ve WiFi ayrı MAC adreslerine sahiptir. Yalnızca seçtiğin yerel bağdaştırıcı değişir ve yeniden başlar; kısa kesinti olabilir. Bağlantısı kesik Ethernet’i değiştirmek aktif WiFi trafiğini etkilemez.</p>
     {!state && <p className="panel-help">Yerel bağlantılar yükleniyor…</p>}
     {state?.platform !== "windows" && state && <p className="panel-help">{state.message}</p>}
     {state?.platform === "windows" && !state.can_apply && <p className="panel-help">Doğrudan değiştirmek için Windows backend’ini Yönetici olarak çalıştır. Alternatif: yönetici scriptini indir ve Yönetici PowerShell’de çalıştır.</p>}
     {error && <div className="form-error" role="alert">{error}</div>}
     {state?.platform === "windows" && !state.adapters.length && <p>Fiziksel adaptör bulunamadı.</p>}
-    {!!state?.adapters.length && <form className="playbook-form" onSubmit={apply}>
-      <label>Yerel bağlantı<select value={selected} disabled={busy} onChange={(event) => { invalidate(); setSelected(event.target.value); }}>
-        {state.adapters.map((item) => <option value={item.interface_id} key={item.interface_id}>{item.name} · {item.status}{!item.supports_override ? " · MAC değiştirme desteklenmiyor" : ""}</option>)}
-      </select></label>
+    {!!state?.adapters.length && <form className="playbook-form mac-management-form" onSubmit={apply}>
+      <fieldset className="mac-adapter-picker" disabled={busy}>
+        <legend>Bu bilgisayarın fiziksel bağlantıları</legend>
+        <div className="mac-adapter-picker__options">
+          {state.adapters.map((item) => <label className="mac-adapter-choice" key={item.interface_id}>
+            <input type="radio" name="local-adapter" value={item.interface_id} checked={selected === item.interface_id}
+              onChange={() => { invalidate(); setSelected(item.interface_id); }} />
+            <span><strong>{item.name}</strong><small>{item.description || "Fiziksel ağ bağdaştırıcısı"}</small></span>
+            <span className="mac-adapter-choice__state">{item.status} · {item.supports_override ? "MAC değiştirilebilir" : "Sürücü desteklemiyor"}<small>{item.current_mac || "MAC okunamadı"}</small></span>
+          </label>)}
+        </div>
+      </fieldset>
       <label>Mod<select value={mode} disabled={busy} onChange={(event) => {
         invalidate();
         if (event.target.value === "random") randomize();

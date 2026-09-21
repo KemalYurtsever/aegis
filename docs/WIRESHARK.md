@@ -13,6 +13,8 @@ From the repository root, with `aegis-network-tools` running:
 
 The launcher discovers the toolbox bridge network, starts two optional containers, creates `/config/captures`, and waits for authenticated HTTPS. It generates a random local password only if none exists. It does not recreate the toolbox or restart the API. Verification checks the current namespace, health, loopback port, anonymous denial, authenticated success, proxy syntax and non-root interface listing; it sends no scan traffic and starts no capture.
 
+The password file is ignored by Git. If an operator explicitly chooses a password shorter than 20 characters, an ignored `secrets/wireshark_allow_short_password.txt` file opts that local installation out of the launcher's length check; otherwise the launcher continues to require at least 20 characters. After editing the password file, recreate the Wireshark and proxy containers so the GUI reads the new secret, then run `verify-wireshark.ps1`.
+
 Open **Wireshark → Open Wireshark** in Aegis, or `https://127.0.0.1:8444/`. Sign in as `aegis` using `secrets/wireshark_password.txt`. Authentication is separate from the Aegis account. The image supplies a self-signed certificate by default; the first browser connection may require your manual approval. No browser or Windows trust settings are modified by the scripts. [HTTPS and authentication behavior](https://docs.linuxserver.io/images/docker-wireshark/#security).
 
 `start-hybrid.ps1 -WithWireshark` enables it on a first hybrid launch. Once its password file exists, subsequent hybrid launches automatically restart/reattach it. The GUI is optional: core Aegis can still start without Docker.

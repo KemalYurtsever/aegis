@@ -21,6 +21,13 @@ export function newRandomMac(excluded = [], cryptoProvider = globalThis.crypto) 
   throw new Error("Farklı bir rastgele MAC üretilemedi; tekrar dene.");
 }
 
+export function preferredMacAdapter(adapters, currentId = "") {
+  return adapters.find((item) => item.interface_id === currentId) ||
+    adapters.find((item) => item.status === "Up" && item.supports_override) ||
+    adapters.find((item) => item.supports_override) ||
+    adapters.find((item) => item.status === "Up") || adapters[0] || null;
+}
+
 export function macApplyPayload(plan) {
   if (!plan?.plan_token) throw new Error("Değişiklik planı oluşturulamadı; tekrar Uygula’ya bas.");
   return {

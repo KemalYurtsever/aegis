@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { changeMacDirectly, macApplyPayload, macChangeRequest, newRandomMac, normalizeMac } from "../src/mac.js";
+import { changeMacDirectly, macApplyPayload, macChangeRequest, newRandomMac, normalizeMac, preferredMacAdapter } from "../src/mac.js";
 
 const target = "02:11:22:33:44:55";
 const interfaceId = "11111111-1111-1111-1111-111111111111";
@@ -24,6 +24,16 @@ test("random MAC generation sets local bit, clears multicast and avoids local co
     assert.notEqual(value, target);
   }
   assert.throws(() => newRandomMac([target], { getRandomValues(bytes) { bytes.set([2, 17, 34, 51, 68, 85]); return bytes; } }));
+});
+
+test("adapter selection includes disconnected Ethernet when active Wi-Fi cannot change MAC", () => {
+  const wifi = { interface_id: "wifi", status: "Up", supports_override: false };
+  const ethernet = { interface_id: "ethernet", status: "Disconnected", supports_override: true };
+  const adapters = [wifi, ethernet];
+  assert.equal(preferredMacAdapter(adapters).interface_id, "ethernet");
+  assert.equal(preferredMacAdapter(adapters, "wifi").interface_id, "wifi");
+  assert.equal(preferredMacAdapter(adapters, "missing").interface_id, "ethernet");
+  assert.equal(preferredMacAdapter([], "missing"), null);
 });
 test("apply binds the exact preview and factory restore omits replacement", () => {
   const plan = { interface_id: "11111111-1111-1111-1111-111111111111", mode: "random", previous_mac: "02:00:00:00:00:01", target_mac: target, plan_token: "synthetic-server-preview-token" };
@@ -127,6 +137,7 @@ test("MAC panel submits directly without a preview step or confirmation checkbox
   assert.match(workbench, /\["mac", "MAC management", "MAC"\]/);
   assert.match(workbench, /<MacManagementPanel \/>/);
   assert.match(panel, /onSubmit=\{apply\}/);
+  assert.match(panel, /state\.adapters\.map\(\(item\) => <label className="mac-adapter-choice"/);
   assert.match(panel, /changeMacDirectly\(macChangeRequest\(selected, mode, mac\)/);
   assert.match(panel, /busy \|\| !supported \|\| !state\.can_apply/);
   assert.match(panel, /changing\.current = true/);

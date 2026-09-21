@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 $wiresharkProject = Split-Path -Parent $MyInvocation.MyCommand.Path
 $wiresharkCompose = Join-Path $wiresharkProject "docker-compose.wireshark.yml"
 $wiresharkSecret = Join-Path $wiresharkProject "secrets\wireshark_password.txt"
+$wiresharkShortPasswordOptIn = Join-Path $wiresharkProject "secrets\wireshark_allow_short_password.txt"
 $wiresharkContainer = "aegis-network-tools"
 $wiresharkDockerBin = Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin"
 if (Test-Path -LiteralPath $wiresharkDockerBin) { $env:Path = "$wiresharkDockerBin;$env:Path" }
@@ -32,7 +33,11 @@ if (-not (Test-Path -LiteralPath $wiresharkSecret)) {
     try { $wiresharkRng.GetBytes($wiresharkRandomBytes) } finally { $wiresharkRng.Dispose() }
     [System.IO.File]::WriteAllText($wiresharkSecret, [Convert]::ToBase64String($wiresharkRandomBytes), [System.Text.UTF8Encoding]::new($false))
 }
-if ((Get-Content -Raw -LiteralPath $wiresharkSecret).Trim().Length -lt 20) { throw "Wireshark's existing local password is too short. Set a password of at least 20 characters in secrets/wireshark_password.txt." }
+$wiresharkPasswordLength = (Get-Content -Raw -LiteralPath $wiresharkSecret).Trim().Length
+if ($wiresharkPasswordLength -eq 0) { throw "Wireshark's local password file is empty." }
+if ($wiresharkPasswordLength -lt 20 -and -not (Test-Path -LiteralPath $wiresharkShortPasswordOptIn)) {
+    throw "Wireshark's existing local password is too short. Set a password of at least 20 characters or create the ignored secrets/wireshark_allow_short_password.txt opt-in file."
+}
 
 $env:AEGIS_NETWORK_TOOLBOX_CONTAINER = $wiresharkContainer
 $env:AEGIS_WIRESHARK_NETWORK = $wiresharkNetworks[0]
