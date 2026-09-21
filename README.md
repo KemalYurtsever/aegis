@@ -22,6 +22,7 @@ Register a device → Observe health → Assess exposure → Prioritize evidence
 | Investigate one device | **Device record** | Monitoring history, services, telemetry, notes, findings, and asset context. |
 | Run a repeatable security review | **Security workbench → Assessment** | A saved four-step assessment with network, service, mDNS, CVE, and DNS evidence. |
 | Run one specific network test | **Assessment → Manual checks** | A bounded Nmap, TCP, traceroute, DNS, TLS, web, or SMB result. |
+| Validate a device's network path | **Device record → Network validation** | Configured subnet context, ordered troubleshooting evidence, and expected source-to-destination TCP reachability. |
 | Refresh local vulnerability intelligence | **Security workbench → CVE mirror** | Integrity-checked NVD CVE and CPE applicability data for local matching. |
 | Confirm that Aegis itself is ready | **Administration → System status** | Database, scheduler, integrations, and supporting-tool readiness. |
 
@@ -53,7 +54,7 @@ Measured API improvements, request budgets and regression checks are documented 
 | Inventory health | Identifies incomplete asset records so operators can improve ownership, classification, and support information. |
 | Service-health overview | Summarizes monitored TCP, HTTP, and HTTPS services and exposes unhealthy checks without opening each device. |
 | Remote-agent fleet | Summarizes enrolled collectors as waiting, reporting, delayed, or offline and prioritizes stale agents. |
-| Logical topology | Groups devices by VLAN and subnet, shows inferred network relationships, and displays operator-confirmed links separately. |
+| Logical topology | Groups devices by configured subnet prefix and VLAN, labels unknown subnets, and displays operator-confirmed links separately. |
 | Command palette | Opens devices and operational panels from a keyboard-searchable menu using `Ctrl+K` or `Cmd+K`. |
 | Responsive navigation | Provides mobile navigation, fixed desktop navigation, collapsible sections, light and dark themes, readable typography, and keyboard focus states. |
 
@@ -68,13 +69,14 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 | Function | What it does |
 |---|---|
 | Device management | Creates, edits, views, and deletes monitored devices with normalized IPv4 or IPv6 addresses and duplicate-address protection. |
+| Network placement | Records the actual prefix length, gateway, and VLAN for each device; unknown values remain explicit. |
 | Device groups | Assigns an operational group such as a site, floor, lab, or business unit for filtering and bulk administration. |
 | Device profile | Combines availability statistics, latency history, status transitions, service checks, telemetry, SNMP, alerts, assessments, and agent state on one page. |
 | Notes | Stores timestamped operational notes against a device. |
 | Attachments | Stores validated UTF-8 text, PDF, PNG, and JPEG files up to 5 MiB. Files use randomized storage names and download as attachments. |
 | Activity timeline | Merges important device events into a chronological operational history. |
 | Change history | Records material changes to inventory data for later review. |
-| DHCP import | Allows administrators to import lease information into inventory with validation and duplicate handling. |
+| DHCP import | Allows administrators to import lease information, including optional prefix and gateway fields, with validation and duplicate handling. |
 | CSV export | Exports the complete filtered and sorted inventory as UTF-8 CSV, independent of the current page. |
 | Excel export | Creates a formatted `.xlsx` workbook with typed values, filters, frozen headers, and a formula-driven summary sheet. The Excel library loads only when requested. |
 | Shareable device URLs | Gives every device a direct URL such as `/devices/1` and supports normal browser Back and Forward navigation. |
@@ -83,9 +85,9 @@ The dashboard refreshes every 15 seconds. **Check all** runs an immediate reacha
 
 *Filterable inventory, topology context, and recent monitoring activity.*
 
-![Aegis device profile showing health and asset information](docs/screenshots/03-device-profile.png)
+![Aegis device profile showing health, subnet prefix, gateway, VLAN, and asset information](docs/screenshots/03-device-profile.png)
 
-*Device profile combining live health with the registered asset record.*
+*Device profile combining availability with a synthetic asset record and configured network context.*
 
 ### Availability, services, and alerts
 
@@ -131,6 +133,10 @@ Anomaly results are operational indicators, not diagnoses. Aegis performs this a
 | Wireshark packet analysis | Opens the real Wireshark GUI in an optional Docker sidecar sharing the toolbox's network namespace. Inspect scans, protocol fields and TCP streams, save PCAP/PCAPNG in a dedicated volume, or import host-captured files. Windows physical interfaces are not directly visible. Previous metadata capture records remain available as legacy history. |
 | Remote diagnostics and safe validation | Dispatches only fixed, administrator-approved job types to explicitly enabled agents. Safe simulations include signed callbacks, synthetic credential canaries, password-policy inspection, temporary markers, generated-file activity, benign detection variations, registered-device segmentation probes, and signed non-executable artifacts. Jobs are device-bound, parameter-bounded, expire after 15 minutes, clean up generated data, and cannot contain arbitrary commands. |
 | Wireless status | Reports the local Aegis host's wireless-adapter state without collecting Wi-Fi keys or handshakes. |
+
+![Aegis network validation panel with ordered troubleshooting evidence and a segmentation expectation](docs/screenshots/09-network-validation.png)
+
+*Network validation on synthetic demo devices. Troubleshooting runs from the Aegis host; the segmentation result compares an agent-reported TCP outcome with the expected path. A failed handshake does not identify the cause.*
 
 ![Aegis remote diagnostics panel for bounded agent-side checks](docs/screenshots/04-remote-diagnostics.png)
 
