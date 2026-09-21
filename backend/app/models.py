@@ -27,6 +27,8 @@ class Device(Base):
     fingerprinted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     inventory_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
     vlan: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prefix_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gateway_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     asset_tag: Mapped[str | None] = mapped_column(String(80), nullable=True)
     owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -62,6 +64,9 @@ class Device(Base):
         back_populates="device", cascade="all, delete-orphan", passive_deletes=True
     )
     diagnostic_jobs: Mapped[list["DiagnosticJob"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan", passive_deletes=True
+    )
+    troubleshooting_runs: Mapped[list["TroubleshootingRun"]] = relationship(
         back_populates="device", cascade="all, delete-orphan", passive_deletes=True
     )
     notes: Mapped[list["DeviceNote"]] = relationship(
@@ -690,6 +695,57 @@ class DiagnosticJob(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     device: Mapped[Device] = relationship(back_populates="diagnostic_jobs")
+
+
+class TroubleshootingRun(Base):
+    __tablename__ = "troubleshooting_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="AEGIS_HOST")
+    steps_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    device: Mapped[Device] = relationship(back_populates="troubleshooting_runs")
+
+
+class SegmentationPolicy(Base):
+    __tablename__ = "segmentation_policies"
+    __table_args__ = (
+        UniqueConstraint("source_device_id", "target_device_id", "target_port", name="uq_segmentation_policy_path"),
+        CheckConstraint("expected_reachability IN ('ALLOW', 'DENY')", name="ck_segmentation_expected"),
+        CheckConstraint("target_port >= 1 AND target_port <= 65535", name="ck_segmentation_port"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_reachability: Mapped[str] = mapped_column(String(5), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    checks: Mapped[list["SegmentationCheck"]] = relationship(
+        back_populates="policy", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class SegmentationCheck(Base):
+    __tablename__ = "segmentation_checks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    policy_id: Mapped[int] = mapped_column(ForeignKey("segmentation_policies.id", ondelete="CASCADE"), index=True, nullable=False)
+    diagnostic_job_id: Mapped[int] = mapped_column(ForeignKey("diagnostic_jobs.id", ondelete="CASCADE"), unique=True, nullable=False)
+    expected_reachability: Mapped[str] = mapped_column(String(5), nullable=False)
+    source_ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    target_ip: Mapped[str] = mapped_column(String(45), nullable=False)
+    target_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    policy: Mapped[SegmentationPolicy] = relationship(back_populates="checks")
+    job: Mapped[DiagnosticJob] = relationship()
 
 
 class AuthBootstrapClaim(Base):

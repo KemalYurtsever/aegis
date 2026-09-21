@@ -542,6 +542,36 @@ export function cancelDiagnosticJob(jobId) {
   return request(`/api/diagnostic-jobs/${jobId}/cancel`, { method: "POST" });
 }
 
+export function listTroubleshootingRuns(deviceId) {
+  return request(`/api/devices/${deviceId}/troubleshooting-runs`);
+}
+
+export function runTroubleshooting(deviceId, payload) {
+  return jsonRequest(`/api/devices/${deviceId}/troubleshooting-runs`, "POST", payload);
+}
+
+export function listSegmentationPolicies(sourceDeviceId) {
+  return request(`/api/segmentation-policies?source_device_id=${sourceDeviceId}`);
+}
+
+export function createSegmentationPolicy(payload) {
+  return jsonRequest("/api/segmentation-policies", "POST", payload);
+}
+
+export function deleteSegmentationPolicy(policyId) {
+  return request(`/api/segmentation-policies/${policyId}`, { method: "DELETE" });
+}
+
+export function listSegmentationChecks(policyId) {
+  return request(`/api/segmentation-policies/${policyId}/checks`);
+}
+
+export function runSegmentationCheck(policyId, authorizationPhrase) {
+  return jsonRequest(`/api/segmentation-policies/${policyId}/checks`, "POST", {
+    authorization_phrase: authorizationPhrase,
+  });
+}
+
 export function getAutomationOverview() {
   return request("/api/automation/overview");
 }

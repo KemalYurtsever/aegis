@@ -19,6 +19,8 @@ def test_dhcp_import_adds_and_updates_by_mac_without_overwriting_manual_name(cli
                 "ip_address": "198.18.50.20",
                 "mac_address": "00-11-22-33-44-55",
                 "vlan": "20",
+                "prefix_length": 24,
+                "gateway_ip": "198.18.50.1",
                 "lease_expires_at": "2026-08-16T12:00:00Z",
             }]
         },
@@ -36,6 +38,7 @@ def test_dhcp_import_adds_and_updates_by_mac_without_overwriting_manual_name(cli
     assert device["mac_address"] == "00:11:22:33:44:55"
     assert device["inventory_source"] == "DHCP_IMPORT"
     assert device["vlan"] == "20"
+    assert (device["prefix_length"], device["gateway_ip"]) == (24, "198.18.50.1")
 
     renamed = client.put(
         f"/api/devices/{device['id']}",
@@ -69,6 +72,16 @@ def test_dhcp_import_adds_and_updates_by_mac_without_overwriting_manual_name(cli
     assert devices[0]["name"] == "Reception Printer"
     assert devices[0]["ip_address"] == "198.18.50.21"
     assert devices[0]["vlan"] == "30"
+    assert devices[0]["prefix_length"] is None
+    assert devices[0]["gateway_ip"] is None
+
+    corrected = client.post("/api/inventory/dhcp-leases/import", headers=headers, json={
+        "rows": [{"ip_address": "198.18.50.21", "mac_address": "00:11:22:33:44:55",
+                  "prefix_length": 27, "gateway_ip": "198.18.50.1", "vlan": "30"}],
+    })
+    assert corrected.status_code == 200
+    restored = client.get(f"/api/devices/{device['id']}", headers=headers).json()
+    assert (restored["prefix_length"], restored["gateway_ip"]) == (27, "198.18.50.1")
 
 
 def test_dhcp_import_reports_mac_and_ip_ownership_conflict(client):

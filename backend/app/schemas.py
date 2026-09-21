@@ -1,11 +1,11 @@
 from datetime import datetime
 from enum import Enum
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 import re
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.services.scan_policy import mac_target_rejection_reason, unicast_target_rejection_reason
 
@@ -21,9 +21,39 @@ class DeviceType(str, Enum):
     other = "Other"
 
 
+def validate_device_network(ip: str, prefix_length: int | None, gateway_ip: str | None) -> None:
+    address = ip_address(ip)
+    if prefix_length is not None:
+        maximum = 32 if address.version == 4 else 128
+        if prefix_length > maximum:
+            raise ValueError(f"IPv{address.version} prefix length must be at most {maximum}")
+        network = ip_network(f"{address}/{prefix_length}", strict=False)
+        if address.version == 4 and prefix_length < 31 and address in {
+            network.network_address, network.broadcast_address
+        }:
+            raise ValueError("Device IP cannot be the configured network or broadcast address")
+    if gateway_ip is not None:
+        gateway = ip_address(gateway_ip)
+        rejection = unicast_target_rejection_reason(str(gateway))
+        if rejection:
+            raise ValueError(f"Invalid gateway: {rejection}")
+        if gateway.version != address.version:
+            raise ValueError("Gateway and device IP addresses must use the same IP version")
+        if prefix_length is not None:
+            if gateway not in network:
+                raise ValueError("Gateway must belong to the configured device subnet")
+            if address.version == 4 and prefix_length < 31 and gateway in {
+                network.network_address, network.broadcast_address
+            }:
+                raise ValueError("Gateway cannot be the configured network or broadcast address")
+
+
 class DeviceFields(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     ip_address: str
+    prefix_length: int | None = Field(default=None, ge=0, le=128)
+    gateway_ip: str | None = None
+    vlan: str | None = Field(default=None, max_length=64)
     device_type: DeviceType = DeviceType.other
     description: str | None = Field(default=None, max_length=500)
     asset_tag: str | None = Field(default=None, max_length=80)
@@ -56,6 +86,28 @@ class DeviceFields(BaseModel):
         if rejection:
             raise ValueError(rejection)
         return normalized
+
+    @field_validator("gateway_ip")
+    @classmethod
+    def normalize_gateway_ip(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            return str(ip_address(value.strip()))
+        except ValueError as exc:
+            raise ValueError("A valid gateway IPv4 or IPv6 address is required") from exc
+
+    @field_validator("vlan")
+    @classmethod
+    def normalize_vlan(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def validate_network_details(self):
+        validate_device_network(self.ip_address, self.prefix_length, self.gateway_ip)
+        return self
 
     @field_validator("description", "asset_tag", "owner", "location", "operating_system", "maintenance_reason", "device_group")
     @classmethod
@@ -107,7 +159,6 @@ class DeviceRead(DeviceFields):
     fingerprint_summary: str | None = None
     fingerprinted_at: datetime | None = None
     inventory_source: str | None = None
-    vlan: str | None = None
     lease_expires_at: datetime | None = None
     created_at: datetime
 
@@ -362,7 +413,7 @@ class TopologyDevice(BaseModel):
 class TopologyNetwork(BaseModel):
     key: str
     label: str
-    subnet: str
+    subnet: str | None
     vlan: str | None
     gateway_ip: str | None
     gateway_device_id: int | None
@@ -406,6 +457,8 @@ class DhcpLeaseRow(BaseModel):
     mac_address: str | None = None
     lease_expires_at: datetime | None = None
     vlan: str | None = Field(default=None, max_length=64)
+    prefix_length: int | None = Field(default=None, ge=0, le=32)
+    gateway_ip: str | None = None
 
     @field_validator("hostname", "vlan")
     @classmethod
@@ -424,7 +477,28 @@ class DhcpLeaseRow(BaseModel):
             raise ValueError("A valid IPv4 address is required") from exc
         if parsed.version != 4:
             raise ValueError("DHCP lease imports support IPv4 addresses only")
+        rejection = unicast_target_rejection_reason(str(parsed))
+        if rejection:
+            raise ValueError(rejection)
         return str(parsed)
+
+    @field_validator("gateway_ip")
+    @classmethod
+    def normalize_gateway_ip(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            address = ip_address(value.strip())
+        except ValueError as exc:
+            raise ValueError("A valid IPv4 gateway address is required") from exc
+        if address.version != 4:
+            raise ValueError("DHCP lease gateways must use IPv4")
+        return str(address)
+
+    @model_validator(mode="after")
+    def validate_network_details(self):
+        validate_device_network(self.ip_address, self.prefix_length, self.gateway_ip)
+        return self
 
     @field_validator("mac_address")
     @classmethod
@@ -772,6 +846,91 @@ class DiagnosticJobResultSubmission(BaseModel):
     status: Literal["COMPLETED", "FAILED"]
     result: Any | None = None
     error: str | None = Field(default=None, max_length=1000)
+
+
+class TroubleshootingRunCreate(BaseModel):
+    dns_name: str | None = Field(default=None, max_length=253)
+    tcp_port: int | None = Field(default=None, ge=1, le=65535)
+    service_check_id: int | None = Field(default=None, gt=0)
+    include_route: bool = False
+
+    @field_validator("dns_name")
+    @classmethod
+    def normalize_dns_name(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            normalized = value.strip().rstrip(".").encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise ValueError("A valid DNS hostname is required") from exc
+        labels = normalized.split(".")
+        if not normalized or len(normalized) > 253 or any(
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in labels
+        ):
+            raise ValueError("A valid DNS hostname is required")
+        return normalized
+
+
+class TroubleshootingStepRead(BaseModel):
+    key: Literal["CONFIG", "GATEWAY", "DNS", "ROUTE", "TARGET", "PORT", "SERVICE"]
+    status: Literal["PASS", "FAIL", "SKIP", "INFO"]
+    observation: str
+
+
+class TroubleshootingRunRead(BaseModel):
+    id: int
+    device_id: int
+    target_ip: str
+    requested_by: str
+    source: Literal["AEGIS_HOST"]
+    steps: list[TroubleshootingStepRead]
+    created_at: datetime
+
+
+class SegmentationPolicyCreate(BaseModel):
+    source_device_id: int = Field(gt=0)
+    target_device_id: int = Field(gt=0)
+    target_port: int = Field(ge=1, le=65535)
+    expected_reachability: Literal["ALLOW", "DENY"]
+    description: str | None = Field(default=None, max_length=200)
+
+    @field_validator("description")
+    @classmethod
+    def normalize_policy_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return " ".join(value.split()) or None
+
+
+class SegmentationCheckCreate(BaseModel):
+    authorization_phrase: Literal["RUN SAFE VALIDATION"]
+
+
+class SegmentationPolicyRead(SegmentationPolicyCreate):
+    id: int
+    source_name: str
+    source_ip: str
+    target_name: str
+    target_ip: str
+    created_by: str
+    created_at: datetime
+
+
+class SegmentationCheckRead(BaseModel):
+    id: int
+    policy_id: int
+    diagnostic_job_id: int
+    expected_reachability: Literal["ALLOW", "DENY"]
+    source_ip: str
+    target_ip: str
+    target_port: int
+    status: Literal["PENDING", "MATCH", "DEVIATION", "INCONCLUSIVE"]
+    observed_connected: bool | None
+    error_type: str | None
+    interpretation: str
+    created_at: datetime
+    completed_at: datetime | None
 
 
 class UserRead(BaseModel):

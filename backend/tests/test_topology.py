@@ -27,6 +27,8 @@ def test_topology_groups_vlan_gateway_infrastructure_and_endpoints(client, monke
         client.put(f"/api/devices/{created['id']}", headers=headers, json={
             "name": name,
             "ip_address": address,
+            "prefix_length": 24,
+            "gateway_ip": "198.19.4.1",
             "device_type": device_type,
             "is_active": True,
         })
@@ -63,3 +65,31 @@ def test_topology_groups_vlan_gateway_infrastructure_and_endpoints(client, monke
         "target_device_id": source["device_id"],
     })
     assert self_link.status_code == 422
+
+
+def test_topology_uses_configured_prefix_and_does_not_invent_unknown_subnets(client, admin_headers, monkeypatch):
+    monkeypatch.setattr(
+        "app.routers.topology.cached_connected_network",
+        lambda: LocalNetwork("Wi-Fi", "198.18.42.11", "198.18.42.0/26", "198.18.42.1"),
+    )
+    for name, address, prefix in (
+        ("First subnet", "198.18.42.10", 26),
+        ("Second subnet", "198.18.42.70", 26),
+        ("Unknown subnet", "198.18.42.130", None),
+    ):
+        created = client.post("/api/devices", headers=admin_headers, json={
+            "name": name,
+            "ip_address": address,
+            "prefix_length": prefix,
+            "vlan": "LAB-42",
+        })
+        assert created.status_code == 201
+
+    groups = client.get("/api/topology", headers=admin_headers).json()["groups"]
+    assert {group["subnet"] for group in groups} == {
+        "198.18.42.0/26", "198.18.42.64/26", None,
+    }
+    assert next(group for group in groups if group["subnet"] is None)["label"] == (
+        "VLAN LAB-42 · subnet not configured"
+    )
+    assert all(group["gateway_ip"] is None for group in groups)

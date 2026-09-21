@@ -26,6 +26,8 @@ from app.routers.inventory import build_inventory_health, router as inventory_ro
 from app.routers.reliability import router as reliability_router
 from app.routers.reports import router as reports_router
 from app.routers.topology import build_topology, cached_connected_network, router as topology_router
+from app.routers.troubleshooting import router as troubleshooting_router
+from app.routers.segmentation import router as segmentation_router
 from app.routers.diagnostics import ingest_router as diagnostic_ingest_router, router as diagnostics_router
 from app.routers.automation import router as automation_router
 from app.routers.system import router as system_router
@@ -218,6 +220,8 @@ app.include_router(inventory_router)
 app.include_router(reliability_router)
 app.include_router(reports_router)
 app.include_router(topology_router)
+app.include_router(troubleshooting_router)
+app.include_router(segmentation_router)
 app.include_router(diagnostics_router)
 app.include_router(diagnostic_ingest_router)
 app.include_router(automation_router)

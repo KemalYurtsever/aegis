@@ -1,5 +1,5 @@
 from collections import defaultdict
-from ipaddress import ip_address, ip_network
+from ipaddress import ip_network
 import threading
 import time
 
@@ -72,10 +72,14 @@ def delete_topology_link(link_id: int, db: Session = Depends(get_db)) -> Respons
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def device_subnet(address: str) -> str:
-    parsed = ip_address(address)
-    prefix = 24 if parsed.version == 4 else 64
-    return str(ip_network(f"{parsed}/{prefix}", strict=False))
+def device_subnet(device: Device) -> str | None:
+    if device.prefix_length is None:
+        return None
+    try:
+        return str(ip_network(f"{device.ip_address}/{device.prefix_length}", strict=False))
+    except ValueError:
+        # An older database can contain invalid operator-supplied values.
+        return None
 
 
 def connected_network() -> LocalNetwork | None:
@@ -152,22 +156,19 @@ def build_topology(
 
     grouped: dict[tuple[str | None, str], list[Device]] = defaultdict(list)
     for device in devices:
-        grouped[(device.vlan, device_subnet(device.ip_address))].append(device)
+        grouped[(device.vlan, device_subnet(device))].append(device)
 
     groups: list[TopologyNetwork] = []
     for (vlan, subnet), devices in grouped.items():
-        subnet_network = ip_network(subnet)
+        subnet_network = ip_network(subnet) if subnet else None
         gateway_ip = None
-        if active_network and active_network.gateway:
-            candidate = ip_address(active_network.gateway)
-            if candidate in subnet_network:
-                gateway_ip = active_network.gateway
+        configured_gateways = {device.gateway_ip for device in devices if device.gateway_ip}
+        if subnet_network and len(configured_gateways) == 1:
+            gateway_ip = next(iter(configured_gateways))
         gateway_device = next(
             (device for device in devices if gateway_ip and device.ip_address == gateway_ip),
             None,
-        ) or next((device for device in devices if device.device_type == "Router"), None)
-        if gateway_ip is None and gateway_device is not None:
-            gateway_ip = gateway_device.ip_address
+        )
 
         rows: list[TopologyDevice] = []
         for device in devices:
@@ -186,7 +187,10 @@ def build_topology(
                 role=role,
             ))
         rows.sort(key=lambda row: ({"GATEWAY": 0, "INFRASTRUCTURE": 1, "ENDPOINT": 2}[row.role], row.name.lower()))
-        label = f"VLAN {vlan} · {subnet}" if vlan else subnet
+        label = (
+            f"VLAN {vlan} · {subnet or 'subnet not configured'}"
+            if vlan else subnet or "Subnet not configured"
+        )
         groups.append(TopologyNetwork(
             key=f"{vlan or 'untagged'}:{subnet}",
             label=label,
@@ -200,7 +204,7 @@ def build_topology(
             unknown_devices=sum(row.status == "UNKNOWN" for row in rows),
             devices=rows,
         ))
-    groups.sort(key=lambda group: (group.vlan or "", ip_network(group.subnet).version, group.subnet))
+    groups.sort(key=lambda group: (group.vlan or "", group.subnet is None, group.subnet or ""))
     all_devices = {device.id: device for devices in grouped.values() for device in devices}
     links = [
         serialize_link(link, all_devices)

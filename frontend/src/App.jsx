@@ -88,6 +88,7 @@ import {
 const AttackPathsModal = lazy(() => import("./AttackPathsModal.jsx"));
 const AutomationModal = lazy(() => import("./AutomationModal.jsx"));
 const RemoteDiagnosticsPanel = lazy(() => import("./RemoteDiagnosticsPanel.jsx"));
+const NetworkValidationPanel = lazy(() => import("./NetworkValidationPanel.jsx"));
 const SecurityWorkbenchModal = lazy(() => import("./SecurityWorkbenchModal.jsx"));
 const SystemStatusModal = lazy(() => import("./SystemStatusModal.jsx"));
 
@@ -158,6 +159,9 @@ const EMPTY_SERVICE_OVERVIEW = {
 const EMPTY_FORM = {
   name: "",
   ip_address: "",
+  prefix_length: "",
+  gateway_ip: "",
+  vlan: "",
   device_type: "Other",
   description: "",
   asset_tag: "",
@@ -1400,6 +1404,9 @@ function DeviceForm({ device, onClose, onSaved }) {
       ? {
           name: device.name,
           ip_address: device.ip_address,
+          prefix_length: device.prefix_length ?? "",
+          gateway_ip: device.gateway_ip || "",
+          vlan: device.vlan || "",
           device_type: device.device_type,
           description: device.description || "",
           asset_tag: device.asset_tag || "",
@@ -1433,6 +1440,9 @@ function DeviceForm({ device, onClose, onSaved }) {
     try {
       const payload = {
         ...form,
+        prefix_length: form.prefix_length === "" ? null : Number(form.prefix_length),
+        gateway_ip: form.gateway_ip.trim() || null,
+        vlan: form.vlan.trim() || null,
         description: form.description.trim() || null,
         asset_tag: form.asset_tag.trim() || null,
         owner: form.owner.trim() || null,
@@ -1509,6 +1519,40 @@ function DeviceForm({ device, onClose, onSaved }) {
               required
             />
           </label>
+          <div className="device-field-grid">
+            <label>
+              Prefix length
+              <input
+                name="prefix_length"
+                type="number"
+                min="0"
+                max={form.ip_address.includes(":") ? "128" : "32"}
+                value={form.prefix_length}
+                onChange={updateField}
+                placeholder={form.ip_address.includes(":") ? "64" : "24"}
+              />
+            </label>
+            <label>
+              Gateway IP
+              <input
+                name="gateway_ip"
+                value={form.gateway_ip}
+                onChange={updateField}
+                placeholder="Optional"
+              />
+            </label>
+            <label>
+              VLAN
+              <input
+                name="vlan"
+                value={form.vlan}
+                onChange={updateField}
+                maxLength="64"
+                placeholder="Optional"
+              />
+            </label>
+          </div>
+          <p className="field-hint">Leave the prefix blank when the actual subnet is unknown.</p>
           <label>
             Device type
             <select
@@ -2765,6 +2809,8 @@ const DHCP_HEADER_ALIASES = {
     "expiry",
   ],
   vlan: ["vlan", "vlan_id", "network"],
+  prefix_length: ["prefix_length", "prefix", "cidr_prefix"],
+  gateway_ip: ["gateway_ip", "gateway", "default_gateway"],
 };
 
 function parseCsvRecords(text) {
@@ -2842,6 +2888,9 @@ function rowsFromDhcpCsv(text) {
       );
     }
     const mac = value("mac_address");
+    const prefix = value("prefix_length");
+    if (prefix && (!/^\d{1,2}$/.test(prefix) || Number(prefix) > 32))
+      throw new Error(`Row ${index + 2}: prefix length must be 0–32.`);
     const compactMac = mac.replace(/[:.\-]/g, "");
     if (mac && !/^[0-9a-fA-F]{12}$/.test(compactMac))
       throw new Error(`Row ${index + 2}: invalid MAC address.`);
@@ -2857,6 +2906,8 @@ function rowsFromDhcpCsv(text) {
       mac_address: mac || null,
       lease_expires_at: parsedExpiry ? parsedExpiry.toISOString() : null,
       vlan: value("vlan") || null,
+      prefix_length: prefix === "" ? null : Number(prefix),
+      gateway_ip: value("gateway_ip") || null,
     };
   });
 }
@@ -3613,6 +3664,7 @@ function DhcpImportModal({ onClose, onImported }) {
             file itself is never uploaded or stored. Required header:{" "}
             <code>ip_address</code>. Optional: <code>hostname</code>,{" "}
             <code>mac_address</code>, <code>vlan</code>,{" "}
+            <code>prefix_length</code>, <code>gateway_ip</code>,{" "}
             <code>lease_expires_at</code> (ISO date/time).
           </p>
           <label>
@@ -4159,8 +4211,9 @@ function DeviceDetail({
           <p className="eyebrow">Device details</p>
           <h1>{device.name}</h1>
           <p className="subtitle">
-            {device.ip_address} · {device.device_type}
+            {device.ip_address}{device.prefix_length === null ? "" : `/${device.prefix_length}`} · {device.device_type}
           </p>
+          <p className="subtitle">VLAN {device.vlan || "unknown"} · Gateway {device.gateway_ip || "unknown"}</p>
         </div>
         <div className="detail-actions">
           <button
@@ -4406,6 +4459,11 @@ function DeviceDetail({
         onChanged={load}
         canManage={isAdmin}
       />
+      {isAdmin && (
+        <Suspense fallback={<LazyPanelFallback label="network validation" />}>
+          <NetworkValidationPanel key={device.id} device={device} devices={devices} serviceChecks={details.serviceChecks} agent={details.agent} />
+        </Suspense>
+      )}
       {isAdmin && (
         <Suspense fallback={<LazyPanelFallback label="remote diagnostics" />}>
           <RemoteDiagnosticsPanel deviceId={device.id} agent={details.agent} devices={devices} />

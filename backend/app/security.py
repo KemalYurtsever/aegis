@@ -154,6 +154,8 @@ def rate_limit_for(request: Request) -> tuple[str, RateLimit]:
         or path.endswith("/fingerprint")
         or path.endswith("/fingerprint-all")
         or path.endswith("/dhcp-leases/import")
+        or path.endswith("/troubleshooting-runs")
+        or (path.startswith("/api/segmentation-policies/") and path.endswith("/checks"))
         or path == "/api/backups"
         or (path.startswith("/api/backups/") and path.endswith("/verify"))
         or path == "/api/retention/apply"

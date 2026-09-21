@@ -144,6 +144,55 @@ def test_normalizes_ipv6_address(client):
     assert response.json()["ip_address"] == "2001:db8::1"
 
 
+def test_device_network_details_are_validated_and_preserved_on_partial_update(client):
+    created = create_device(
+        client,
+        prefix_length=26,
+        gateway_ip="198.18.56.1",
+        vlan="  LAB-20  ",
+    )
+    assert created.status_code == 201
+    device = created.json()
+    assert (device["prefix_length"], device["gateway_ip"], device["vlan"]) == (
+        26, "198.18.56.1", "LAB-20",
+    )
+    updated = client.put(f"/api/devices/{device['id']}", json={
+        "name": "Renamed device", "ip_address": device["ip_address"],
+    })
+    assert updated.status_code == 200
+    assert updated.json()["prefix_length"] == 26
+    assert updated.json()["gateway_ip"] == "198.18.56.1"
+    assert updated.json()["vlan"] == "LAB-20"
+
+    for details in (
+        {"prefix_length": 33},
+        {"prefix_length": 26, "gateway_ip": "198.18.56.70"},
+        {"prefix_length": 26, "gateway_ip": "2001:db8::1"},
+        {"prefix_length": 24, "gateway_ip": "198.18.57.0"},
+        {"prefix_length": 24, "gateway_ip": "224.0.0.1"},
+        {"ip_address": "198.18.57.255", "prefix_length": 24},
+    ):
+        assert create_device(client, **({"ip_address": "198.18.57.20"} | details)).status_code == 422
+
+
+def test_existing_sqlite_inventory_gains_network_columns_without_losing_rows(tmp_path):
+    from sqlalchemy import inspect, text
+    from app.database import create_database_engine, migrate_device_inventory_columns
+
+    engine = create_database_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE devices (id INTEGER PRIMARY KEY, name VARCHAR(80), ip_address VARCHAR(45))"))
+        connection.execute(text("INSERT INTO devices (id, name, ip_address) VALUES (1, 'Legacy', '198.18.56.40')"))
+    migrate_device_inventory_columns(engine)
+    migrate_device_inventory_columns(engine)
+    with engine.connect() as connection:
+        columns = {column["name"] for column in inspect(connection).get_columns("devices")}
+        assert {"prefix_length", "gateway_ip", "vlan"}.issubset(columns)
+        row = connection.execute(text("SELECT name, ip_address, prefix_length, gateway_ip FROM devices WHERE id=1")).one()
+        assert row == ("Legacy", "198.18.56.40", None, None)
+    engine.dispose()
+
+
 def test_unknown_device_returns_404(client):
     response = client.get("/api/devices/999")
 

@@ -185,6 +185,10 @@ def migrate_device_inventory_columns(engine) -> None:
             connection.execute(text("ALTER TABLE devices ADD COLUMN inventory_source VARCHAR(30)"))
         if "vlan" not in columns:
             connection.execute(text("ALTER TABLE devices ADD COLUMN vlan VARCHAR(64)"))
+        if "prefix_length" not in columns:
+            connection.execute(text("ALTER TABLE devices ADD COLUMN prefix_length INTEGER"))
+        if "gateway_ip" not in columns:
+            connection.execute(text("ALTER TABLE devices ADD COLUMN gateway_ip VARCHAR(45)"))
         if "lease_expires_at" not in columns:
             connection.execute(text("ALTER TABLE devices ADD COLUMN lease_expires_at DATETIME"))
         if "asset_tag" not in columns:

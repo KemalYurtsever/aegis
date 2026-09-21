@@ -31,6 +31,7 @@ from app.schemas import (
     DeviceUpdate,
     MonitorResultRead,
     StatusEvent,
+    validate_device_network,
 )
 from app.routers.auth import require_admin
 from app.services.monitoring_service import check_and_store_device, check_and_store_devices
@@ -384,7 +385,19 @@ def get_device_activity(
 @router.put("/{device_id}", response_model=DeviceRead)
 def update_device(device_id: int, payload: DeviceUpdate, db: Session = Depends(get_db)) -> Device:
     device = get_device_or_404(device_id, db)
-    for field, value in payload.model_dump().items():
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("ip_address", device.ip_address) != device.ip_address:
+        changes.setdefault("prefix_length", None)
+        changes.setdefault("gateway_ip", None)
+    try:
+        validate_device_network(
+            changes.get("ip_address", device.ip_address),
+            changes.get("prefix_length", device.prefix_length),
+            changes.get("gateway_ip", device.gateway_ip),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    for field, value in changes.items():
         setattr(device, field, value)
     device.inventory_source = "MANUAL"
     return commit_device(db, device)

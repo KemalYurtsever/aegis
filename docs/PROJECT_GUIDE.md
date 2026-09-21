@@ -134,6 +134,12 @@ Use **Full** once to build the baseline. Use **Modified** for routine refreshes.
 
 ## Quick troubleshooting order
 
+For a registered device, enter its actual prefix length, gateway, and VLAN on the **Device record**. DHCP CSV imports can include `prefix_length` and `gateway_ip`; missing values remain unknown. The topology uses only configured prefixes and never treats the bounded discovery `/24` as the device's actual subnet.
+
+An administrator can open **Device record → Network validation** and run an ordered check. The configuration, gateway ICMP, optional DNS and route, target ICMP, optional TCP port, and optional application service steps are saved with their observations. These checks originate from the Aegis host; a failed ICMP or TCP step does not identify the failed firewall, route, or service by itself.
+
+For segmentation, register both devices, enroll an agent on the source with diagnostics enabled, add an expected `ALLOW` or `DENY` TCP path, then enter `RUN SAFE VALIDATION` and run the test. `MATCH` means the agent-reported TCP handshake outcome matches the expectation; `DEVIATION` means it differs. A failed handshake is compatible with a block, an unavailable service, or a route problem. The check does not send application data. Policy and check history are visible on the source device record.
+
 1. Open **Administration → System status**.
 2. Confirm the API health endpoint and frontend are reachable.
 3. Confirm `aegis-network-tools` is healthy when a Docker-backed tool is required.

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Device, utc_now
 from app.routers.auth import require_admin
-from app.schemas import DhcpLeaseImport, DhcpLeaseImportResult, InventoryHealthIssue, InventoryHealthResponse
+from app.schemas import DhcpLeaseImport, DhcpLeaseImportResult, InventoryHealthIssue, InventoryHealthResponse, validate_device_network
 from app.services.discovery_service import is_generic_ptr_hostname
 from app.services.mac_vendor_service import lookup_mac_vendor
 from app.services.statistics_service import (
@@ -65,6 +65,8 @@ def import_dhcp_leases(payload: DhcpLeaseImport, db: Session = Depends(get_db)) 
                 manufacturer=lookup_mac_vendor(row.mac_address),
                 inventory_source="DHCP_IMPORT",
                 vlan=row.vlan,
+                prefix_length=row.prefix_length,
+                gateway_ip=row.gateway_ip,
                 lease_expires_at=row.lease_expires_at,
                 device_type="Other",
                 description="Imported from an administrator-provided DHCP lease inventory.",
@@ -82,7 +84,20 @@ def import_dhcp_leases(payload: DhcpLeaseImport, db: Session = Depends(get_db)) 
         if device_by_mac is device and old_ip != row.ip_address:
             by_ip.pop(old_ip, None)
             device.ip_address = row.ip_address
+            device.prefix_length = row.prefix_length
+            device.gateway_ip = row.gateway_ip
             by_ip[row.ip_address] = device
+        elif row.prefix_length is not None:
+            if row.prefix_length != device.prefix_length and row.gateway_ip is None:
+                device.gateway_ip = None
+            device.prefix_length = row.prefix_length
+        if row.gateway_ip is not None:
+            device.gateway_ip = row.gateway_ip
+        try:
+            validate_device_network(device.ip_address, device.prefix_length, device.gateway_ip)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=f"Row {row_number}: {exc}") from exc
         if row.mac_address:
             if device.mac_address:
                 by_mac.pop(device.mac_address.upper(), None)
