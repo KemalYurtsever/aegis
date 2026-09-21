@@ -3,7 +3,7 @@
   "docs/screenshots/02-device-inventory.png": "7ddc500994da4585751d76c09b14707eb1ca32fbf8e41846b8388c7463ca6e66",
   "docs/screenshots/03-device-profile.png": ["963f05e8941c836b8ad773eccb7d43fe60ae2e03a1a6a363be4eb13b2a76e7db", "0c64d41481bf81d46452a2fef9434f074fcf4ce672144f650d17ba0e9db1fba7"],
   "docs/screenshots/04-remote-diagnostics.png": "a4c739ce3cd8acb0f2530f6bf1ee945617d1e8f34dd38345d9ec1f9363a02a82",
-  "docs/screenshots/05-security-workbench.png": "50cf3617dbae4db068520a3e97499d7f5c11f70a86a71b318c5eedbf790c7927",
+  "docs/screenshots/05-security-workbench.png": ["50cf3617dbae4db068520a3e97499d7f5c11f70a86a71b318c5eedbf790c7927", "a8873bee425160bc83b73ec93e2f88e9555dafa27f1fe8a236c448ddd2578410"],
   "docs/screenshots/06-network-toolbox.png": "8f7861dd82d0fd233fd3cbaa85c9c87f117e6f401ff12fec8b73f2cdf28590aa",
   "docs/screenshots/07-assessment-playbooks.png": "08f2f18724b1e694d21e9d99874f2ee3d40148fad752c5f8c5773ce79f8d92bf",
   "docs/screenshots/08-packet-observation.png": "9824a72d179eb6fa01c462a96cde2cc10a6c72104edc62a77c26d797489269a3",

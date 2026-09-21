@@ -146,29 +146,25 @@ Attack-surface findings and passive attack paths are prioritization evidence, no
 
 ### Security workbench
 
-The administrator-only **Security workbench** consolidates defensive investigation tools without turning Aegis into a credential or interception suite. Active tools accept registered unicast hosts; network, broadcast, multicast, and unspecified addresses are rejected as single-device targets.
+The administrator-only **Security workbench** now opens with a five-stage investigation guide and three goal-based starting points: assess a registered device, refresh vulnerability data, or prioritize stored evidence. Its navigation groups assessment and CVE data, evidence review, and local utilities. Active network tools accept registered unicast hosts; network, broadcast, multicast, and unspecified addresses are rejected as single-device targets.
 
-![Aegis security workbench overview with available defensive tools and live evidence](docs/screenshots/05-security-workbench.png)
+![Current Aegis Security workbench overview with the investigation guide and goal-based starting points](docs/screenshots/05-security-workbench.png)
 
-*Security workbench overview and live evidence from registered assets.*
+*Current Security workbench Overview, captured with synthetic demonstration data. The five-stage guide leads to a repeatable assessment, local CVE refresh, or review of stored exposure evidence.*
 
-| Tool | What it does |
+| Workbench area | What it does |
 |---|---|
-| Decoder and encoder | Converts Base64, hexadecimal, and URL components entirely in the browser. Input is not sent to the API. |
-| Integer and bitwise converter | Converts practical-size integers between decimal, hexadecimal, binary, and octal and performs signed AND, OR, XOR, NOT, left-shift, and right-shift operations locally. |
-| Secure password generator | Generates random 16-, 20-, 24-, or 32-character passwords with browser cryptographic randomness and supports masked display and copying. |
-| Password-strength guide | Evaluates a disposable example locally, displays a four-stage strength meter, and explains how length, character variety, repetition, sequences, and predictable words affect the result. Real passwords should never be entered. |
-| Registered inventory search | Searches known assets and their recorded details without scanning arbitrary targets. |
-| Wireshark | Opens the Docker Wireshark GUI, explains capture versus display filters and generates registered-device filter examples. Existing metadata records remain readable under legacy capture history. |
-| Traceroute | Runs a validated trace of at most 12 hops and 20 seconds to a selected registered device. |
-| Configuration review | Highlights incomplete inventory records and summarizes stored candidate attack paths without extracting device configurations. |
-| DNS query | Performs validated forward and reverse DNS lookups without constructing shell commands from user input. |
-| TLS inspection | Runs `sslscan` or an OpenSSL certificate/session inspection against a registered device and selected TLS port. Execution is capped, application data is not sent, and Heartbleed probing is disabled. |
-| Web technology and exposure checks | Runs WhatWeb's light fingerprint profile or a non-interactive Nikto assessment against one HTTP(S) endpoint on a registered device. Operators choose the scheme, port, and validated path; Nikto is capped at 45 seconds. |
-| SMB posture | Lists services through an anonymous `smbclient` session or runs fixed Nmap scripts for SMB protocol, signing, and time posture. The API does not accept usernames, passwords, hashes, domains, or arbitrary scripts. |
-| Network CLI | Runs administrator-only Nmap TCP scans and a separate bounded scan of up to 64 UDP ports against registered devices. TCP scanning defaults to an IDS-friendly traffic policy capped at 100 probes per second, with an explicit fast-mode override. Both provide Fast, Detailed (`-sV --version-light`), and Aggressive (`-sV --version-all`) depth where applicable. It also provides registered-host `fping`, local ARP discovery, `avahi-browse` DNS-SD inspection, the host neighbor table, HTTP(S) `curl`, WhatWeb, Nikto, `sslscan`, OpenSSL, anonymous `smbclient`, a fixed Nmap SMB posture check, and `dig`, `host`, or standard-record DNSRecon queries with optional literal line filtering. Commands use typed arguments, profile-specific timeouts, capped output, and closed stdin without invoking a shell. |
-| PowerShell TCP test | Tests up to 128 TCP ports concurrently on one registered device. PowerShell 7 uses `Test-Connection -TcpPort`; Windows PowerShell uses bounded .NET TCP socket probes. Results distinguish open ports, refused connections, unanswered probes, and errors, while targets and ports are passed as validated data rather than command text. |
-| Assessment workspace | Combines the persistent four-step playbook with manual checks on one page. Automated reachability and traceroute lead into Nmap top-1,000 discovery, mDNS identity, protocol-directed WhatWeb/OpenSSL/sslscan evidence, reused SMB NSE posture and CVE correlation, then DNS identity. Each selected tool's status, command and evidence are visible; profiles control depth and additional collection budgets. |
+| Assessment | Offers a saved four-step host workflow and focused manual checks. Manual options include bounded Nmap TCP/UDP scans, PowerShell TCP tests, traceroute, web and TLS inspection, SMB posture, and DNS tools for registered targets. |
+| CVE mirror | Refreshes the local NVD dataset with Modified, Recent, one-year, or Full synchronization and shows dataset status before matching. |
+| Registered assets | Searches known devices and their recorded identities without scanning arbitrary targets. |
+| Wireshark | Opens the Docker packet-analysis GUI, provides capture and display-filter guidance, and keeps earlier metadata-only records readable. |
+| Exposure review | Highlights incomplete inventory records and stored candidate attack paths without collecting new traffic. |
+| Wireless status | Shows local adapter health without collecting Wi-Fi keys or handshakes. |
+| Firewall & routing | Reads local host firewall and route information; it does not change network policy. |
+| MAC management | Changes a selected local Windows adapter only through its dedicated, explicit workflow; direct application requires an elevated native backend. |
+| DNS query | Performs validated forward and reverse lookups. |
+| Decoder & numbers | Converts text encodings and integer bases locally in the browser. |
+| Credential hygiene | Generates random passwords and rates disposable examples locally; real credentials are not collected. |
 
 The toolbox pins official **Nmap 7.991** and its matching probe/script database, with a verified source archive SHA-256. Managed Docker scans use SYN discovery (`-sS`, with `NET_RAW`); application fingerprints and host-side scans use TCP connect (`-sT`). This avoids a locally reproduced repeated-source-port connection failure during SYN-mode version detection. Detailed TCP service detection allows 90 seconds of host time; Aggressive allows 180 seconds (100/200-second process budgets). Top-1,000 scans fingerprint only discovered open ports and preserve discovery evidence if fingerprinting is incomplete. CLI output records the Nmap version, execution context and actual commands; assessments save scanner provenance alongside their findings.
 

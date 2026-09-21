@@ -51,7 +51,7 @@ const TOOLS = [
   ["configuration", "Exposure review", "RISK"],
   ["wireless", "Wireless status", "WLAN"],
   ["policy", "Firewall & routing", "HOST"],
-  ["mac", "MAC yönetimi", "MAC"],
+  ["mac", "MAC management", "MAC"],
   ["query", "DNS query", "DNS"],
   ["decoder", "Decoder & numbers", "LOCAL"],
   ["credentials", "Credential hygiene", "LOCAL"],

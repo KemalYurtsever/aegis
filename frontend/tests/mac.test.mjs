@@ -124,7 +124,7 @@ test("every new action obtains a fresh single-use plan", async () => {
 test("MAC panel submits directly without a preview step or confirmation checkbox", () => {
   const panel = readFileSync(new URL("../src/MacManagementPanel.jsx", import.meta.url), "utf8");
   const workbench = readFileSync(new URL("../src/SecurityWorkbenchModal.jsx", import.meta.url), "utf8");
-  assert.match(workbench, /\["mac", "MAC yönetimi", "MAC"\]/);
+  assert.match(workbench, /\["mac", "MAC management", "MAC"\]/);
   assert.match(workbench, /<MacManagementPanel \/>/);
   assert.match(panel, /onSubmit=\{apply\}/);
   assert.match(panel, /changeMacDirectly\(macChangeRequest\(selected, mode, mac\)/);
