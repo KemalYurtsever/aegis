@@ -4520,7 +4520,6 @@ export default function App() {
   const [visualTheme, setVisualTheme] = useState(() => {
     try {
       const storedTheme = window.localStorage.getItem("aegis_visual_theme");
-      // Retire the former decorative default in favour of the neutral console.
       return storedTheme === "goth" ? "classic" : storedTheme || "classic";
     } catch {
       return "classic";
@@ -4680,9 +4679,7 @@ export default function App() {
     document.documentElement.dataset.aegisTheme = visualTheme;
     try {
       window.localStorage.setItem("aegis_visual_theme", visualTheme);
-    } catch {
-      /* Theme persistence is optional when storage is unavailable. */
-    }
+    } catch {}
   }, [visualTheme]);
 
   useEffect(() => {
@@ -5278,27 +5275,21 @@ export default function App() {
     setShowObservability(true);
     try {
       window.localStorage.setItem("aegis_observability_seen", "true");
-    } catch {
-      /* Local progress persistence is optional. */
-    }
+    } catch {}
   }
 
   function showSetupGuide() {
     setSetupGuideVisible(true);
     try {
       window.localStorage.removeItem("aegis_setup_guide_hidden");
-    } catch {
-      /* Local progress persistence is optional. */
-    }
+    } catch {}
   }
 
   function dismissSetupGuide() {
     setSetupGuideVisible(false);
     try {
       window.localStorage.setItem("aegis_setup_guide_hidden", "true");
-    } catch {
-      /* Local progress persistence is optional. */
-    }
+    } catch {}
   }
 
   function persistSavedViews(nextViews) {
@@ -5308,9 +5299,7 @@ export default function App() {
         "aegis_saved_device_views",
         JSON.stringify(nextViews),
       );
-    } catch {
-      /* Saved views remain available for the current session. */
-    }
+    } catch {}
   }
 
   function updateDashboardSection(section, enabled) {
@@ -5321,9 +5310,7 @@ export default function App() {
           "aegis_dashboard_sections",
           JSON.stringify(next),
         );
-      } catch {
-        /* Dashboard preferences remain available for this session. */
-      }
+      } catch {}
       return next;
     });
   }
@@ -5332,9 +5319,7 @@ export default function App() {
     setDashboardSections(DASHBOARD_SECTION_DEFAULTS);
     try {
       window.localStorage.removeItem("aegis_dashboard_sections");
-    } catch {
-      /* Storage can be unavailable in private browsing modes. */
-    }
+    } catch {}
   }
 
   function saveCurrentView(name) {
@@ -5712,9 +5697,7 @@ export default function App() {
         setPage(1);
         try {
           window.localStorage.removeItem(LAST_DISCOVERY_NETWORK_KEY);
-        } catch {
-          /* Reset succeeds even when storage is unavailable. */
-        }
+        } catch {}
         setLastDiscoveryNetwork(null);
       }
 
@@ -5726,9 +5709,7 @@ export default function App() {
             LAST_DISCOVERY_NETWORK_KEY,
             discovered.network.network,
           );
-        } catch {
-          /* Discovery works even when storage is unavailable. */
-        }
+        } catch {}
         setLastDiscoveryNetwork(discovered.network.network);
       }
 
@@ -5786,9 +5767,7 @@ export default function App() {
   async function handleLogout() {
     try {
       await logoutUser();
-    } catch {
-      /* Clear the local token even if the session already expired. */
-    }
+    } catch {}
     setAuthToken(null);
     setShowUsers(false);
     setShowAudit(false);

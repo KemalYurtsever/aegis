@@ -47,7 +47,6 @@ export function macChangeRequest(interfaceId, mode, macAddress) {
 }
 
 export async function changeMacDirectly(payload, { prepare, apply, onPrepared = () => {}, isActive = () => true }) {
-  // The exact-address binding is internal, not an extra user interaction.
   const plan = await prepare(payload);
   if (!isActive()) return null;
   onPrepared(plan);

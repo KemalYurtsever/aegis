@@ -18,9 +18,6 @@
   zoom: 1.2375;
 }
 
-/* Professional console baseline ------------------------------------------------
-   Deliberately quiet: information density and status colour take priority over
-   decorative gradients, glow, and display typography. */
 :root[data-aegis-theme="classic"] {
   color: #1d2939;
   background: #f6f8fb;
@@ -5560,7 +5557,6 @@ body::-webkit-scrollbar,
   }
 }
 
-/* Refined Obsidian: quieter surfaces, consistent geometry, and readable hierarchy. */
 .app-shell--goth {
   --ink: #f6ebf2;
   --muted: #c2a9b9;
@@ -6892,7 +6888,6 @@ kbd {
 .snmp-controls > .panel-help { grid-column: 1 / -1; margin: -1px -1px 0; }
 .app-shell--goth .panel-help { color: #bdb2bb; background: #171219; border-color: var(--border); }
 
-/* Final text-size overrides for compact components declared above. */
 .app-shell--goth th { font-size: 11px; }
 .app-shell .device-note-list strong,
 .app-shell .device-attachment-list strong { font-size: 13px; }
@@ -6911,7 +6906,6 @@ kbd {
 .app-shell .operational-insights article > p { font-size: 11px; }
 .app-shell .panel-help { font-size: 12px; }
 
-/* Keep dense late-declared views readable without making their cards larger. */
 .app-shell small,
 .modal-backdrop small { font-size: 12px !important; }
 .app-shell :is(.sidebar-section-label, .profile-completeness, .change-severity) {
